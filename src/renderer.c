@@ -585,13 +585,13 @@ void sRenderLoadShaders(void)
 	}
 
 	uint32_t plane_shader;
-	sLoadVertexFromFile(&UI_planeShader,"data/shaders/UI/element_plane.glsl");
-	sLoadFragmentFromFile(&UI_planeShader,"data/shaders/UI/element.glsl");
-	sShaderMake(&UI_planeShader);
+	//sLoadVertexFromFile(&UI_planeShader,"data/shaders/UI/element_plane.glsl");
+	//sLoadFragmentFromFile(&UI_planeShader,"data/shaders/UI/element.glsl");
+	//sShaderMake(&UI_planeShader);
 
-	sLoadVertexFromFile(&UI_charShader,"data/shaders/UI/text_plane.glsl");
-	sLoadFragmentFromFile(&UI_charShader,"data/shaders/UI/text.glsl");
-	sShaderMake(&UI_charShader);
+	//sLoadVertexFromFile(&UI_charShader,"data/shaders/UI/text_plane.glsl");
+	//sLoadFragmentFromFile(&UI_charShader,"data/shaders/UI/text.glsl");
+	//sShaderMake(&UI_charShader);
 
 	sLoadVertexFromFile(&deferred_lighting_shader,"data/shaders/postprocessing/screen_plane.glsl");
 	plane_shader = deferred_lighting_shader.vertex;
