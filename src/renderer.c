@@ -83,7 +83,7 @@ enum
 	SHADOW32I,
 	SHADOW32F
 };
-static int formats[][3] = {
+static int formats[][3] = {\
 			{GL_RED,	GL_R8,		GL_UNSIGNED_BYTE},
 			{GL_RED,	GL_R16,		GL_UNSIGNED_SHORT},
 			{GL_RED,	GL_R32UI,	GL_UNSIGNED_INT},
