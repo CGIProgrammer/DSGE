@@ -250,6 +250,8 @@ typedef struct
 	float u,v;
 	float bx,by,bz;
 	float tx,ty,tz;
+	float u2,v2;
+	uint32_t w1,w2,w3;
 } sVertex;
 
 typedef struct
@@ -269,7 +271,6 @@ typedef struct
 	float u,v;
 	float bx,by,bz;
 	float tx,ty,tz;
-	uint32_t u2,v2;
 } smVertex;
 
 typedef struct

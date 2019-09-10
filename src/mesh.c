@@ -48,7 +48,7 @@ void sMeshMakeBuffers(sMesh* mesh)
 	glc(glBindBuffer(GL_ARRAY_BUFFER,mesh->VBO));
 	glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh->IBO));
 
-	glc(glBufferData(GL_ARRAY_BUFFER, (sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8)*mesh->vert_count, mesh->vertices, GL_STATIC_DRAW));
+	glc(glBufferData(GL_ARRAY_BUFFER, sizeof(sVertex[mesh->vert_count]), mesh->vertices, GL_STATIC_DRAW));
 
 	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_t)*mesh->ind_count, mesh->indices, GL_STATIC_DRAW));
 
@@ -119,15 +119,29 @@ void sMeshLoad(sMesh* mesh, sMaterial* mat,char* name)
 	readf(mesh->indices,sizeof(index_t),(size_s)mesh->ind_count,fp);
 
 	readf(&mesh->vert_count,4,1,fp);
-	mesh->vertices = sCalloc(sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8,(size_s)mesh->vert_count);
-	readf(mesh->vertices,sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8,(size_s)mesh->vert_count,fp);
+	mesh->vertices = sCalloc(sizeof(sVertex),(size_s)mesh->vert_count);
+	for (uint32_t i=0;i<mesh->vert_count;i++)
+	{
+		readf(mesh->vertices + i, sizeof(smVertex), 1, fp);
+		if (mesh->uv2)
+		{
+			readf(&mesh->vertices[i].u2, sizeof(float), 1, fp);
+			readf(&mesh->vertices[i].v2, sizeof(float), 1, fp);
+		}
+		if (mesh->deformed)
+		{
+			readf(&mesh->vertices[i].w1, sizeof(uint32_t), 1, fp);
+			readf(&mesh->vertices[i].w2, sizeof(uint32_t), 1, fp);
+			readf(&mesh->vertices[i].w3, sizeof(uint32_t), 1, fp);
+		}
+	}
 
 	void* verts = mesh->vertices;
 	float max_x,max_y,max_z;
 	float min_x,min_y,min_z;
 	max_x = max_y = max_z =-INFINITY;
 	min_x = min_y = min_z = INFINITY;
-	for (uint32_t i=0;i<mesh->vert_count;i++,verts+=sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8)
+	for (uint32_t i=0;i<mesh->vert_count;i++,verts+=sizeof(sVertex))
 	{
 		min_x = ((float*)verts)[0] < min_x ? ((float*)verts)[0] : min_x;
 		min_y = ((float*)verts)[1] < min_y ? ((float*)verts)[1] : min_y;
@@ -167,11 +181,9 @@ void sMeshLoad(sMesh* mesh, sMaterial* mat,char* name)
 			mesh->link_matrix[i] = Identity;
 		}
 		// Преобразование весов костей в числа с правающей точкой
-		uint32_t vertex_size = sizeof(sVertex)+sizeof(float[3])+mesh->uv2*sizeof(float[2]);
-		void *verts = mesh->vertices;
-		for (uint32_t i=0;i<mesh->vert_count;i++,verts+=vertex_size)
+		for (uint32_t i=0;i<mesh->vert_count;i++)
 		{
-			uint32_t *bone_weights = (void*)verts + sizeof(sVertex);
+			uint32_t *bone_weights = &mesh->vertices[i].w1;
 			float *bone_weights_fl = (void*)bone_weights;
 			uint32_t wi1 = bone_weights[0]>>16;
 			uint32_t wi2 = bone_weights[1]>>16;
