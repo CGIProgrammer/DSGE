@@ -43,7 +43,7 @@ for i in ('1','2','3'):
     if flag in sys.argv:
         debug = flag
 
-for i in ('1','2','3','s','g'):
+for i in ('1','2','3','s','g','fast'):
     flag = '-O'+i
     if flag in sys.argv:
         optimise = flag

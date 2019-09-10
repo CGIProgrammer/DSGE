@@ -71,8 +71,8 @@ vec2 SSR_BS(vec3 rayHit, vec3 dir, int steps)
 vec4 SSR(vec3 rayHit, vec3 reflection, float steps)
 {
     float de = abs(gRenderDepth(gNormals, tex_map));
-    float max_dist = max(10.0, 10.0 * de);
-    float min_dist = clamp(0.02 * de, 0.01, 0.1);
+    float max_dist = 10.0;//max(10.0, 10.0 * de);
+    float min_dist = max_dist * 0.01;
     
     float dd = max_dist/steps;
     float dd2 = pow(max_dist/min_dist,1.0/steps);
@@ -81,7 +81,7 @@ vec4 SSR(vec3 rayHit, vec3 reflection, float steps)
     //reflection *= dd;
     float delta,pd=0.0;
     float intensity = 1.0;
-    vec3 cubemap_sample = texture_cube_lod(cubemap, reflection, 5.0).rgb;
+    vec3 cubemap_sample = texture_cube_lod(cubemap, reflection, 0.0).rgb;
     vec3 currentHit = vec3(0.0);
     
     for (float d=min_dist;d<max_dist;d*=dd2)
@@ -100,11 +100,27 @@ vec4 SSR(vec3 rayHit, vec3 reflection, float steps)
         }
         else if (projectedPosition.w>gRenderDepth(gNormals, UV))
         {
+            float rd = gRenderDepth(gNormals, UV);
+            float nrd;
 			intensity = projectedPosition.w-gRenderDepth(gNormals, UV);
-            if (intensity < delta*1.75)
+            if (intensity < delta*1.7)
             {
-				//return vec4(mix(cubemap_sample, texture(filtered,SSR_BS(mlRayHit.xyz,mlrefl,10)).rgb, clamp(0.1/intensity, 0.0, 1.0)), 1.0);
-                return vec4(textureLod(filtered,SSR_BS(mlRayHit.xyz,mlrefl,8), 4.0).rgb, d);
+				float attenuation = 1.0;
+                vec2 fading = vec2(10.0);
+                fading.y = fading.x*height/width;
+
+                UV = SSR_BS(mlRayHit.xyz,mlrefl,8);
+                attenuation *= clamp(UV.x * fading.x, 0.0, 1.0);
+                attenuation *= clamp(UV.y * fading.y, 0.0, 1.0);
+                attenuation *= clamp((1.0-UV.x) * fading.x, 0.0, 1.0);
+                attenuation *= clamp((1.0-UV.y) * fading.y, 0.0, 1.0);
+                //attenuation *= float(dot(reflection, gRenderNormal(gNormals, UV))<0.5);
+                //nrd = gRenderDepth(gNormals, UV);
+                //attenuation *= float(nrd > rd);
+                
+                //attenuation *= abs(nrd - rd);
+                vec3 refl = texture(filtered, UV).rgb;
+                return vec4(mix(cubemap_sample, refl, clamp(attenuation,0.0,1.0)), d);
             }
             else
             {
@@ -113,8 +129,8 @@ vec4 SSR(vec3 rayHit, vec3 reflection, float steps)
         }
         pd = d;
     }
-    return vec4(0.25,0.25,0.25,1.0);
-    //return vec4(cubemap_sample, 200.0);
+    //return vec4(0.25,0.25,0.25,1.0);
+    return vec4(cubemap_sample, 200.0);
 }
 
 vec4 SSRT(vec3 rayHit, vec3 reflection)
@@ -148,7 +164,7 @@ vec4 SSRT(vec3 rayHit, vec3 reflection)
     {
       if (projectedPosition.w-gRenderDepth(gNormals, UV)< delta*1.5)
       {
-        return vec4(textureLod(original,SSR_BS(mlRayHit.xyz,mlrefl,3), 0.).rgb,1.0 / (1.0 + 0.2*d*d));
+        return vec4(texture(original,SSR_BS(mlRayHit.xyz,mlrefl,3)).rgb,1.0 / (1.0 + 0.2*d*d));
       }
     }
     pd = d;
@@ -187,7 +203,7 @@ vec4 SSRT2(vec3 rayHit, vec3 reflection)
         {
             if (projectedPosition.w-gRenderDepth(gNormals, UV)< delta*2.5)
             {
-                vec4 dynamicAO = vec4(textureLod(original,SSR_BS(mlRayHit.xyz,mlrefl,5), 0.).rgb,1.0 / (1.0 + d*0.2));
+                vec4 dynamicAO = vec4(texture(original,SSR_BS(mlRayHit.xyz,mlrefl,5)).rgb,1.0 / (1.0 + d*0.2));
                 return dynamicAO;
             }
         }

@@ -28,7 +28,7 @@
 
 
 //#define DRAW_BONES
-//#define glc(func) {func;}
+//#define glc(func) func
 #define glc(func) {func;GLenum err=glGetError(); if (err) printf("GLerror:%s:%d : %d\n",__FILE__,__LINE__,err);}
 
 // Check windows
@@ -261,6 +261,27 @@ typedef struct
 	float tx,ty,tz;
 	uint32_t w1,w2,w3;
 } bVertex;
+
+typedef struct
+{
+	float vx,vy,vz;
+	float nx,ny,nz;
+	float u,v;
+	float bx,by,bz;
+	float tx,ty,tz;
+	uint32_t u2,v2;
+} smVertex;
+
+typedef struct
+{
+	float vx,vy,vz;
+	float nx,ny,nz;
+	float u,v;
+	float bx,by,bz;
+	float tx,ty,tz;
+	uint32_t w1,w2,w3;
+	uint32_t u2,v2;
+} smbVertex;
 
 typedef struct
 {
@@ -641,6 +662,7 @@ void sEngineStartLoop(void);
 void sEngineSwapBuffers(void);
 void sEngineStartOpenGL(void);
 void sEngineSetActiveScene(sScene* scene);
+sScene* sEngineGetActiveScene(void);
 void sEngineClose(void);
 
 sScene* sLoadScene(char* name);
@@ -737,6 +759,7 @@ typedef struct
 	void *dataPtr;
 } DDS_DATA;
 
+int sTextureLoadDDSFromString(sTexture* texture, char* content);
 int sTextureLoadDDS(sTexture* texture,char* name);
 int sTextureLoadCubemap(sTexture* texture,char* name);
 void sTextureGenerateBlueNoise(sTexture* texture);

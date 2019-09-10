@@ -510,7 +510,7 @@ void sSceneLoad(sScene* scene,char* name)
 {
 	memset(scene,0,sizeof(sScene));
 
-	sprintf(buff,"%s/scenes/%s.bin",RESDIR,name);
+	sprintf(buff,"%s/scenes/%s.scene",RESDIR,name);
 
 	FILE* fp = fopen(buff,"rb");
 	if (!fp)

@@ -682,7 +682,7 @@ void sCameraInitFB(sCamera* camera)
 	if (_renderDeferred)
 	{
 		camera->render_texture = GenRenderTexture(camera->width, camera->height, RGBA8I, 0, 1);
-		camera->render_normal = GenRenderTexture(camera->width, camera->height, RGBA16F, 0, 1);
+		camera->render_normal = GenRenderTexture(camera->width, camera->height, RGBA16F, 0, 0);
 		camera->render_normal_glass = GenRenderTexture(camera->width, camera->height, RGBA16F, 0, 1);
 		camera->render_ambient = GenRenderTexture(camera->width, camera->height, RGB16F, 0, 1);
 		camera->render_specular = GenRenderTexture(camera->width, camera->height, RGB8I, 0, 1);

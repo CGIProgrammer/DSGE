@@ -18,6 +18,7 @@
 #include "game_structures.h"
 #include "linalg.h"
 #include "2D_renderer/2D_renderer.h"
+#include "2D_renderer/forms.h"
 
 uint32_t cnt = 0;
 
@@ -134,21 +135,20 @@ void test();
 int main(void)
 {
 	sShaderSetVersion("330");
-	test();
-	goto structures;
+	
 	sRenderSetSSGI(1);
 	sRenderSetBloom(1);
 	sRenderSetMotionBlur(1);
 	sRenderSetReflections(1);
 	sRenderSetHDR(1);
-	sEngineCreateWindow(0,0,1);
+	sEngineCreateWindow(1024,480,0);
 	sEngineSetSwapInterval(0);
 	sEngineStartOpenGL();
 	sScene scene;
 	memset(&scene, 0, sizeof(scene));
 	sTextureLoadCubemap(&cbm, "data/textures/cubemap/small_room.dds");
 
-	sSceneLoad(&scene,"demo_ranch");
+	sSceneLoad(&scene,"shooting_range");
 	//scene.camera.view_point = sSceneGetObject(&scene, "oКуб");
 	sEngineSetActiveScene(&scene);
 	sSceneSetSkyTexture(&scene, &cbm);
@@ -156,7 +156,13 @@ int main(void)
 	sPlayerInit(&scene, rig);
 	sPlayerMouseLookOn(&scene);
 
+	/*fForm* list;
+	list = fListCreate(300,100, 100, 300,0);
+	//fListConstructor(&list, 300,100, 100, 300,0);
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");*/
 	sEngineStartLoop();
-structures:
 	return 0;
 }

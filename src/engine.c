@@ -70,6 +70,11 @@ void sEngineSetActiveScene(sScene* scene)
 	active_scene = scene;
 }
 
+sScene* sEngineGetActiveScene(void)
+{
+    return active_scene;
+}
+
 void sRenderDeferred(int val)
 {
 	_renderDeferred = val;

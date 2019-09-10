@@ -156,4 +156,9 @@ float gRenderDepth(sampler2D normalMap4, vec2 screenCoord)
 {
     return 1.0/textureLod(normalMap4, screenCoord, 0.0).a - 1.0;
 }
+
+vec3 gRenderNormal(sampler2D normalMap4, vec2 screenCoord)
+{
+    return normalize((texture(normalMap4, screenCoord).rgb-(0.5+1.0/400.0))/(0.5-1.0/200.0));
+}
 #endif

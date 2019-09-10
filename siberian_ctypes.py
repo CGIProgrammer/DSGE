@@ -5,6 +5,8 @@ import traceback
 import sys
 import os
 from copy import copy
+from subprocess import check_output
+from typing import Dict, Tuple, Sequence, Callable
 
 KEY_SPACE = 32
 KEY_APOSTROPHE = 39  # '
@@ -178,10 +180,14 @@ GLuint = uint32_t
 GLint = GLsizei = c_int
 sColour = c_float*4
 
+sObject = Structure
+sMaterial = Structure
+sTexture = Structure
+sScene = Structure
+laType = Structure
 
 def str2c_char_p(text):
     return c_char_p(text.encode())
-
 
 if platform.system() == 'Linux':
     behaviour = CFUNCTYPE(None, c_void_p)
@@ -267,25 +273,25 @@ class laType(Structure):
         else:
             raise IndexError("laType index out of range(16)")
 
-    def __add__(self, other):
+    def __add__(self, other) -> laType:
         if type(other) == type(self):
             return _siberian.Add(self, other)
         else:
             return _siberian.Addf(self, c_float(other))
 
-    def __sub__(self, other):
+    def __sub__(self, other) -> laType:
         if type(other) == type(self):
             return _siberian.Sub(self, other)
         else:
             return _siberian.Subf(self, c_float(other))
 
-    def __mul__(self, other):
+    def __mul__(self, other) -> laType:
         if type(other) == type(self):
             return _siberian.Mul(other, self)
         else:
             return _siberian.Mulf(self, c_float(other))
 
-    def __truediv__(self, other):
+    def __truediv__(self, other) -> laType:
         if isinstance(other, (float, c_float)):
             return _siberian.Divf(self, c_float(other))
         elif isinstance(other, laType) and other.type == 16:
@@ -327,36 +333,36 @@ class laType(Structure):
     # elif self.type==4:
     # return Vector(other/self.x, other/self.y, other/self.z)
 
-    def __neg__(self):
+    def __neg__(self) -> laType:
         return Vector(0.0, 0.0, 0.0) - self
 
-    def __abs__(self):
+    def __abs__(self) -> int:
         return _siberian.Length(self)
 
     length = __abs__
 
-    def normalize(self):
+    def normalize(self) -> laType:
         return _siberian.Normalize(pointer(self))
 
-    def cross(self, other):
+    def cross(self, other) -> laType:
         return _siberian.Cross(self, other)
 
-    def crossn(self, other):
+    def crossn(self, other) -> laType:
         return _siberian.Crossn(self, other)
 
-    def dot(self, other):
+    def dot(self, other) -> float:
         return _siberian.Dot(self, other)
 
-    def dotn(self, other):
+    def dotn(self, other) -> float:
         return _siberian.Dotn(self, other)
 
     def trackTo(self, other):
         _siberian.SetCameraDirection(self, other)
 
-    def inverted(self):
+    def inverted(self) -> laType:
         return _siberian.Inverted(self)
 
-    def toEulerAngles(self):
+    def toEulerAngles(self) -> laType:
         return _siberian.ToEuler(self)
 
 
@@ -433,42 +439,81 @@ class sTexture(Structure):
             ('__data',  c_void_p),
             ('__type',  uint32_t),
             ('__ID',    uint32_t)]
+    
+    __instances__ = {}
+
+    def __init__(self):
+        Structure.__init__(self)
+        sTexture.__instances__[addressof(self)] = self
 
     @staticmethod
-    def loadCubemap(name):
+    def loadCubemap(name: str) -> sTexture:
         tex = sTexture()
         result = _siberian.sTextureLoadCubemap(tex, name.encode())
         if result == 1:
             raise FileNotFoundError("File {} not found".format(name))
         elif result == 2:
             raise TypeError("File {} is not a DDS file".format(name))
-        return tex.contents
+        return tex
 
     @staticmethod
-    def loadImage(name):
+    def loadImage(name: str) -> sTexture:
         tex = sTexture()
         result = _siberian.sTextureLoadDDS(tex, name.encode())
         if result == 1:
             raise FileNotFoundError("File {} not found".format(name))
         elif result == 2:
             raise TypeError("File {} is not a DDS file".format(name))
-        return tex.contents
+        return tex
+    
+    @staticmethod
+    def loadWithCompression(name: str) -> sTexture:
+        tex = sTexture()
+        textureData = check_output("nvcompress -bc3 -fast -stdout \"{}\"".format(name), shell=True)
+        result = _siberian.sTextureLoadDDSFromString(tex, textureData)
+        if result==1:
+            raise IOError("Unknown DDS format")
+        if result==2:
+            print(textureData)
+            raise IOError("Input stream isn't a DDS")
+        return tex
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name.decode()
 
     @property
-    def size(self):
-        return getattr(self, "__width"), getattr(self, "__height")
+    def size(self) -> Tuple[int, int]:
+        return int(getattr(self, "__width")), int(getattr(self, "__height"))
+
+    @property
+    def width(self) -> int:
+        return int(getattr(self, "__width"))
+
+    @property
+    def height(self) -> int:
+        return int(getattr(self, "__height"))
+
+    def delete(self) -> None:
+        _siberian.sTextureFree(self)
+        try:
+            del sTexture.__instances__[addressof(self)]
+        except:
+            pass
 
 sTexture_p = POINTER(sTexture)
+
+_siberian.sTextureFree.argtypes = (sTexture_p,)
+_siberian.sTextureFree.restype = None
 
 _siberian.sTextureLoadCubemap.argtypes = (sTexture_p, c_char_p)
 _siberian.sTextureLoadCubemap.restype = c_int
 
 _siberian.sTextureLoadDDS.argtypes = (sTexture_p, c_char_p)
 _siberian.sTextureLoadDDS.restype = c_int
+
+_siberian.sTextureLoadDDSFromString.argtypes = (sTexture_p, c_char_p)
+_siberian.sTextureLoadDDSFromString.restype = c_int
 
 class sShader(Structure):
     _fields_ = \
@@ -510,7 +555,7 @@ class sMaterial(Structure):
             ('_shader', uint32_t)]
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name.decode()
 
 
@@ -535,11 +580,11 @@ class sMesh(Structure):
             ('_owner', void)]
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name.decode()
 
     @property
-    def material(self):
+    def material(self) -> sMaterial:
         if self._material:
             return self._material.contents
         elif not self._material:
@@ -547,14 +592,14 @@ class sMesh(Structure):
         else:
             return None
 
-    def setMaterial(self, scene, name):
+    def setMaterial(self, scene : sScene, name):
         if isinstance(name, str):
             _siberian.sMeshSetMaterial(self, scene, name.encode())
         elif isinstance(name, bytes):
             _siberian.sMeshSetMaterial(self, scene, name)
 
-    def getOwner(self):
-        return _cast_to_sobject_p(self._owner).contents
+    def getOwner(self) -> sObject:
+        return cast(self._owner, sObject_p).contents
 
 
 class sPhysicsContact(Structure):
@@ -564,15 +609,15 @@ class sPhysicsContact(Structure):
             ('_normal', dReal*3)]
 
     @property
-    def hitObject(self):
-        return _cast_to_sobject_p(self._object).contents
+    def hitObject(self) -> sObject:
+        return cast(self._object, sObject_p).contents
 
     @property
-    def hitPosition(self):
+    def hitPosition(self) -> laType:
         return Vector(self._position[0], self._position[1], self._position[2])
 
     @property
-    def hitNormal(self):
+    def hitNormal(self) -> laType:
         return Vector(self._normal[0], self._normal[1], self._normal[2])
 
 
@@ -586,8 +631,8 @@ class sPhysicsCS(Structure):
     _read_only = ['contacts', ]
 
     @property
-    def contacts(self):
-        return [self._contacts[i] for i in range(self._contactsCount)]
+    def contacts(self) -> Sequence[sPhysicsContact]:
+        return [self._contacts[i].contents for i in range(self._contactsCount)]
 
 
 class sPhysicsRS(Structure):
@@ -604,8 +649,8 @@ class sPhysicsRS(Structure):
     _read_only = ['contacts', ]
 
     @property
-    def angle(self):
-        return self._angle
+    def angle(self) -> float:
+        return float(self._angle)
 
     @angle.setter
     def angle(self, val):
@@ -613,21 +658,20 @@ class sPhysicsRS(Structure):
         _siberian.sPhysicsRadarSetAngle(self, val)
 
     @property
-    def range(self):
-        return self._range
+    def range(self) -> float:
+        return float(self._range)
 
     @range.setter
     def range(self, Range):
         _siberian.sPhysicsRSSetRange(self, Range)
 
     @property
-    def contacts(self):
-        return self._contacts[:self._contactsCount]
-        # return [self._contacts[i] for i in range(self._contactsCount)]
+    def contacts(self) -> Sequence[sPhysicsContact]:
+        return [self._contacts[i].contents for i in range(self._contactsCount)]
 
     @property
-    def contactsCount(self):
-        return self._contactsCount
+    def contactsCount(self) -> int:
+        return int(self._contactsCount)
 
     @property
     def dir(self):
@@ -703,13 +747,13 @@ class sObject(Structure):
         _siberian.sObjectPlaceChildren(self)
 
     @property
-    def skeleton(self):
+    def skeleton(self) -> sObject:
         if self._skeleton:
-            return cast(self._skeleton, POINTER(sObject)).contents
+            return cast(self._skeleton, sObject_p).contents
         else:
             None
 
-    def setIgnoredObject(self, obj):
+    def setIgnoredObject(self, obj: sObject):
         setattr(self, '__bodyIgnoring', getattr(obj, '__body'))
     # @skeleton.setter
     # def skeleton(self,obj):
@@ -726,17 +770,17 @@ class sObject(Structure):
                 sObject._types[self._name[0]]))
 
     @property
-    def animatedFlag(self):
-        return sBoneGetAnimatedFlag(self)
+    def animatedFlag(self) -> bool:
+        return bool(sBoneGetAnimatedFlag(self))
 
     @animatedFlag.setter
-    def animatedFlag(self, flag):
-        return sBoneSetAnimatedFlag(self, flag)
+    def animatedFlag(self, flag: bool):
+        sBoneSetAnimatedFlag(self, flag)
 
     @property
-    def parent(self):
+    def parent(self) -> sObject:
         if self._parent:
-            return _cast_to_sobject_p(self._parent).contents
+            return cast(self._object, sObject_p).contents
         else:
             None
 
@@ -748,7 +792,7 @@ class sObject(Structure):
         return props[addressof(self)]
 
     @attributes.setter
-    def attributes(self, val):
+    def attributes(self, val: dict):
         props = self.scene.pydata
         if type(val) == dict or hasattr(val, '__getitem__'):
             props[addressof(self)] = copy(val)
@@ -756,7 +800,7 @@ class sObject(Structure):
             raise AttributeError('Invalid type for attributes array')
 
     @property
-    def mesh(self):
+    def mesh(self) -> sMesh:
         if (self._name[0] == ord('o') or self._name[0] == b'o') and self._mesh:
             return self._mesh.contents
         elif not self._mesh:
@@ -778,7 +822,7 @@ class sObject(Structure):
                 'Wrong type (%s). Expexted sMesh or string (name of mesh)' % (str(type(value))))
 
     @property
-    def radar(self):
+    def radar(self) -> sPhysicsRS:
         if self._name[0] == ord('o') or self._name[0] == b'o':
             return self._radar
         else:
@@ -786,7 +830,7 @@ class sObject(Structure):
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
 
     @property
-    def ray(self):
+    def ray(self) -> sPhysicsRS:
         if self._name[0] == ord('o') or self._name[0] == b'o':
             return self._ray
         else:
@@ -794,7 +838,7 @@ class sObject(Structure):
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
 
     @property
-    def collider(self):
+    def collider(self) -> sPhysicsCS:
         if self._name[0] == ord('o') or self._name[0] == b'o':
             return self._collider
         else:
@@ -802,29 +846,27 @@ class sObject(Structure):
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
 
     @property
-    def name(self):
+    def name(self) -> str:
         return self._name.decode()
 
     @property
-    def mass(self):
+    def mass(self) -> float:
         if self._name[0] == ord('o') or self._name[0] == b'o':
-            return self._mass
+            return float(self._mass)
         else:
             raise AttributeError(
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
 
-    @property
     def suspendDynamics(self):
         if self._name[0] == ord('o') or self._name[0] == b'o':
-            return lambda: _siberian.sPhysicsSuspend(self)
+            _siberian.sPhysicsSuspend(self)
         else:
             raise AttributeError(
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
 
-    @property
     def restoreDynamics(self):
         if self._name[0] == ord('o') or self._name[0] == b'o':
-            return lambda: _siberian.sPhysicsResume(self)
+            _siberian.sPhysicsResume(self)
         else:
             raise AttributeError(
                 '{} has no physics/sensor controllers'.format(sObject._types[self._name[0]]))
@@ -843,7 +885,7 @@ class sObject(Structure):
     def hide(self):
         self._hidden = True
 
-    def getScene(self):
+    def getScene(self) -> sScene:
         return _siberian.sObjectGetScene(pointer(self)).contents
 
     def endObject(self):
@@ -856,23 +898,23 @@ class sObject(Structure):
         _siberian.sObjectDelDuplicate(pointer(self))
 
     @property
-    def uniqueNumber(self):
-        return getattr(self, '__hash')
+    def uniqueNumber(self) -> int:
+        return int(getattr(self, '__hash'))
 
     @property
-    def globalPosition(self):
+    def globalPosition(self) -> laType:
         return sObjectGetPositionGlobal3fv(self)
 
     @globalPosition.setter
-    def globalPosition(self, value):
+    def globalPosition(self, value: laType):
         sObjectSetPositionGlobal3fv(self, value)
 
     @property
-    def transform(self):
+    def transform(self) -> laType:
         return self._transform
 
     @transform.setter
-    def transform(self, value):
+    def transform(self, value: laType):
         _siberian.sObjectSetLocalTransform(self, value)
 
     def rotateLocal(self, x, y, z):
@@ -884,10 +926,10 @@ class sObject(Structure):
     def translateGlobal(self, vector):
         _siberian.sObjectMoveGlobal3fv(pointer(self), vector)
 
-    def translateLocal(self, vector):
+    def translateLocal(self, vector: laType):
         _siberian.sObjectMoveLocal3fv(pointer(self), vector)
 
-    def snapTo(self, other):
+    def snapTo(self, other: sObject):
         for i in range(16):
             self._transform[i] = other.transform_global[i]
 
@@ -903,23 +945,23 @@ class sObject(Structure):
         x, y, z = c_float(x), c_float(y), c_float(z)
         _siberian.sObjectSetRotation3f(pointer(self), x, y, z)
 
-    def applyForceAtPoint(self, pos, vec):
+    def applyForceAtPoint(self, pos: laType, vec: laType):
         _siberian.sPhysicsApplyForceAtPointGlobal3fv(self, pos, vec)
 
-    def applyImpulse(self, pos, vec):
+    def applyImpulse(self, pos: laType, vec: laType):
         _siberian.sPhysicsApplyImpulseAtPointGlobal3fv(self, pos, vec)
 
-    def applyHit(self, pos, vec, mass):
+    def applyHit(self, pos: laType, vec: laType, mass):
         _siberian.sPhysicsApplyHitAtPointGlobal3fv(self, pos, vec, mass)
 
-    def getDistanceTo(self, other):
+    def getDistanceTo(self, other: sObject):
         try:
             return _siberian.sObjectGetDistanceTo(pointer(self), pointer(other))
-        except BaseException:
-            print(self, other)
+        except Exception as e:
+            print(e, self, other)
             exit(1)
 
-    def getVectorTo(self, other):
+    def getVectorTo(self, other: sObject) -> laType:
         return _siberian.sObjectGetVectorTo(pointer(self), pointer(other))
 
     def removeParent(self, at=1):
@@ -928,17 +970,17 @@ class sObject(Structure):
         else:
             _siberian.sObjectDelParent(pointer(self))
 
-    def getChildrenList(self):
+    def getChildrenList(self) -> Sequence[sObject]:
         return [_siberian.sObjectGetChildren(pointer(self), i).contents for i in range(_siberian.sObjectGetChildCount(pointer(self)))]
 
-    def getChildrenDict(self):
+    def getChildrenDict(self) -> Dict[str, sObject]:
         result = {}
         for i in range(_siberian.sObjectGetChildCount(pointer(self))):
             child = _siberian.sObjectGetChildren(pointer(self), i).contents
             result[str(child.name)] = child
         return result
 
-    def trackTo(self, target, axis, up):
+    def trackTo(self, target: sObject, axis, up):
         if isinstance(target, sObject):
             _siberian.sObjectTrackToOther(
                 pointer(self), pointer(target), axis, up)
@@ -953,7 +995,7 @@ class sObject(Structure):
 
     def setBehaviour(self, func):
         def sast(ptr):
-            func(cast(ptr, POINTER(sObject)).contents)
+            func(cast(ptr, sObject_p).contents)
         beh = behaviour(sast)
         _siberian.sObjectSetBehaviour(self, beh)
         self.scene.pyfunctions[addressof(self)] = beh
@@ -967,7 +1009,7 @@ class sObject(Structure):
         # if addressof(self) in list(_functions.keys()):
         #    del _functions[addressof(self)]
 
-    def setParent(self, targ, at=1):
+    def setParent(self, targ: sObject, at=1):
         if isinstance(targ, sObject):
             _siberian.sObjectSetParent(pointer(self), pointer(targ), at)
         else:
@@ -983,39 +1025,39 @@ class sObject(Structure):
     def radarSensorOn(self, radius=1.0, angle=3.1415926535/2):
         _siberian.sPhysicsRadSInit(pointer(self), radius, angle)
 
-    def radarHitObjectCount(self):
-        return _siberian.sPhysicsRadSGetHitObjectCount(pointer(self))
+    def radarHitObjectCount(self) -> int:
+        return int(_siberian.sPhysicsRadSGetHitObjectCount(pointer(self)))
 
-    def rayHitObjectCount(self):
-        return _siberian.sPhysicsRSGetHitObjectCount(pointer(self))
+    def rayHitObjectCount(self) -> int:
+        return int(_siberian.sPhysicsRSGetHitObjectCount(pointer(self)))
 
-    def collisionHitObjectCount(self):
-        return _siberian.sPhysicsCSGetHitObjectCount(pointer(self))
+    def collisionHitObjectCount(self) -> int:
+        return int(_siberian.sPhysicsCSGetHitObjectCount(pointer(self)))
 
-    def radarHitObjectsList(self):
+    def radarHitObjectsList(self) -> Sequence[sObject]:
         return [_siberian.sPhysicsRadSGetHitObject(pointer(self), i).contents for i in range(_siberian.sPhysicsRadSGetHitObjectCount(pointer(self)))]
 
-    def radarHitObjectsDict(self):
+    def radarHitObjectsDict(self) -> Dict[str, sObject]:
         di = {}
         for i in range(_siberian.sPhysicsRadSGetHitObjectCount(pointer(self))):
             obj = _siberian.sPhysicsRadSGetHitObject(pointer(self), i).contents
             di[obj.name] = obj
         return di
 
-    def rayHitObjectsList(self):
+    def rayHitObjectsList(self) -> Sequence[sObject]:
         return [_siberian.sPhysicsRSGetHitObject(pointer(self), i).contents for i in range(_siberian.sPhysicsRSGetHitObjectCount(pointer(self)))]
 
-    def rayHitObjectsDict(self):
+    def rayHitObjectsDict(self) -> Dict[str, sObject]:
         di = {}
         for i in range(_siberian.sPhysicsRSGetHitObjectCount(pointer(self))):
             obj = _siberian.sPhysicsRSGetHitObject(pointer(self), i).contents
             di[obj.name] = obj
         return di
 
-    def collisionHitObjectsList(self):
+    def collisionHitObjectsList(self) -> Sequence[sObject]:
         return [_siberian.sPhysicsCSGetHitObject(pointer(self), i).contents for i in range(_siberian.sPhysicsCSGetHitObjectCount(pointer(self)))]
 
-    def collisionHitObjectsDict(self):
+    def collisionHitObjectsDict(self) -> Dict[str, sObject]:
         di = {}
         for i in range(_siberian.sPhysicsCSGetHitObjectCount(pointer(self))):
             obj = _siberian.sPhysicsCSGetHitObject(pointer(self), i).contents
@@ -1025,96 +1067,96 @@ class sObject(Structure):
     def setAngularVelocity(self, x, y, z):
         _siberian.sPhysicsSetAngularVelocity(self, x, y, z)
 
-    def getLinearVelocityLocal(self):
+    def getLinearVelocityLocal(self) -> laType:
         return _siberian.sPhysicsGetLinearVelocity(self)
 
-    def getLinearVelocityGlobal(self):
+    def getLinearVelocityGlobal(self) -> laType:
         e = laIdentity*1.0
         e.w = 0.0
         orientation = self.transform_global * e
         return _siberian.sPhysicsGetLinearVelocity(self) * orientation
 
-    def setLinearVelocityGlobal(self, vector, axes=0b111):
+    def setLinearVelocityGlobal(self, vector: laType, axes=0b111) -> laType:
         _siberian.sPhysicsSetSpeedGlobal(self, vector, axes)
 
-    def setSpeedGlobal(self, vector, axes=0b111):
+    def setSpeedGlobal(self, vector: laType, axes=0b111):
         _siberian.sPhysicsSetSpeedGlobal(self, vector, axes)
 
-    def setSpeedXLocal(self, val):
+    def setSpeedXLocal(self, val: float):
         _siberian.sPhysicsSetSpeedXLocal(self, val)
 
-    def setSpeedYLocal(self, val):
+    def setSpeedYLocal(self, val: float):
         _siberian.sPhysicsSetSpeedYLocal(self, val)
 
-    def setSpeedZLocal(self, val):
+    def setSpeedZLocal(self, val: float):
         _siberian.sPhysicsSetSpeedZLocal(self, val)
 
-    def setLayerWeight(self, layer, weight):
+    def setLayerWeight(self, layer: int, weight: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetLayerWeight(self, layer, weight)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionWeight')
 
-    def setActionTime(self, layer, time):
+    def setActionTime(self, layer: int, time: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetLayerTime(self, layer, time)
         else:
             raise AttributeError(sObject._types[chr(
                 self._name[0])] + ' has no attribute setActionTime aka setActionPeriod')
 
-    def setActionPeriod(self, layer, time):
+    def setActionPeriod(self, layer: int, time: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetLayerTime(self, layer, time)
         else:
             raise AttributeError(sObject._types[chr(
                 self._name[0])] + ' has no attribute setActionPeriod aka setActionTime')
 
-    def getActionTime(self, layer):
+    def getActionTime(self, layer: int) -> float:
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return sSkeletonSetLayerTime(self, layer)
+            return float(sSkeletonSetLayerTime(self, layer))
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute getActionTime')
 
-    def setActionSpeed(self, layer, time):
+    def setActionSpeed(self, layer: int, time: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetLayerSpeed(self, layer, time)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionSpeed')
 
-    def getActionSpeed(self, layer):
+    def getActionSpeed(self, layer: int) -> float:
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return sSkeletonGetLayerSpeed(self, layer)
+            return float(sSkeletonGetLayerSpeed(self, layer))
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute getActionSpeed')
 
-    def setActionFrame(self, layer, value):
+    def setActionFrame(self, layer: int, value: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetActionFrame(self, layer, value)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionFrame')
 
-    def getActionFrame(self, layer):
+    def getActionFrame(self, layer) -> float:
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return sSkeletonGetActionFrame(self, layer)
+            return float(sSkeletonGetActionFrame(self, layer))
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute getActionFrame')
 
-    def setActionFrame2(self, layer, value):
+    def setActionFrame2(self, layer: int, value: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonSetActionFrame2(self, layer, value)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionFrame2')
 
-    def getActionFrame2(self, layer):
+    def getActionFrame2(self, layer: int) -> float:
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return sSkeletonGetActionFrame2(self, layer)
+            return float(sSkeletonGetActionFrame2(self, layer))
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute getActionFrame2')
@@ -1127,21 +1169,21 @@ class sObject(Structure):
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute resetPose')
 
-    def addPoseFromLayerToPose(self, layer, time, weight=1.0):
+    def addPoseFromLayerToPose(self, layer: int, time: float, weight=1.0):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonAddPoseFromLayerToPose(self, layer, time, weight)
         else:
             raise AttributeError(sObject._types[chr(
                 self._name[0])] + ' has no attribute addPoseFromLayerToPose')
 
-    def mixPoseFromLayerWithPose(self, layer, time, weight=1.0):
+    def mixPoseFromLayerWithPose(self, layer: int, time: float, weight=1.0):
         if self._name[0] == ord('s') or self._name[0] == b's':
             sSkeletonMixPoseFromLayerWithPose(self, layer, time, weight)
         else:
             raise AttributeError(sObject._types[chr(
                 self._name[0])] + ' has no attribute addPoseFromLayerToPose')
 
-    def addPoseFromActionToPose(self, name, keyframe=0, time=0.0, weight=1.0):
+    def addPoseFromActionToPose(self, name, keyframe:int=0, time:float=0.0, weight:float=1.0):
         if self._name[0] == ord('s') or self._name[0] == b's':
             name = str2c_char_p(name)
             sSkeletonAddPoseFromActionToPose(
@@ -1150,7 +1192,7 @@ class sObject(Structure):
             raise AttributeError(sObject._types[chr(
                 self._name[0])] + ' has no attribute addPoseFromActionToPose')
 
-    def mixPoseFromActionWithPose(self, name, keyframe=0, time=0.0, weight=1.0):
+    def mixPoseFromActionWithPose(self, name, keyframe:int=0, time:float=0.0, weight:float=1.0):
         if self._name[0] == ord('s') or self._name[0] == b's':
             name = str2c_char_p(name)
             sSkeletonMixPoseFromActionWithPose(
@@ -1160,23 +1202,23 @@ class sObject(Structure):
                 self._name[0])] + ' has no attribute mixPoseFromActionWithPose')
 
     @property
-    def ghost(self):
+    def ghost(self) -> bool:
         return getattr(self, '__ghost')
 
     @ghost.setter
-    def ghost(self, val):
+    def ghost(self, val) -> bool:
         setattr(self, '__ghost', val)
 
     @property
-    def scene(self):
+    def scene(self) -> sScene:
         return cast(self._scene, POINTER(sScene)).contents
 
     @property
-    def color(self):
+    def color(self) -> sColour:
         return cast(pointer(self), POINTER(sLight)).contents.color
 
     @property
-    def bones(self):
+    def bones(self) -> Dict[str, sObject]:
         if self._name[0] == ord('s') or self._name[0] == b's':
             res = {}
             for i in range(sSkeletonGetBoneCount(pointer(self))):
@@ -1188,52 +1230,59 @@ class sObject(Structure):
                 sObject._types[chr(self._name[0])] + ' has no attribute bones')
 
     @property
-    def setActionInterval(self):
+    def setActionInterval(self, layer: int, start: float, stop: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return lambda *args: sSkeletonSetActionInterval(self, *args)
+            _siberian.sSkeletonSetActionInterval(self, layer, start, stop)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionInterval')
 
-    @property
-    def setActionParam(self):
+    def setActionParam(self, layer: int, play_type: int, start: float, stop: float, speed: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return lambda *args: sActionSetParam(self, *args)
+            _siberian.sActionSetParam(self, layer, play_type, start, stop, speed)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute setActionParam')
 
-    @property
-    def playAction(self):
+    def playAction(self, name: str, layer: int, act_type: int, start_frame: float, stop_frame: float, speed: float):
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return lambda *args: sSkeletonSetPlayAction(self, *args)
+            if isinstance(name, str):
+                name = name.encode()
+            elif isinstance(name, bytes):
+                pass
+            else:
+                raise TypeError("name argument of sObject.playAction must be a string or bytes")
+            _siberian.sSkeletonSetPlayAction(self, name, layer, act_type, start_frame, stop_frame, speed)
         else:
             raise AttributeError(
                 sObject._types[chr(self._name[0])] + ' has no attribute playAction')
 
-    def playActionInTime(self, name, layer, act_type, start_frame, end_frame, act_time):
+    def playActionInTime(self, name: str, layer: int, act_type: int, start_frame: float, end_frame: float, act_time: float):
         dist = abs(end_frame-start_frame)
         speed = dist / act_time
         framerate = speed * 0.0333333
         self.playAction(name, layer, act_type,
                         start_frame, end_frame, framerate)
 
-    def setActionParamInTime(self, layer, act_type, start_frame, end_frame, act_time):
+    def setActionParamInTime(self, layer: int, act_type: float, start_frame: float, end_frame: float, act_time: float):
         dist = abs(end_frame-start_frame)
         speed = float(dist) / act_time
         framerate = speed * 0.0333333
         self.setActionParam(layer, act_type, start_frame, end_frame, framerate)
 
-    @property
-    def setAction(self):
+    def setAction(self, layer: int, name: str):
         if self._name[0] == ord('s') or self._name[0] == b's':
-            return lambda name, layer: sSkeletonSetAction(pointer(self), layer, c_char_p(name.encode()))
+            if isinstance(name, str):
+                name = name.encode()
+            elif not isinstance(name, bytes):
+                raise TypeError("name attribute of sObject.setAction must be a string or byte array")
+            _siberian.sSkeletonSetAction(self, layer, name)
         else:
             raise AttributeError(
                 sObject._types[self._name[0]] + ' has no attribute setAction')
 
     @property
-    def isPlayingAction(self):
+    def isPlayingAction(self) -> bool:
         if self._name[0] == ord('s') or self._name[0] == b's':
             return lambda *args: sActionIsPlaying(self, *args)
         else:
@@ -1249,22 +1298,24 @@ class sObject(Structure):
                 sObject._types[self._name[0]] + ' has no attribute setAction')
 
     def attachSound(self, name):
-        if name is None or name == '':
-            return
-        sSoundAttachToObject(pointer(self), name)
+        if isinstance(name, str):
+            name = name.encode()
+        elif not isinstance(name, str):
+            raise TypeError("name attribute of sObject.attachSound must be a string or byte array")
+        _siberian.sSoundAttachToObject(pointer(self), name)
 
-def _cast_to_sobject_p(obj):
-    return cast(obj, POINTER(sObject))
+#def _cast_to_sobject_p(obj):
+#    return cast(obj, sObject_p)
 
-def Object(obj):
-    return cast(pointer(obj), POINTER(sObject)).contents
+#def Object(obj):
+#    return cast(pointer(obj), sObject_p).contents
 
-def sSkeletonCast(obj):
-    return cast(pointer(obj), POINTER(sSkeleton)).contents
+#def sSkeletonCast(obj):
+#    return cast(pointer(obj), POINTER(sSkeleton)).contents
 
 def convert_python_to_c(func):
     def Foo(obj):
-        var = _cast_to_sobject_p(obj)
+        var = cast(obj, sObject_p)
         func(var.contents)
         return None
     return behaviour(Foo)
@@ -1275,14 +1326,14 @@ _functions = {}
 
 
 def executeAll(arg):
-    INTP = POINTER(sObject)
+    INTP = sObject_p
     keys = list(_functions.keys())
     i = 0
     while i < len(list(_functions.keys())):
         key = list(_functions.keys())[i]
         try:
             _functions[key](cast(key, INTP).contents)
-        except Exception as e:
+        except Exception:
             exc_info = sys.exc_info()
             print("Python exception:")
             print("".join(traceback.format_exception(*exc_info)))
@@ -1296,129 +1347,129 @@ def sEngineClearScripts():
 
 # def sSkeletonCast(obj):
 
-
+sObject_p = POINTER(sObject)
 sMeshNull = cast(0, POINTER(sMesh))
 
-_siberian.sObjectPlaceChildren.argtypes = (POINTER(sObject),)
+_siberian.sObjectPlaceChildren.argtypes = (sObject_p,)
 _siberian.sObjectPlaceChildren.restype = None
 
-_siberian.sObjectSetBehaviour.argtypes = (POINTER(sObject), behaviour)
+_siberian.sObjectSetBehaviour.argtypes = (sObject_p, behaviour)
 
 sObjectSetMeshPtr = _siberian.sObjectSetMesh
-sObjectSetMeshPtr.argtypes = (POINTER(sObject), POINTER(sMesh))
+sObjectSetMeshPtr.argtypes = (sObject_p, POINTER(sMesh))
 
-_siberian.sObjectSetMeshByName.argtypes = (POINTER(sObject), c_char_p)
+_siberian.sObjectSetMeshByName.argtypes = (sObject_p, c_char_p)
 
 def sObjectSetMeshByName(ptr, name): return _siberian.sObjectSetMeshByName(
     ptr, name.encode() if type(name) == str else name)
 
 sObjectEnd = _siberian.sObjectDelDuplicate
-sObjectEnd.argtypes = (POINTER(sObject),)
+sObjectEnd.argtypes = (sObject_p,)
 sObjectEnd.restype = None
 
 sObjectSetPositionGlobal3fv = _siberian.sObjectSetPositionGlobal3fv
-sObjectSetPositionGlobal3fv.argtypes = (POINTER(sObject), laType)
+sObjectSetPositionGlobal3fv.argtypes = (sObject_p, laType)
 sObjectSetPositionGlobal3fv.restype = None
 
-_siberian.sObjectSetLocalTransform.argtypes = (POINTER(sObject), laType)
+_siberian.sObjectSetLocalTransform.argtypes = (sObject_p, laType)
 _siberian.sObjectSetLocalTransform.restype = None
 
 sObjectGetPositionGlobal3fv = _siberian.sObjectGetPositionGlobal3fv
-sObjectGetPositionGlobal3fv.argtypes = (POINTER(sObject),)
+sObjectGetPositionGlobal3fv.argtypes = (sObject_p,)
 sObjectGetPositionGlobal3fv.restype = laType
 
 sObjectRotateLocal3f = _siberian.sObjectRotateLocal3f
-sObjectRotateLocal3f.argtypes = (POINTER(sObject), c_float, c_float, c_float)
+sObjectRotateLocal3f.argtypes = (sObject_p, c_float, c_float, c_float)
 
 sObjectRotateGlobal3f = _siberian.sObjectRotateGlobal3f
-sObjectRotateGlobal3f.argtypes = (POINTER(sObject), c_float, c_float, c_float)
+sObjectRotateGlobal3f.argtypes = (sObject_p, c_float, c_float, c_float)
 
 sObjectMoveGlobal3fv = _siberian.sObjectMoveGlobal3fv
-sObjectMoveGlobal3fv.argtypes = (POINTER(sObject), laType)
+sObjectMoveGlobal3fv.argtypes = (sObject_p, laType)
 
 sObjectMoveLocal3fv = _siberian.sObjectMoveLocal3fv
-sObjectMoveLocal3fv.argtypes = (POINTER(sObject), laType)
+sObjectMoveLocal3fv.argtypes = (sObject_p, laType)
 
 sObjectSetRotation3f = _siberian.sObjectSetRotation3f
-sObjectSetRotation3f.argtypes = (POINTER(sObject), c_float, c_float, c_float)
+sObjectSetRotation3f.argtypes = (sObject_p, c_float, c_float, c_float)
 sObjectSetRotation3f.restype = None
 
 sObjectGetParent = _siberian.sObjectGetParent
-sObjectGetParent.restype = POINTER(sObject)
+sObjectGetParent.restype = sObject_p
 
 sObjectGetDistanceTo = _siberian.sObjectGetDistanceTo
-sObjectGetDistanceTo.argtypes = (POINTER(sObject), POINTER(sObject))
+sObjectGetDistanceTo.argtypes = (sObject_p, sObject_p)
 sObjectGetDistanceTo.restype = c_float
 
 sObjectGetVectorTo = _siberian.sObjectGetVectorTo
-sObjectGetVectorTo.argtypes = (POINTER(sObject), POINTER(sObject))
+sObjectGetVectorTo.argtypes = (sObject_p, sObject_p)
 sObjectGetVectorTo.restype = laType
 
 _siberian.sObjectRemoveParent
-_siberian.sObjectRemoveParent.argtypes = (POINTER(sObject),)
+_siberian.sObjectRemoveParent.argtypes = (sObject_p,)
 _siberian.sObjectRemoveParent.restype = None
 
 sObjectDelParent = _siberian.sObjectDelParent
-sObjectDelParent.argtypes = (POINTER(sObject),)
+sObjectDelParent.argtypes = (sObject_p,)
 sObjectDelParent.restype = None
 
 sObjectGetChildren = _siberian.sObjectGetChildren
-sObjectGetChildren.argtypes = (POINTER(sObject), uint32_t)
-sObjectGetChildren.restype = POINTER(sObject)
+sObjectGetChildren.argtypes = (sObject_p, uint32_t)
+sObjectGetChildren.restype = sObject_p
 
 sObjectTrackToOther = _siberian.sObjectTrackToOther
 sObjectTrackToOther.argtypes = (
-    POINTER(sObject), POINTER(sObject), uint8_t, uint8_t)
+    sObject_p, sObject_p, uint8_t, uint8_t)
 
 sObjectTrackToPoint = _siberian.sObjectTrackToPoint
-sObjectTrackToPoint.argtypes = (POINTER(sObject), laType, uint8_t, uint8_t)
+sObjectTrackToPoint.argtypes = (sObject_p, laType, uint8_t, uint8_t)
 
 sObjectSetParent = _siberian.sObjectSetParent
-sObjectSetParent.argtypes = (POINTER(sObject), POINTER(sObject), c_bool)
+sObjectSetParent.argtypes = (sObject_p, sObject_p, c_bool)
 
 sPhysicsApplyForceAtPointGlobal3fv = _siberian.sPhysicsApplyForceAtPointGlobal3fv
 sPhysicsApplyForceAtPointGlobal3fv.argtypes = (
-    POINTER(sObject), laType, laType)
+    sObject_p, laType, laType)
 
 sPhysicsApplyImpulseAtPointGlobal3fv = _siberian.sPhysicsApplyImpulseAtPointGlobal3fv
 sPhysicsApplyImpulseAtPointGlobal3fv.argtypes = (
-    POINTER(sObject), laType, laType)
+    sObject_p, laType, laType)
 
 sPhysicsApplyHitAtPointGlobal3fv = _siberian.sPhysicsApplyHitAtPointGlobal3fv
 sPhysicsApplyHitAtPointGlobal3fv.argtypes = (
-    POINTER(sObject), laType, laType, c_float)
+    sObject_p, laType, laType, c_float)
 
 sPhysicsCSInit = _siberian.sPhysicsCSInit
-sPhysicsCSInit.argtypes = (POINTER(sObject),)
+sPhysicsCSInit.argtypes = (sObject_p,)
 
 sPhysicsRSInit = _siberian.sPhysicsRSInit
-sPhysicsRSInit.argtypes = (POINTER(sObject), c_float)
+sPhysicsRSInit.argtypes = (sObject_p, c_float)
 
 sPhysicsRadSInit = _siberian.sPhysicsRadSInit
-sPhysicsRadSInit.argtypes = (POINTER(sObject), c_float, c_float)
+sPhysicsRadSInit.argtypes = (sObject_p, c_float, c_float)
 
 sPhysicsRadSGetHitObject = _siberian.sPhysicsRadSGetHitObject
-sPhysicsRadSGetHitObject.argtypes = (POINTER(sObject), uint32_t)
-sPhysicsRadSGetHitObject.restype = POINTER(sObject)
+sPhysicsRadSGetHitObject.argtypes = (sObject_p, uint32_t)
+sPhysicsRadSGetHitObject.restype = sObject_p
 
 sPhysicsRadSGetHitObjectCount = _siberian.sPhysicsRadSGetHitObjectCount
-sPhysicsRadSGetHitObjectCount.argtypes = (POINTER(sObject),)
+sPhysicsRadSGetHitObjectCount.argtypes = (sObject_p,)
 sPhysicsRadSGetHitObjectCount.restype = uint32_t
 
 sPhysicsRSGetHitObject = _siberian.sPhysicsRSGetHitObject
-sPhysicsRSGetHitObject.argtypes = (POINTER(sObject), uint32_t)
-sPhysicsRSGetHitObject.restype = POINTER(sObject)
+sPhysicsRSGetHitObject.argtypes = (sObject_p, uint32_t)
+sPhysicsRSGetHitObject.restype = sObject_p
 
 sPhysicsRSGetHitObjectCount = _siberian.sPhysicsRSGetHitObjectCount
-sPhysicsRSGetHitObjectCount.argtypes = (POINTER(sObject),)
+sPhysicsRSGetHitObjectCount.argtypes = (sObject_p,)
 sPhysicsRSGetHitObjectCount.restype = uint32_t
 
 sPhysicsCSGetHitObject = _siberian.sPhysicsCSGetHitObject
-sPhysicsCSGetHitObject.argtypes = (POINTER(sObject), uint32_t)
-sPhysicsCSGetHitObject.restype = POINTER(sObject)
+sPhysicsCSGetHitObject.argtypes = (sObject_p, uint32_t)
+sPhysicsCSGetHitObject.restype = sObject_p
 
 sPhysicsCSGetHitObjectCount = _siberian.sPhysicsCSGetHitObjectCount
-sPhysicsCSGetHitObjectCount.argtypes = (POINTER(sObject),)
+sPhysicsCSGetHitObjectCount.argtypes = (sObject_p,)
 sPhysicsCSGetHitObjectCount.restype = uint32_t
 
 sPhysicsRSSetRange = _siberian.sPhysicsRSSetRange
@@ -1430,54 +1481,48 @@ sPhysicsRadarSetAngle.argtypes = (POINTER(sPhysicsRS), c_float)
 sPhysicsRadarSetAngle.restype = None
 
 sPhysicsAutoDisable = _siberian.sPhysicsAutoDisable
-sPhysicsAutoDisable.argtypes = (POINTER(sObject), c_bool)
+sPhysicsAutoDisable.argtypes = (sObject_p, c_bool)
 
 _siberian.sPhysicsSetAngularVelocity.argtypes = (
-    POINTER(sObject), c_double, c_double, c_double)
+    sObject_p, c_double, c_double, c_double)
 _siberian.sPhysicsSetAngularVelocity.restype = None
 
 sPhysicsSetSpeedGlobal = _siberian.sPhysicsSetSpeedGlobal
-sPhysicsSetSpeedGlobal.argtypes = (POINTER(sObject), laType, uint8_t)
+sPhysicsSetSpeedGlobal.argtypes = (sObject_p, laType, uint8_t)
 sPhysicsSetSpeedGlobal.restype = None
 
 sPhysicsSetSpeedXLocal = _siberian.sPhysicsSetSpeedXLocal
-sPhysicsSetSpeedXLocal.argtypes = (POINTER(sObject), c_float)
+sPhysicsSetSpeedXLocal.argtypes = (sObject_p, c_float)
 sPhysicsSetSpeedXLocal.restype = None
 
 sPhysicsSetSpeedYLocal = _siberian.sPhysicsSetSpeedYLocal
-sPhysicsSetSpeedYLocal.argtypes = (POINTER(sObject), c_float)
+sPhysicsSetSpeedYLocal.argtypes = (sObject_p, c_float)
 sPhysicsSetSpeedYLocal.restype = None
 
 sPhysicsSetSpeedZLocal = _siberian.sPhysicsSetSpeedZLocal
-sPhysicsSetSpeedZLocal.argtypes = (POINTER(sObject), c_float)
+sPhysicsSetSpeedZLocal.argtypes = (sObject_p, c_float)
 sPhysicsSetSpeedZLocal.restype = None
 
-_siberian.sPhysicsGetLinearVelocity.argtypes = (POINTER(sObject),)
+_siberian.sPhysicsGetLinearVelocity.argtypes = (sObject_p,)
 _siberian.sPhysicsGetLinearVelocity.restype = laType
 
-_siberian.sPhysicsSuspend.argtypes = POINTER(sObject),
+_siberian.sPhysicsSuspend.argtypes = sObject_p,
 _siberian.sPhysicsSuspend.restype = None
 
-_siberian.sPhysicsResume.argtypes = POINTER(sObject),
+_siberian.sPhysicsResume.argtypes = sObject_p,
 _siberian.sPhysicsResume.restype = None
 
 # Specific object functions
 
-
-def sSkeletonSetPlayAction(skeleton, name, layer, act_type, start_frame, stop_frame, speed): return _siberian.sSkeletonSetPlayAction(
-    skeleton, name.encode(), layer, act_type, start_frame, stop_frame, speed)
-
-
 _siberian.sSkeletonSetPlayAction.argtypes = (
-    POINTER(sObject), c_char_p, uint8_t, uint32_t, c_float, c_float, c_float)
+    sObject_p, c_char_p, uint8_t, uint32_t, c_float, c_float, c_float)
 _siberian.sSkeletonSetPlayAction.restype = None
 
 sActionSetParam = _siberian.sActionSetParam
-sActionSetParam.argtypes = POINTER(
-    sObject), uint8_t, uint32_t, c_float, c_float, c_float
+sActionSetParam.argtypes = sObject_p, uint8_t, uint32_t, c_float, c_float, c_float
 sActionSetParam.restype = None
 
-_siberian.sActionProcess.argtypes = (POINTER(sObject),)
+_siberian.sActionProcess.argtypes = (sObject_p,)
 _siberian.sActionProcess.restype = None
 
 sSkeletonSetActionInterval = _siberian.sSkeletonSetActionInterval
@@ -1486,35 +1531,35 @@ sSkeletonSetActionInterval.argtypes = POINTER(
 sSkeletonSetActionInterval.restype = None
 
 sBoneGetSkeleton = _siberian.sBoneGetSkeleton
-sBoneGetSkeleton.argtypes = (POINTER(sObject),)
-sBoneGetSkeleton.restype = POINTER(sObject)
+sBoneGetSkeleton.argtypes = (sObject_p,)
+sBoneGetSkeleton.restype = sObject_p
 
 sBoneGetAnimatedFlag = _siberian.sBoneGetAnimatedFlag
-sBoneGetAnimatedFlag.argtypes = (POINTER(sObject),)
+sBoneGetAnimatedFlag.argtypes = (sObject_p,)
 sBoneGetAnimatedFlag.restype = c_int
 
 sBoneSetAnimatedFlag = _siberian.sBoneSetAnimatedFlag
-sBoneSetAnimatedFlag.argtypes = (POINTER(sObject), c_int)
+sBoneSetAnimatedFlag.argtypes = (sObject_p, c_int)
 sBoneSetAnimatedFlag.restype = None
 
 sSkeletonGetActionFrame = _siberian.sSkeletonGetActionFrame
-sSkeletonGetActionFrame.argtypes = (POINTER(sObject), c_int)
+sSkeletonGetActionFrame.argtypes = (sObject_p, c_int)
 sSkeletonGetActionFrame.restype = c_float
 
 sSkeletonSetActionFrame = _siberian.sSkeletonSetActionFrame
-sSkeletonSetActionFrame.argtypes = POINTER(sObject), uint8_t, c_float
+sSkeletonSetActionFrame.argtypes = sObject_p, uint8_t, c_float
 sSkeletonSetActionFrame.restype = None
 
 sSkeletonGetActionFrame2 = _siberian.sSkeletonGetActionFrame2
-sSkeletonGetActionFrame2.argtypes = (POINTER(sObject), c_int)
+sSkeletonGetActionFrame2.argtypes = (sObject_p, c_int)
 sSkeletonGetActionFrame2.restype = c_float
 
 sSkeletonSetActionFrame2 = _siberian.sSkeletonSetActionFrame2
-sSkeletonSetActionFrame2.argtypes = POINTER(sObject), c_int, c_float
+sSkeletonSetActionFrame2.argtypes = sObject_p, c_int, c_float
 sSkeletonSetActionFrame2.restype = None
 
 sSkeletonResetPose = _siberian.sSkeletonResetPose
-sSkeletonResetPose.argtypes = POINTER(sObject),
+sSkeletonResetPose.argtypes = sObject_p,
 sSkeletonResetPose.restype = None
 
 sSkeletonAddPoseFromLayerToPose = _siberian.sSkeletonAddPoseFromLayerToPose
@@ -1538,45 +1583,45 @@ sSkeletonMixPoseFromActionWithPose.argtypes = POINTER(
 sSkeletonMixPoseFromActionWithPose.restype = None
 
 sActionIsPlaying = _siberian.sActionIsPlaying
-sActionIsPlaying.argtypes = (POINTER(sObject), uint8_t)
+sActionIsPlaying.argtypes = (sObject_p, uint8_t)
 sActionIsPlaying.restype = uint8_t
 
 sActionStop = _siberian.sActionStop
-sActionStop.argtypes = (POINTER(sObject), uint8_t)
+sActionStop.argtypes = (sObject_p, uint8_t)
 
 sSkeletonSetAction = _siberian.sSkeletonSetAction
-sSkeletonSetAction.argtypes = (POINTER(sObject), uint8_t, c_char_p)
+sSkeletonSetAction.argtypes = (sObject_p, uint8_t, c_char_p)
 
 sSkeletonGetBone = _siberian.sSkeletonGetBone
-sSkeletonGetBone.argtypes = (POINTER(sObject), c_char_p)
-sSkeletonGetBone.restype = POINTER(sObject)
+sSkeletonGetBone.argtypes = (sObject_p, c_char_p)
+sSkeletonGetBone.restype = sObject_p
 
 sSkeletonGetBoneByIndex = _siberian.sSkeletonGetBoneByIndex
-sSkeletonGetBoneByIndex.argtypes = (POINTER(sObject), uint16_t)
-sSkeletonGetBoneByIndex.restype = POINTER(sObject)
+sSkeletonGetBoneByIndex.argtypes = (sObject_p, uint16_t)
+sSkeletonGetBoneByIndex.restype = sObject_p
 
 sSkeletonGetBoneCount = _siberian.sSkeletonGetBoneCount
-sSkeletonGetBoneCount.argtypes = (POINTER(sObject),)
+sSkeletonGetBoneCount.argtypes = (sObject_p,)
 sSkeletonGetBoneCount.restype = uint16_t
 
 sSkeletonSetLayerWeight = _siberian.sSkeletonSetLayerWeight
-sSkeletonSetLayerWeight.argtypes = POINTER(sObject), uint8_t, c_float
+sSkeletonSetLayerWeight.argtypes = sObject_p, uint8_t, c_float
 sSkeletonSetLayerWeight.restype = None
 
 sSkeletonSetLayerTime = _siberian.sSkeletonSetLayerTime
-sSkeletonSetLayerTime.argtypes = POINTER(sObject), uint8_t, c_float
+sSkeletonSetLayerTime.argtypes = sObject_p, uint8_t, c_float
 sSkeletonSetLayerTime.restype = None
 
 sSkeletonGetLayerTime = _siberian.sSkeletonGetLayerTime
-sSkeletonGetLayerTime.argtypes = POINTER(sObject), uint8_t
+sSkeletonGetLayerTime.argtypes = sObject_p, uint8_t
 sSkeletonGetLayerTime.restype = c_float
 
 sSkeletonSetLayerSpeed = _siberian.sSkeletonSetLayerSpeed
-sSkeletonSetLayerSpeed.argtypes = POINTER(sObject), uint8_t, c_float
+sSkeletonSetLayerSpeed.argtypes = sObject_p, uint8_t, c_float
 sSkeletonSetLayerSpeed.restype = None
 
 sSkeletonGetLayerSpeed = _siberian.sSkeletonGetLayerSpeed
-sSkeletonGetLayerSpeed.argtypes = POINTER(sObject), uint8_t
+sSkeletonGetLayerSpeed.argtypes = sObject_p, uint8_t
 sSkeletonGetLayerSpeed.restype = c_float
 
 
@@ -1614,29 +1659,26 @@ class sCamera(Structure):
         ('FOV', c_float),
         ('_width', uint16_t),
         ('_height', uint16_t),
-        ('_view_point', POINTER(sObject))])
+        ('_view_point', sObject_p)])
 
     @property
-    def height(self):
-        return self._height
+    def height(self) -> int:
+        return int(self._height)
 
     @property
-    def width(self):
-        return self._width
+    def width(self) -> int:
+        return int(self._width)
 
     @property
-    def view_point(self):
+    def view_point(self) -> sObject:
         if self._view_point:
             return self._view_point.contents
         else:
             None
 
     @view_point.setter
-    def view_point(self, obj):
-        if isinstance(obj, POINTER(sObject)):
-            self._view_point = obj
-        elif isinstance(obj, sObject):
-            self._view_point = pointer(obj)
+    def view_point(self, obj: sObject):
+        self._view_point = pointer(obj)
 
 
 class sLight(Structure):
@@ -1658,10 +1700,10 @@ class sScene(Structure):
         ('_textures', POINTER(sTexture)),
         ('_cubemap', POINTER(sTexture)),
         ('_lights', POINTER(POINTER(sLight))),
-        ('_objects', POINTER(POINTER(sObject))),
+        ('_objects', POINTER(sObject_p)),
         ('_skelets', POINTER(c_void_p)),  # sSkeleton
         ('_lights_inactive', POINTER(sLight)),
-        ('_objects_inactive', POINTER(sObject)),
+        ('_objects_inactive', sObject_p),
         ('_skelets_inactive', c_void_p),
         ('_actions', c_void_p),
 
@@ -1688,58 +1730,58 @@ class sScene(Structure):
 
     __scenes = {}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, filename: str):
         Structure.__init__(self)
-        _siberian.sSceneLoad(self, kwargs['filename'].encode())
-        print("Adding scene to static list")
+        _siberian.sSceneLoad(self, filename.encode())
+        #print("Adding scene to static list")
         sScene.__scenes[addressof(self)] = {
             'scene': self, 'pyfunctions': {}, 'pydata': {}}
         self.__pyfunctions = sScene.__scenes[addressof(self)]['pyfunctions']
         self.__pydata = sScene.__scenes[addressof(self)]['pydata']
 
     @property
-    def pyfunctions(self):
+    def pyfunctions(self) -> dict:
         return sScene.__scenes[addressof(self)]['pyfunctions']
 
     @property
-    def pydata(self):
+    def pydata(self) -> dict:
         return sScene.__scenes[addressof(self)]['pydata']
 
     @property
     def camera(self):
         return self._camera
 
-    def getObject(self, name):
+    def getObject(self, name: str) -> sObject:
         ptr = _siberian.sSceneGetObject(pointer(self), c_char_p(name.encode()))
         if ptr:
             return ptr.contents
         else:
             None
 
-    def getMaterial(self, name):
-        return _siberian.sSceneGetMaterial(self, name).contents
+    def getMaterial(self, name: str) -> sMaterial:
+        return _siberian.sSceneGetMaterial(self, name.encode()).contents
 
-    def addObject(self, name):
+    def addObject(self, name: str) -> sObject:
         ptr = _siberian.sSceneAddObject(pointer(self), c_char_p(name.encode()))
         if ptr:
             return ptr.contents
         else:
             return None
 
-    def loadAction(self, path, name):
+    def loadAction(self, path: str, name: str):
         sActionLoad(pointer(self), path.encode(), name.encode())
 
-    def setScript(self, func):
+    def setScript(self, func : Callable[[sScene,], None]):
         def f(scene):
             func(cast(scene, POINTER(sScene)).contents)
         script = behaviour(f)
         sScene.__scenes[addressof(self)]['script'] = script
         _siberian.sSceneSetScript(self, script)
 
-    def setSkyTexture(self, texture):
+    def setSkyTexture(self, texture: sTexture):
         _siberian.sSceneSetSkyTexture(self, texture)
 
-    def loadMesh(self, name):
+    def loadMesh(self, name: str):
         if isinstance(name, bytes):
             return _siberian.sSceneAddMesh(self, name).contents
         elif isinstance(name, str):
@@ -1748,7 +1790,7 @@ class sScene(Structure):
             raise TypeError(
                 "loadMesh's \"name\" argument must be str or bytes")
 
-    def removeMesh(self, name):
+    def removeMesh(self, name: str):
         if isinstance(name, bytes):
             _siberian.sSceneRemoveMesh(self, name)
         elif isinstance(name, str):
@@ -1792,7 +1834,7 @@ _siberian.sSoundInit.argtypes = ()
 _siberian.sSoundLoad.argtypes = (c_char_p,)
 _siberian.sSoundLoad.restype = c_int
 
-_siberian.sSoundAttachToObject.argtypes = (POINTER(sObject), c_char_p)
+_siberian.sSoundAttachToObject.argtypes = (sObject_p, c_char_p)
 _siberian.sSoundAttachToObject.restype = c_int
 
 
@@ -1806,7 +1848,7 @@ def sSoundLoad():
         raise SOUND_ERRORS[result][1](SOUND_ERRORS[result][0])
 
 
-def sSoundAttachToObject(name):
+def sSoundAttachToObject(name: str):
     if isinstance(name, str):
         name = name.encode()
     result = _siberian.sSoundAttachToObject(name)
@@ -1817,7 +1859,7 @@ def sSoundAttachToObject(name):
 sSoundCloseDevice = _siberian.sSoundCloseDevice
 
 # Interface
-def c_string(val, coding = 'cp1251'):
+def c_string(value, coding = 'cp1251'):
     if isinstance(value, str):
         value = value.encode(coding)
     elif isinstance(value, bytes):
@@ -1826,64 +1868,121 @@ def c_string(val, coding = 'cp1251'):
         value = str(value).encode(coding)
     return value
 
+fForm = Structure
+fElement = Structure
+
 class fElement(Structure):
     _fields_ = [('__data', uint8_t*224)]
 
     @property
-    def lockRotation(self):
-        return _siberian.fElementGetLockRotationBit(self)
+    def lockRotation(self) -> bool:
+        return bool(_siberian.fElementGetLockRotationBit(self))
     @lockRotation.setter
-    def lockRotation(self, val):
+    def lockRotation(self, val: bool):
         _siberian.fElementSetLockRotationBit(self, val)
 
     @property
-    def visible(self):
+    def visible(self) -> bool:
         return _siberian.fElementGetVisibleBit(self)
     @visible.setter
-    def visible(self, val):
+    def visible(self, val: bool):
         _siberian.fElementSetVisibleBit(self, val)
 
     @property
-    def height(self):
+    def height(self) -> float:
         return _siberian.fElementGetHeight(self)
     @height.setter
-    def height(self, size):
+    def height(self, size: float):
         _siberian.fElementSetHeight(self, size)
 
     @property
-    def width(self):
+    def width(self) -> float:
         return _siberian.fElementGetWidth(self)
     @width.setter
-    def width(self, size):
+    def width(self, size: float):
         _siberian.fElementSetWidth(self, size)
 
     @property
-    def text(self):
+    def text(self) -> str:
         return _siberian.fElementGetTextPtr(self).decode('cp1251')
 
     @text.setter
-    def text(self, value):
+    def text(self, value: str):
         _siberian.fElementSetText(self, c_string(value))
 
     @property
-    def planeColor(self):
+    def planeColor(self) -> Sequence[float]:
         var = (c_float*4)(0,0,0,0)
         _siberian.fElementGetPlaneColor4fv(self, var)
         return var
 
     @planeColor.setter
-    def planeColor(self, val):
-        _siberian.fElementGetPlaneColor4fv(self, (c_float*4)(*val))
+    def planeColor(self, val: Sequence[float]):
+        _siberian.fElementSetPlaneColor4fv(self, (c_float*4)(*val))
 
     @property
-    def textColor(self):
+    def textColor(self) -> Sequence[float]:
         var = (c_float*4)()
         _siberian.fElementGetTextColor4fv(self, var)
-        return var
+        return tuple([float(i) for i in var])
 
     @textColor.setter
-    def textColor(self, val):
-        _siberian.fElementGetTextColor4fv(self, (c_float*4)(*val))
+    def textColor(self, val : Sequence[float]):
+        _siberian.fElementSetTextColor4fv(self, (c_float*4)(*val))
+
+    @property
+    def globalPosition(self) -> Sequence[float]:
+        x = c_float()
+        y = c_float()
+        _siberian.fElementGetGlobalPosition(self, pointer(x), pointer(y))
+        return float(x),float(y)
+
+    @globalPosition.setter
+    def globalPosition(self, value : Sequence[float]):
+        _siberian.fElementSetGlobalPosition(self, *value)
+
+    @property
+    def localPosition(self) -> Sequence[float]:
+        x = c_float()
+        y = c_float()
+        _siberian.fElementGetLocalPosition(self, pointer(x), pointer(y))
+        return float(x),float(y)
+
+    @localPosition.setter
+    def localPosition(self, value : Sequence[float]):
+        _siberian.fElementSetLocalPosition(self, *value)
+
+    @property
+    def imageCoords(self) -> Sequence[float]:
+        coords = (c_float*2)()
+        _siberian.fElementGetImageCoords(self, coords)
+        return float(coords[0]), float(coords[1])
+
+    @imageCoords.setter
+    def imageCoords(self, value : Sequence[float]):
+        _siberian.fElementSetImageCoords(self, (c_float*2)(*value))
+
+    @property
+    def imageSize(self) -> Sequence[float]:
+        size = (c_float*2)()
+        _siberian.fElementGetImageSize(self, size)
+        return float(size[0]), float(size[1])
+
+    @imageSize.setter
+    def imageSize(self, value : Sequence[float]):
+        _siberian.fElementSetImageSize(self, (c_float*2)(*value))
+
+    @property
+    def image(self) -> sTexture:
+        ptr = _siberian.fElementGetImage(self)
+        if ptr:
+            return ptr.contents
+        else:
+            return None
+
+    @image.setter
+    def image(self, image: sTexture):
+        _siberian.fElementSetImage(self, image)
 
     def moveToTopLayer(self):
         _siberian.fElementSetTopLayer(self)
@@ -1897,7 +1996,26 @@ class fElement(Structure):
     def moveLayerDown(self):
         _siberian.fElementMoveLayerDown(self)
 
+
 fElement_p = POINTER(fElement)
+
+_siberian.fElementSetImage.argtypes = (fElement_p, sTexture_p)
+_siberian.fElementSetImage.restype = None
+
+_siberian.fElementGetImage.argtypes = (fElement_p,)
+_siberian.fElementGetImage.restype = sTexture_p
+
+_siberian.fElementSetImageCoords.argtypes = (fElement_p, POINTER(c_float))
+_siberian.fElementSetImageCoords.restype = None
+
+_siberian.fElementGetImageCoords.argtypes = (fElement_p, POINTER(c_float))
+_siberian.fElementGetImageCoords.restype = None
+
+_siberian.fElementSetImageSize.argtypes = (fElement_p, POINTER(c_float))
+_siberian.fElementSetImageSize.restype = None
+
+_siberian.fElementGetImageSize.argtypes = (fElement_p, POINTER(c_float))
+_siberian.fElementGetImageSize.restype = None
 
 _siberian.fElementSetVisibleBit.argtypes = (fElement_p, c_bool)
 _siberian.fElementSetVisibleBit.restype  = None
@@ -2010,121 +2128,205 @@ class fForm(Structure):
         _siberian.fFormConstructor(self)
 
     @property
-    def height(self):
-        return _siberian.fFormGetHeight(self)
+    def xRayBit(self) -> bool:
+        return bool(_siberian.fFormGetXRayBit(self))
+
+    @xRayBit.setter
+    def xRayBit(self, value: bool):
+        _siberian.fFormSetXRayBit(self, bool(value))
+
+    @property
+    def height(self) -> float:
+        return float(_siberian.fFormGetHeight(self))
     @height.setter
-    def height(self, size):
+    def height(self, size: float):
         _siberian.fFormSetHeight(self, size)
 
     @property
-    def width(self):
+    def width(self) -> float:
         return _siberian.fFormGetWidth(self)
     @width.setter
-    def width(self, size):
-        _siberian.fFormSetWidth(self, size)
+    def width(self, size: float):
+        _siberian.fFormSetWidth(self, int(size))
 
     @property
-    def localRotation(self):
-        return _siberian.fFormGetLocalRotation(self)
+    def localRotation(self) -> float:
+        return float(_siberian.fFormGetLocalRotation(self))
 
     @localRotation.setter
-    def localRotation(self, angle):
+    def localRotation(self, angle: float):
         _siberian.fFormSetLocalRotation(self, angle)
 
     @property
-    def globalRotation(self):
+    def globalRotation(self) -> float:
         return _siberian.fFormGetGlobalRotation(self)
 
     @globalRotation.setter
-    def globalRotation(self, angle):
+    def globalRotation(self, angle: float):
         _siberian.fFormSetGlobalRotation(self, angle)
 
     @property
-    def verticalScrollValue(self):
-        return _siberian.fFormGetVerticalScrolling(self)
+    def verticalScrollValue(self) -> float:
+        return float(_siberian.fFormGetVerticalScrolling(self))
 
     @verticalScrollValue.setter
-    def verticalScrollValue(self, val):
+    def verticalScrollValue(self, val: float):
         _siberian.fFormSetVerticalScrolling(self, val)
 
     @property
-    def horizontalScrollValue(self):
+    def horizontalScrollValue(self) -> float:
         return _siberian.fFormGetHorizontalScrolling(self)
         
     @horizontalScrollValue.setter
-    def horizontalScrollValue(self, val):
+    def horizontalScrollValue(self, val: float):
         _siberian.fFormSetHorizontalScrolling(self, val)
+
+    @property
+    def globalPosition(self) -> Sequence[float]:
+        pos = (c_float*2)()
+        _siberian.fFormGetGlobalPosition(self, pos)
+        return [float(pos[0]),float(pos[1])]
+
+    @globalPosition.setter
+    def globalPosition(self, value: Sequence[float]):
+        _siberian.fFormSetGlobalPosition(self, value[0], value[1])
+
+    @property
+    def localPosition(self) -> Sequence[float]:
+        pos = (c_float*2)()
+        _siberian.fFormGetLocalPosition(self, pos)
+        return [float(pos[0]),float(pos[1])]
+
+    @localPosition.setter
+    def localPosition(self, value: Sequence[float]):
+        _siberian.fFormSetLocalPosition(self, value[0], value[1])
+
+    @property
+    def childCount(self) -> int:
+        return int(_siberian.fFormGetChildCount(self))
+
+    def __iter__(self):
+        self._iteration = 0
+        self._iteration_length = _siberian.fFormGetChildCount(self)
+        return self
+
+    def __next__(self):
+        num = self._iteration
+        self._iteration += 1
+        if self._iteration_length != _siberian.fFormGetChildCount(self):
+            raise RuntimeError("fForm child list changed size during iteration")
+        elif num >= _siberian.fFormGetChildCount(self):
+            raise StopIteration
+        else:
+            return _siberian.fFormGetChild(self, num).contents
+
+    def getChild(self, index: int) -> fForm:
+        if index < self.childCount:
+            return _siberian.fFormGetChild(self, index).contents
+        raise IndexError("fForm child list index out of range")
 
     def removeParent(self):
         _siberian.fFormRemoveParent(self)
     
     def delete(self):
-        _siberian.fFormDelete(self)
+        for i in range(self.childCount):
+            self.getChild(i).delete()
+        fForm.__instances__[addressof(self)]['MARK_DELETE'] = True
+        _siberian.fFormMarkDelete(self)
 
-    def addForm(self, form):
+    def addForm(self, form: fForm):
         _siberian.fFormAddForm(self, form)
 
-    def addElement(self, width, height, text=None, font_size=8):
+    def addElement(self, width: float, height: float, text:str=None, font_size:int=8) -> fElement:
         if isinstance(text, str):
             text = text.encode('1251')
         elif isinstance(text, bytes) or text is None:
             pass
         else:
             text = str(text).encode('1251')
-        return _siberian.fFormAddElement(self, text, font_size, width, height)
+        return _siberian.fFormAddElement(self, text, int(font_size), width, height).contents
 
-    def setIdle(self, callback):
-        fForm.__instances__[addressof(self)]['idleCallback'] = {}
-        fForm.__instances__[addressof(self)]['idleCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['idleCallback']['c'] = __fFormCallback(callback)
+    def setIdle(self, cb : Callable[[fForm], None]):
+        callback = lambda form : cb(form.contents)
+        c_callback = fFormCallback(callback)
         _siberian.fFormSetIdle(self, c_callback)
+        fForm.__instances__[addressof(self)]['idleCallback'] = c_callback
 
-    def setLMB(self, callback):
-        fForm.__instances__[addressof(self)]['lmbCallback'] = {}
-        fForm.__instances__[addressof(self)]['lmbCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['lmbCallback']['c'] = __fFormCallback(callback)
+    def setLMB(self, cb : Callable[[fForm], None]):
+        callback = lambda form : cb(form.contents)
+        c_callback = fFormCallback(callback)
         _siberian.fFormSetLMB(self, c_callback)
+        fForm.__instances__[addressof(self)]['lmbCallback'] = c_callback
 
-    def setRMB(self, callback):
-        fForm.__instances__[addressof(self)]['rmbCallback'] = {}
-        fForm.__instances__[addressof(self)]['rmbCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['rmbCallback']['c'] = __fFormCallback(callback)
+    def setRMB(self, cb : Callable[[fForm], None]):
+        callback = lambda form : cb(form.contents)
+        c_callback = fFormCallback(callback)
         _siberian.fFormSetRMB(self, c_callback)
+        fForm.__instances__[addressof(self)]['rmbCallback'] = c_callback
 
-    def setScroll(self, callback):
-        fForm.__instances__[addressof(self)]['scrollCallback'] = {}
-        fForm.__instances__[addressof(self)]['scrollCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['scrollCallback']['c'] = __fFormScrollCallback(callback)
+    def setScroll(self, cb : Callable[[fForm, int], None]):
+        callback = lambda form,scroll : cb(form.contents, scroll)
+        c_callback = fFormScrollCallback(callback)
         _siberian.fFormSetScroll(self, c_callback)
+        fForm.__instances__[addressof(self)]['scrollCallback'] = c_callback
 
-    def setCursorHover(self, callback):
-        fForm.__instances__[addressof(self)]['hoverCallback'] = {}
-        fForm.__instances__[addressof(self)]['hoverCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['hoverCallback']['c'] = __fFormCallback(callback)
+    def setCursorHover(self, cb : Callable[[fForm], None]):
+        callback = lambda form : cb(form.contents)
+        c_callback = fFormCallback(callback)
         _siberian.fFormSetCursorHover(self, c_callback)
+        fForm.__instances__[addressof(self)]['hoverCallback'] = c_callback
 
-    def setCursorRelease(self, callback):
-        fForm.__instances__[addressof(self)]['releaseCallback'] = {}
-        fForm.__instances__[addressof(self)]['releaseCallback']['py'] = callback
-        c_callback = fForm.__instances__[addressof(self)]['releaseCallback']['c'] = __fFormCallback(callback)
-        _siberian.fFormSetCursorHover(self, c_callback)
+    def setCursorRelease(self, cb : Callable[[fForm], None]):
+        callback = lambda form : cb(form.contents)
+        c_callback = fFormCallback(callback)
+        _siberian.fFormSetCursorLeave(self, c_callback)
+        fForm.__instances__[addressof(self)]['unhoverCallback'] = c_callback
 
-    def translateGlobal(self, x, y):
+    def translateGlobal(self, x : float, y : float):
         _siberian.fFormTranslateGlobal(self, x, y)
 
-    def translateLocal(self, x, y):
+    def translateLocal(self, x : float, y : float):
         _siberian.fFormTranslateLocal(self, x, y)
 
-    def rotate(self, angle):
+    def rotate(self, angle : float):
         _siberian.fFormRotate(self, angle)
+
+    def __getitem__(self, key):
+        return fForm.__instances__[addressof(self)]["attribs"][key]
+
+    def __setitem__(self, key, value):
+        fForm.__instances__[addressof(self)]["attribs"][key] = value
+
+    def __contains__(self, item):
+        return item in fForm.__instances__[addressof(self)]["attribs"]
+
+    @staticmethod
+    def clearDeletedForms(*args):
+        for k in list(fForm.__instances__.keys()):
+            v = fForm.__instances__[k]
+            if 'MARK_DELETE' in v:
+                del fForm.__instances__[k]
+                del v
+    @staticmethod
+    def setPostFunctionInterval(interval):
+        _siberian.fFormsSetPostFunctionInterval(interval)
+    
 
 fForm_p = POINTER(fForm)
 
-__fFormCallback = CFUNCTYPE(None, fForm_p)
-__fFormScrollCallback = CFUNCTYPE(None, fForm_p, c_int)
+fFormCallback = CFUNCTYPE(None, fForm_p)
+fFormScrollCallback = CFUNCTYPE(None, fForm_p, c_int)
 
 _siberian.fFormCreate.argtypes = tuple()
 _siberian.fFormCreate.restype = fForm_p
+
+fFormCreate = lambda : _siberian.fFormCreate().contents
+
+_siberian.fFormSetXRayBit.argtypes = (fForm_p,c_bool)
+_siberian.fFormSetXRayBit.restype = None
+
+_siberian.fFormGetXRayBit.argtypes = (fForm_p,)
+_siberian.fFormGetXRayBit.restype = c_bool
 
 _siberian.fFormConstructor.argtypes = (fForm_p,)
 _siberian.fFormConstructor.restype = None
@@ -2141,22 +2343,22 @@ _siberian.fFormAddForm.restype = None
 _siberian.fFormAddElement.argtypes = (fForm_p, c_char_p, c_int, c_float, c_float)
 _siberian.fFormAddElement.restype = fElement_p
 
-_siberian.fFormSetIdle.argtypes = (fForm_p, __fFormCallback)
+_siberian.fFormSetIdle.argtypes = (fForm_p, fFormCallback)
 _siberian.fFormSetIdle.restype = None
 
-_siberian.fFormSetLMB.argtypes = (fForm_p, __fFormCallback)
+_siberian.fFormSetLMB.argtypes = (fForm_p, fFormCallback)
 _siberian.fFormSetLMB.restype = None
 
-_siberian.fFormSetRMB.argtypes = (fForm_p, __fFormCallback)
+_siberian.fFormSetRMB.argtypes = (fForm_p, fFormCallback)
 _siberian.fFormSetRMB.restype = None
 
-_siberian.fFormSetScroll.argtypes = (fForm_p, __fFormScrollCallback)
+_siberian.fFormSetScroll.argtypes = (fForm_p, fFormScrollCallback)
 _siberian.fFormSetScroll.restype = None
 
-_siberian.fFormSetCursorHover.argtypes = (fForm_p, __fFormCallback)
+_siberian.fFormSetCursorHover.argtypes = (fForm_p, fFormCallback)
 _siberian.fFormSetCursorHover.restype = None
 
-_siberian.fFormSetCursorLeave.argtypes = (fForm_p, __fFormCallback)
+_siberian.fFormSetCursorLeave.argtypes = (fForm_p, fFormCallback)
 _siberian.fFormSetCursorLeave.restype = None
 
 _siberian.fFormSetTopLayer.argtypes = (fForm_p,)
@@ -2176,6 +2378,12 @@ _siberian.fFormSetLocalPosition.restype  = None
 
 _siberian.fFormSetGlobalPosition.argtypes = (fForm_p, c_float, c_float)
 _siberian.fFormSetGlobalPosition.restype  = None
+
+_siberian.fFormGetLocalPosition.argtypes = (fForm_p, POINTER(c_float))
+_siberian.fFormGetLocalPosition.restype  = None
+
+_siberian.fFormGetGlobalPosition.argtypes = (fForm_p, POINTER(c_float))
+_siberian.fFormGetGlobalPosition.restype  = None
 
 _siberian.fFormTranslateLocal.argtypes = (fForm_p, c_float, c_float)
 _siberian.fFormTranslateLocal.restype  = None
@@ -2228,6 +2436,22 @@ _siberian.fFormGetHeight.restype  = c_float
 _siberian.fFormSetHeight.argtypes = (fForm_p,c_float)
 _siberian.fFormSetHeight.restype  = None
 
+_siberian.fFormGetChildCount.argtypes = (fForm_p,)
+_siberian.fFormGetChildCount.restype = c_int
+
+_siberian.fFormGetChild.argtypes = (fForm_p, c_int)
+_siberian.fFormGetChild.restype = fForm_p
+
+fFormsCallback = CFUNCTYPE(None)
+
+_siberian.fFormsSetPostFunction.argtypes = (fFormsCallback, )
+_siberian.fFormsSetPostFunction.restype = None
+
+_siberian.fFormsSetPostFunctionInterval.argtypes = (c_int, )
+_siberian.fFormsSetPostFunctionInterval.restype = None
+
+__fFormGC = fFormsCallback(fForm.clearDeletedForms)
+
 class fButton(Structure):
     _fields_ = [('__data', uint8_t*224)]
     __instances__ = {}
@@ -2239,17 +2463,15 @@ class fButton(Structure):
         if callback is None:
             _siberian.fButtonConstructor(pointer(self), text, x, y, width, height, None)
         else:
-            struct['callback'] = {}
-            struct['callback']['py'] = callback
-            struct['callback']['c'] = buttonCallback(callback)
-            _siberian.fButtonConstructor(pointer(self), text, x, y, width, height, struct['callback']['c'])
+            callback = buttonCallback(callback)
+            _siberian.fButtonConstructor(pointer(self), text, x, y, width, height, callback)
+            struct['callback'] = callback
 
     def setCallback(self, callback):
         struct = fButton.__instances__[addressof(self)]
-        struct['callback'] = {}
-        struct['callback']['py'] = callback
-        struct['callback']['c'] = buttonCallback(callback)
-        _siberian.fButtonSetCallback(self, struct['callback']['c'])
+        callback = buttonCallback(callback)
+        _siberian.fButtonSetCallback(self, callback)
+        struct['callback'] = callback
 
     def setText(self, text):
         text = c_string(text)
@@ -2261,7 +2483,7 @@ class fButton(Structure):
 
 buttonCallback = CFUNCTYPE(None, POINTER(fButton))
 
-_siberian.fButtonConstructor.argtypes = (POINTER(fButton), c_char_p, c_float, c_float, c_int, c_int)
+_siberian.fButtonConstructor.argtypes = (POINTER(fButton), c_char_p, c_int, c_int, c_int, c_int)
 _siberian.fButtonConstructor.restype = None
 
 _siberian.fButtonSetCallback.argtypes = (POINTER(fButton), buttonCallback)
@@ -2322,21 +2544,21 @@ sActionLoad.argtypes = (POINTER(sScene), c_char_p, c_char_p)
 
 sObjectGetScene = _siberian.sObjectGetScene
 _siberian.sObjectGetScene.restype = POINTER(sScene)
-_siberian.sObjectGetScene.argtypes = (POINTER(sObject),)
+_siberian.sObjectGetScene.argtypes = (sObject_p,)
 
 sSceneSetScript = _siberian.sSceneSetScript
 sSceneSetScript.restype = None
 sSceneSetScript.argtypes = (POINTER(sScene), behaviour)
 
 sSceneGetObject = _siberian.sSceneGetObject
-_siberian.sSceneGetObject.restype = POINTER(sObject)
+_siberian.sSceneGetObject.restype = sObject_p
 _siberian.sSceneGetObject.argtypes = (POINTER(sScene), c_char_p)
 
 _siberian.sSceneGetMaterial.argtypes = POINTER(sScene), c_char_p
 _siberian.sSceneGetMaterial.restype = POINTER(sMaterial)
 
 sSceneAddObject = _siberian.sSceneAddObject
-_siberian.sSceneAddObject.restype = POINTER(sObject)
+_siberian.sSceneAddObject.restype = sObject_p
 _siberian.sSceneAddObject.argtypes = (POINTER(sScene), c_char_p)
 
 _siberian.sSceneLoad.argtypes = POINTER(sScene), c_char_p
@@ -2361,6 +2583,12 @@ sEngineSetSwapInterval.restype = None
 sEngineSetActiveScene = _siberian.sEngineSetActiveScene
 sEngineSetActiveScene.argtypes = POINTER(sScene),
 sEngineSetActiveScene.restype = None
+
+_siberian.sEngineGetActiveScene.argtypes = tuple()
+_siberian.sEngineGetActiveScene.restype = POINTER(sScene)
+
+def sEngineGetActiveScene() -> sScene:
+    return _siberian.sEngineGetActiveScene().contents
 
 sGetFrameTime = _siberian.sGetFrameTime
 sGetFrameTime.restype = double
@@ -2407,8 +2635,8 @@ sKeyboardGetKeyState.restype = c_int
 # game_functions
 #sScreenshot = _siberian.screenshot
 _siberian.sCharacterInit.argtypes = (
-    POINTER(sScene), POINTER(sObject), c_char_p)
-_siberian.sCharacterInit.restype = POINTER(sObject)
+    POINTER(sScene), sObject_p, c_char_p)
+_siberian.sCharacterInit.restype = sObject_p
 
 
 def sCharacterInit(scene, obj, name):
@@ -2416,8 +2644,8 @@ def sCharacterInit(scene, obj, name):
 
 
 _siberian.sMobInit.argtypes = (
-    POINTER(sScene), POINTER(sObject), c_char_p, laType)
-_siberian.sMobInit.restype = POINTER(sObject)
+    POINTER(sScene), sObject_p, c_char_p, laType)
+_siberian.sMobInit.restype = sObject_p
 
 
 def sMobInit(scene, obj, name, bbox): return _siberian.sMobInit(
@@ -2425,15 +2653,15 @@ def sMobInit(scene, obj, name, bbox): return _siberian.sMobInit(
 
 
 class sVehicle4Wheel(Structure):
-    _fields_ = [("_body", POINTER(sObject)),
-                ("_flw", POINTER(sObject)),
-                ("_frw", POINTER(sObject)),
-                ("_blw", POINTER(sObject)),
-                ("_brw", POINTER(sObject)),
-                ("_fls", POINTER(sObject)),
-                ("_frs", POINTER(sObject)),
-                ("_bls", POINTER(sObject)),
-                ("_brs", POINTER(sObject)),
+    _fields_ = [("_body", sObject_p),
+                ("_flw", sObject_p),
+                ("_frw", sObject_p),
+                ("_blw", sObject_p),
+                ("_brw", sObject_p),
+                ("_fls", sObject_p),
+                ("_frs", sObject_p),
+                ("_bls", sObject_p),
+                ("_brs", sObject_p),
                 ("_max_speed", c_float),
                 ("_max_torque", c_float),
                 ("_max_speed", c_void_p*8),
@@ -2449,7 +2677,7 @@ class sVehicle4Wheel(Structure):
                 ("_gas", c_float)]
 
     def control(self):
-        _siberian.sVehicleController(self, cast(0, POINTER(sObject)))
+        _siberian.sVehicleController(self, cast(0, sObject_p))
 
     def camControl(self, camera):
         _siberian.sVehicleController(self, camera)
@@ -2482,7 +2710,7 @@ _siberian.sVehicleInit.argtypes = POINTER(
 _siberian.sVehicleInit.restype = None
 
 _siberian.sVehicleController.argtypes = POINTER(
-    sVehicle4Wheel), POINTER(sObject)
+    sVehicle4Wheel), sObject_p
 _siberian.sVehicleController.restype = None
 
 _siberian.sVehicleSetTireFriction.argtypes = POINTER(sVehicle4Wheel), c_float
@@ -2595,7 +2823,7 @@ class sPhysicsJoint(c_void_p):
 
 
 _siberian.sPhysicsCreateAnchor.argtypes = (
-    POINTER(sObject), POINTER(sObject), dReal, dReal, laType, laType, c_bool)
+    sObject_p, sObject_p, dReal, dReal, laType, laType, c_bool)
 _siberian.sPhysicsCreateAnchor.restype = sPhysicsJoint
 sPhysicsCreateAnchor = lambda *args: _siberian.sPhysicsCreateAnchor(0, *args)
 
@@ -2623,7 +2851,7 @@ _siberian.sPhysicsJointGetAxisCount.argtypes = (sPhysicsJoint,)
 _siberian.sPhysicsJointGetAxisCount.restype = c_int
 
 _siberian.sBicycleAssemble.argtypes = (
-    POINTER(sObject), POINTER(sObject), POINTER(sObject), POINTER(sObject))
+    sObject_p, sObject_p, sObject_p, sObject_p)
 _siberian.sBicycleAssemble.restype = None
 sBicycleAssemble = _siberian.sBicycleAssemble
 
@@ -2648,20 +2876,20 @@ def sVehicle(scene, body,
 
 class sRagdoll(Structure):
     _fields_ = [
-        ('__head', POINTER(sObject)),
-        ('__spine1', POINTER(sObject)),
-        ('__spine2', POINTER(sObject)),
-        ('__spine3', POINTER(sObject)),
-        ('__lShoulder', POINTER(sObject)),
-        ('__lForearm', POINTER(sObject)),
-        ('__rShoulder', POINTER(sObject)),
-        ('__rForearm', POINTER(sObject)),
-        ('__lLeg', POINTER(sObject)),
-        ('__lKnee', POINTER(sObject)),
-        ('__rLeg', POINTER(sObject)),
-        ('__rKnee', POINTER(sObject)),
-        ('__lFoot', POINTER(sObject)),
-        ('__rFoot', POINTER(sObject)),
+        ('__head', sObject_p),
+        ('__spine1', sObject_p),
+        ('__spine2', sObject_p),
+        ('__spine3', sObject_p),
+        ('__lShoulder', sObject_p),
+        ('__lForearm', sObject_p),
+        ('__rShoulder', sObject_p),
+        ('__rForearm', sObject_p),
+        ('__lLeg', sObject_p),
+        ('__lKnee', sObject_p),
+        ('__rLeg', sObject_p),
+        ('__rKnee', sObject_p),
+        ('__lFoot', sObject_p),
+        ('__rFoot', sObject_p),
         ('joints', sPhysicsJoint*16),
         ('__group', dJointGroupID)]
 
@@ -2845,7 +3073,7 @@ _siberian.sRagdollInit.argtypes = (
 _siberian.sRagdollInit.restype = c_int
 
 sPlayerInit = _siberian.sPlayerInit
-sPlayerInit.argtypes = (POINTER(sScene), POINTER(sObject))
+sPlayerInit.argtypes = (POINTER(sScene), sObject_p)
 sPlayerSetImpact = _siberian.sPlayerSetImpact
 sPlayerSetImpact.argtypes = (c_float, c_float, c_float)
 
@@ -2857,7 +3085,11 @@ sPlayerMouseLookOff = _siberian.sPlayerMouseLookOff
 sPlayerMouseLookOff.argtypes = (POINTER(sScene),)
 sPlayerMouseLookOff.restype = None
 
-sEngineStartOpenGL = _siberian.sEngineStartOpenGL
+def sEngineStartOpenGL():
+    _siberian.sEngineStartOpenGL()
+    _siberian.fFormsSetPostFunction(__fFormGC)
+    fForm.setPostFunctionInterval(60)
+
 sEngineStartLoop = _siberian.sEngineStartLoop
 
 #sStreamMJPEGOpen = _siberian.open_videostream

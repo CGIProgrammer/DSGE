@@ -1087,6 +1087,7 @@ sTexture sCubeMap;
 
 char ssbttn=0;
 char str=0;
+static int ml = 1;
 void sSceneFunctionLoop(sScene* scene)
 {
 	sun = sSceneGetObject(scene,"lsun");
@@ -1100,6 +1101,19 @@ void sSceneFunctionLoop(sScene* scene)
 		
 		puts(asctime(timeinfo));
 		sCameraTakeScreenshot(&scene->camera, asctime(timeinfo));
+	}
+	if (sKeyboardGetKeyState(GLFW_KEY_F1)==1)
+	{
+		ml = !ml;
+		if (ml)
+		{
+			sPlayerMouseLookOn(scene);
+		}
+		else
+		{
+			sPlayerMouseLookOff(scene);
+		}
+		
 	}
 	//sObjectRotateGlobal3f(&scene->camera, 0.0,0.0,-0.01);
 	//LAPrint(scene->camera.transform_global);

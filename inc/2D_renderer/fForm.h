@@ -41,17 +41,18 @@ typedef struct
 	void* data;
 } fForm;
 
-fForm* fFormCreate(void);
-void fFormConstructor(fForm* form);
-void fFormRemoveParent(fForm* gp);
-void fFormDelete(fForm* form);
-void fFormMarkDelete(fForm* form);
-int fFormCheckHoverBounds(fForm* form, float x, float y);
-void fFormAddForm(fForm* form, fForm* child);
+fForm*    fFormCreate(void); // "Конструктор" 1
+void      fFormConstructor(fForm* form); // "Конструктор" 2
+void      fFormRemoveParent(fForm* gp);
+void      fFormMarkDelete(fForm* form);
+int       fFormCheckHoverBounds(fForm* form, float x, float y);
+void      fFormAddForm(fForm* form, fForm* child);
 fElement* fFormAddElement(fForm* form, char* text, int font_size, float width, float height);
-fForm* fFormGetChild(fForm* form, int index);
+fForm*    fFormGetChild(fForm* form, int index);
+int       fFormGetChildCount(fForm* form);
 fElement* fFormGetElement(fForm* form, int index);
-void fFormDraw(fForm* form, int z);
+void      fFormDraw(fForm* form, int z);
+void      fFormDelete(fForm* form); // "Деструктор"
 
 void fFormSetVisibleBit(fForm* form, _Bool bit);
 void fFormSetLimitsBit(fForm* form, _Bool bit);
@@ -63,10 +64,10 @@ _Bool fFormGetLimitsBit(fForm* form);
 _Bool fFormGetXRayBit(fForm* form);
 _Bool fFormGetGhostBit(fForm* form);
 
-void fFormSetWidth(fForm* form, int w);
-void fFormSetHeight(fForm* form, int h);
-int  fFormGetWidth(fForm* form);
-int  fFormGetHeight(fForm* form);
+void fFormSetWidth(fForm* form, float w);
+void fFormSetHeight(fForm* form, float h);
+float  fFormGetWidth(fForm* form);
+float  fFormGetHeight(fForm* form);
 
 void fFormSetIdle(fForm* form, void(*callback)(fForm*));
 void fFormSetLMB(fForm* form, void(*callback)(fForm*));
@@ -94,6 +95,8 @@ float fFormGetHorizontalScrolling(fForm* form);
 
 void fFormSetLocalPosition(fForm* form, float x, float y);
 void fFormSetGlobalPosition(fForm* form, float x, float y);
+void fFormGetLocalPosition(fForm* form, float* pos);
+void fFormGetGlobalPosition(fForm* form, float* pos);
 
 void fFormTranslateGlobal(fForm* form, float x, float y);
 void fFormTranslateLocal(fForm* form, float x, float y);
@@ -107,6 +110,8 @@ float fFormGetLocalRotation(fForm* form);
 float fFormGetGlobalRotation(fForm* form);
 
 int fFormCheckHover(fForm* form, float x, float y);
+void fFormsSetPostFunctionInterval(int interval);
+void fFormsSetPostFunction(void(*callback)(void));
 void fFormsProcess(void);
 
 #endif /* SRC_FFORM_H_ */

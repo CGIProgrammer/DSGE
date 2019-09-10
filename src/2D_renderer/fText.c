@@ -26,6 +26,8 @@ fElement* fElementCreate(char* text, int font_size, int width, int height, int c
 	ft->height = height;
 	ft->font = &default_font;
 	ft->align = -1;
+	ft->uv_size[0] = 1;
+	ft->uv_size[1] = 1;
 	if (text)
 	{
 		fElementSetText(ft, text);
@@ -175,15 +177,15 @@ void fElementApplyTransformToGlobal(fElement* ft)
 	{
 		if (ft->lock_rotation)
 		{
-			ft->transform_global[2] = ft->transform[2] + (form->transform_global[2] - form->xscroll);
-			ft->transform_global[5] = ft->transform[5] + (form->transform_global[5] - form->yscroll);
+			ft->transform_global[2] = ft->transform[2] + (form->transform_global[2]/* - form->xscroll*/);
+			ft->transform_global[5] = ft->transform[5] + (form->transform_global[5]/* - form->yscroll*/);
 		}
 		else
 		{
 			float m[9];
 			memcpy(m, form->transform_global, sizeof(float[9]));
-			m[2] -= form->xscroll;
-			m[5] -= form->yscroll;
+			//m[2] -= form->xscroll;
+			//m[5] -= form->yscroll;
 			MulArrays3x3(ft->transform_global, ft->transform, m);
 		}
 	}
@@ -345,6 +347,40 @@ char* fElementGetTextPtr(fElement* element)
 	return element->text;
 }
 
+void fElementSetImage(fElement* element, sTexture* image)
+{
+	element->bg_image = image;
+}
+
+sTexture* fElementGetImage(fElement* element)
+{
+	return element->bg_image;
+}
+
+void fElementSetImageCoords(fElement* element, float* coords)
+{
+	element->uv_start[0] = coords[0];
+	element->uv_start[1] = coords[1];
+}
+
+void fElementGetImageCoords(fElement* element, float* coords)
+{
+	coords[0] = element->uv_start[0];
+	coords[1] = element->uv_start[1];
+}
+
+void fElementSetImageSize(fElement* element, float* size)
+{
+	element->uv_size[0] = size[0];
+	element->uv_size[1] = size[1];
+}
+
+void fElementGetImageSize(fElement* element, float* size)
+{
+	size[0] = element->uv_size[0];
+	size[1] = element->uv_size[1];
+}
+
 void fElementDrawRect(fElement* element)
 {
 	if (element->bg_color[3]==0) return;
@@ -372,6 +408,8 @@ void fElementDrawRect(fElement* element)
 	glc(sMaterialUniformf(activeShader,"height", y));
 	glc(sMaterialUniformfv(activeShader,"color", element->bg_color, 4));
 	glc(sMaterialUniformfv(activeShader,"transform", element->transform_global, 9));
+	glc(sMaterialUniformfv(activeShader,"uv_start", element->uv_start, 2));
+	glc(sMaterialUniformfv(activeShader,"uv_size", element->uv_size, 2));
 	if (element->bg_image) {
 		glc(sMaterialUniformi(activeShader,"use_texture", 1));
 		glc(sMaterialTexture(activeShader, "background", element->bg_image->ID, 3));

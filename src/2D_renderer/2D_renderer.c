@@ -153,23 +153,6 @@ void sEngineSetSwapInterval(uint32_t interval);
 
 void test()
 {
-	_renderRayTracing = 0;
-	sEngineCreateWindow(800,480,0);
-	sMouseShow();
-	sEngineStartOpenGL();
-	sEngineSetSwapInterval(1);
-
-	glc(glBindFramebuffer(GL_FRAMEBUFFER, 0));
-	glc(glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT));
-
-	glc(glBindFramebuffer(GL_FRAMEBUFFER, 0));
-	glc(glViewport(0,0,sEngineGetWidth(),sEngineGetHeight()));
-	glc(glClearColor(0.15,0.15,0.15,1.0));
-	glc(glClearStencil(0x00));
-	glc(glStencilMask(0xFF));
-	glc(glDisable(GL_CULL_FACE));
-	glc(glEnable(GL_STENCIL_TEST));
-
 	printf("loop %lld\n", sGetAllocatedMem());
 
 	fButtonCreate((char*)"Test", 100, 100,-1,-1, 0);
@@ -185,17 +168,4 @@ void test()
 	fListAddItem(&list, "kajsdhjk");
 	fListAddItem(&list, "kajsdhjk");
 	fListAddItem(&list, "kajsdhjk");
-	float cur_x, cur_y;
-	float p_x, p_y;
-	sMouseGetPosition(&cur_x, &cur_y);
-	sMouseGetPosition(&p_x, &p_y);
-	while (!sEngineShouldClose())
-	{
-		glClear(GL_COLOR_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-		fFormsProcess();
-
-		logic_thread(0);
-		sEngineSwapBuffers();
-	}
-	sEngineClose();
 }

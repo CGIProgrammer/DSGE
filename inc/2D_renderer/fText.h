@@ -45,6 +45,13 @@ _Bool fElementGetVisibleBit(fElement* element);
 void fElementSetLockRotationBit(fElement* element, _Bool bit);
 _Bool fElementGetLockRotationBit(fElement* element);
 
+void fElementSetImage(fElement* element, sTexture* image);
+sTexture* fElementGetImage(fElement* element);
+void fElementSetImageCoords(fElement* element, float* coords);
+void fElementGetImageCoords(fElement* element, float* coords);
+void fElementSetImageSize(fElement* element, float* size);
+void fElementGetImageSize(fElement* element, float* size);
+
 void fElementSetText(fElement* element, char* text);
 int  fElementGetTextLength(fElement* element);
 void fElementGetText(fElement* element, char* text, int length);

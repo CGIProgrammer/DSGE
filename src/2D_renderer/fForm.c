@@ -9,6 +9,8 @@
 
 extern fForm**  forms;
 extern int forms_count;
+static void(*garbage_collector)(void) = 0;
+static int _postfunc_interval = 0, _postfunc_interval_counter = 0;
 
 //void sMaterialUniformi(GLuint, char*, long);
 void sMaterialUniformf(GLuint, char*, float);
@@ -60,8 +62,15 @@ fElement* fFormGetElement(fForm* form, int index)
 	return form->elements[index];
 }
 
+int fFormGetChildCount(fForm* form)
+{
+	if (form) return form->child_count;
+	else return 0;
+}
+
 fForm* fFormGetChild(fForm* form, int index)
 {
+	if (!form) return 0;
 	if (index<0)
 	{
 		index += form->child_count;
@@ -75,13 +84,25 @@ fForm* fFormGetChild(fForm* form, int index)
 
 void fFormAddForm(fForm* form, fForm* child)
 {
-	for (fForm* parent = form->parent;parent;parent = form->parent)
+	fForm* stack[128];
+	int i=0;
+	for (fForm* parent = form->parent;parent;parent = parent->parent)
 	{
-		if (parent==child)
+		for (int j=0;j<i;j++)
 		{
-			fputs("Parent looping detected", stderr);
-			return;
+			if (stack[j]==parent)
+			{
+				fputs("Parent looping detected\n", stderr);
+				for (int k=0;k<i;k++)
+				{
+					fprintf(stderr, "%d -> ", stack[k]->ID);
+				}
+				fprintf(stderr, "%d\n", parent->ID);
+				exit(-1);
+			}
 		}
+		stack[i] = parent;
+		i++;
 	}
 	fFormRemoveParent(child);
 	listPushBack((void**)&form->children, &form->child_count, &child, sizeof(&child));
@@ -181,6 +202,7 @@ void fFormDrawBounds(fForm* form)
 	glc(sMaterialUniformf(activeShader,"height", y));
 	glc(sMaterialUniformfv(activeShader,"color", color, 4));
 	glc(sMaterialUniformfv(activeShader,"transform", form->transform_global, 9));
+	glc(sMaterialUniformi(activeShader,"use_texture", 0));
 
 	glc(glDrawElements(GL_TRIANGLES, 6, 0x1401+sizeof(index_t),BUFFER_OFFSET(0)));
 }
@@ -190,7 +212,6 @@ void fFormDraw(fForm* form, int z)
 	_Bool limits = form->limits;
 
 	glc(glEnable(GL_STENCIL_TEST));
-	glc(glDisable(GL_DEPTH_TEST));
 	glc(glStencilMask(0xFF));
 
 	if (limits)
@@ -211,7 +232,18 @@ void fFormDraw(fForm* form, int z)
 	}
 	for (int i=0;i<form->child_count; i++)
 	{
-		fFormDraw(form->children[i], z+limits);
+		fForm* child = form->children[i];
+		if (limits)
+		{
+			if (child->transform[2]-form->xscroll > form->width ||
+				child->transform[5]-form->yscroll > form->height ||
+				child->transform[2]-form->xscroll+child->width < 0 ||
+				child->transform[5]-form->yscroll+child->width < 0)
+				{
+					continue;
+				}
+		}
+		fFormDraw(child, z+limits);
 	}
 	if (limits)
 	{
@@ -238,20 +270,20 @@ _Bool fFormGetLimitsBit(fForm* form) {return form->limits;}
 _Bool fFormGetXRayBit(fForm* form) {return form->xray;}
 _Bool fFormGetGhostBit(fForm* form) {return form->ghost;}
 
-void fFormSetWidth(fForm* form, int w)
+void fFormSetWidth(fForm* form, float w)
 {
 	if (w<0) w = 0;
 	form->width = w;
 };
 
-void fFormSetHeight(fForm* form, int h)
+void fFormSetHeight(fForm* form, float h)
 {
 	if (h<0) h = 0;
 	form->height = h;
 };
 
-int  fFormGetWidth(fForm* form)  {return form->width;};
-int  fFormGetHeight(fForm* form) {return form->height;};
+float  fFormGetWidth(fForm* form)  {return form->width;};
+float  fFormGetHeight(fForm* form) {return form->height;};
 
 void fFormApplyTransformToLocal(fForm* form)
 {
@@ -368,6 +400,20 @@ void fFormSetLocalPosition(fForm* form, float x, float y)
 	form->transform[5] = y;
 	fFormApplyTransformToGlobal(form);
 	fFormApplyTransformToChildren(form);
+}
+
+void fFormGetGlobalPosition(fForm* form, float* pos)
+{
+	if (pos==0) return;
+	pos[0] = form->transform_global[2];
+	pos[1] = form->transform_global[5];
+}
+
+void fFormGetLocalPosition(fForm* form, float* pos)
+{
+	if (pos==0) return;
+	pos[0] = form->transform[2];
+	pos[1] = form->transform[5];
 }
 
 void fFormTranslateGlobal(fForm* form, float x, float y)
@@ -527,7 +573,7 @@ void fFormExecuteFunctions(fForm* form)
 	{
 		form->on_release((void*)form);
 	}
-	if (form->on_scroll)
+	if (form->on_scroll && form->hovered)
 	{
 		int scrolling = (int)sMouseGetVerticalScroll();
 		form->on_scroll((void*)form, scrolling);
@@ -547,16 +593,28 @@ void fFormExecuteFunctions(fForm* form)
 	}
 }
 
+void fFormsSetPostFunctionInterval(int interval)
+{
+	_postfunc_interval = interval;
+}
+
+void fFormsSetPostFunction(void(*callback)(void))
+{
+	garbage_collector = callback;
+}
+
 void fFormsDraw(void)
 {
 	glc(glBindFramebuffer(GL_FRAMEBUFFER, 0));
 	glc(glViewport(0,0,sEngineGetWidth(),sEngineGetHeight()));
-	glc(glClearColor(0.15,0.15,0.15,1.0));
+	glc(glClearColor(0.15,0.15,0.15,0.0));
 	glc(glClearStencil(0x00));
 	glc(glStencilMask(0xFF));
 	glc(glDisable(GL_CULL_FACE));
+	glc(glDisable(GL_DEPTH_TEST));
 	glc(glEnable(GL_STENCIL_TEST));
-	glc(glClear(GL_STENCIL_BUFFER_BIT));
+	glc(glEnable(GL_BLEND));
+	glc(glClear(GL_STENCIL_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
 
 	float x,y;
 	sMouseGetPosition(&x, &y);
@@ -591,5 +649,14 @@ void fFormsProcess(void)
 				i = forms_count - 1;
 			}
 		}
+	}
+	if (garbage_collector)
+	{
+		if (_postfunc_interval_counter>=_postfunc_interval)
+		{
+			garbage_collector();
+			_postfunc_interval_counter = 0;
+		}
+		_postfunc_interval_counter++;
 	}
 }

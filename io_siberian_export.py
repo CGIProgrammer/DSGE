@@ -273,7 +273,6 @@ def save_mesh(ob, scene, custom_name=None):
         file.write(data)
     
     if skin:
-        print('Mesh with',len(bones), 'links')
         file.write(pack('<I', len(bones)))
         for b in bones:
             link_matrix = b.matrix_local
@@ -290,7 +289,7 @@ def meshesArray(scene):
     meshes = set()
     for i in scene.objects:
         if i.type == 'MESH':
-            if [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
+            if 'Ignore prefixes' in scene and [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
                 continue
             mesh = getMeshModName(i).encode() + b'\n'
             if i.data.materials and i.data.materials[0]:
@@ -375,7 +374,7 @@ def lightsArray(scene):
     lights = b''
     for i in scene.objects:
         if (i.type == 'LAMP' or i.type == 'LIGHT') and types[i.data.type] is not None:
-            if [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
+            if 'Ignore prefixes' in scene and [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
                 continue
             print(i.name)
             l = i.data
@@ -426,7 +425,7 @@ def objectsArray(scene, save_meshes):
     obj_count = 0
     for i in scene.objects:
         if i.type == 'MESH':
-            if [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
+            if 'Ignore prefixes' in scene and [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
                 continue
             print(i.name)
             parent_name = '' if i.parent is None else getTName(i.parent)
@@ -474,7 +473,7 @@ def skeletonsArray(scene):
     skeletons = b''
     for i in scene.objects:
         if i.type != 'ARMATURE': continue
-        if [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
+        if 'Ignore prefixes' in scene and [1 for p in scene['Ignore prefixes'] if i.name.startswith(p)]:
             continue
         skel = i
         setSkeletonDeformFlags(skel)
@@ -533,13 +532,13 @@ def camera(scene):
     
     return cname + pname + cmat + cangle
 
-def save_action(scene, skel, act_name, prefix=""):
+def save_action(scene, skel, act_name):
     print('Action',act_name,'for',skel.name)
     hash = hashAction(bpy.data.actions[act_name])
     hash = pack('<d', hash)
     
     try:
-        file = open(pjoin(ACTION_PATH, prefix + act_name + '.anim'), 'rb')
+        file = open(pjoin(ACTION_PATH,act_name + '.anim'), 'rb')
         h = file.read(8) 
         file.close()
         if h==hash:
@@ -547,7 +546,7 @@ def save_action(scene, skel, act_name, prefix=""):
             return
     except:
         pass
-    file = open(pjoin(ACTION_PATH, prefix + act_name + '.anim'), 'wb')
+    file = open(pjoin(ACTION_PATH, act_name + '.anim'), 'wb')
     pose = skel.data.pose_position
     skel.data.pose_position = "POSE"
             
@@ -597,19 +596,12 @@ def actionsArray(scene):
             for b in skel.pose.bones:
                 b['leke'] = skel
             
-            bonesNames = {i.name for i in getDataBones(skel)}
-            allBonesNames = {i.name for i in skel.data.bones}
+            bonesNames = {i.name for i in skel.data.bones}
             for act in bpy.data.actions:
                 actBonesNames = {i.name for i in act.groups}
-                crossing = actBonesNames&bonesNames
-                if actBonesNames&allBonesNames:
-                    #print(skel.name,act.name,len(crossing))
-                    if actBonesNames&allBonesNames==actBonesNames:
-                        prefix = ""
-                    else:
-                        prefix = skel.name + "_"
-                    actions += (prefix + act.name).encode() + b'\n'
-                    save_action(scene, skel, act.name, prefix)
+                if (actBonesNames&bonesNames)==actBonesNames:
+                    actions += act.name.encode() + b'\n'
+                    save_action(scene, skel, act.name)
                     count += 1
                 
     return pack('<I', count) + actions
@@ -624,7 +616,7 @@ def export():
     dir = ''
     t1 = time()
     print('Export scene')
-    file = open(join_path(dir, 'scenes', scene.name + '.bin'), 'wb')
+    file = open(join_path(dir, 'scenes', scene.name + '.scene'), 'wb')
 
     print('=== Camera ======')
     file.write(camera(scene))
@@ -716,7 +708,7 @@ def run():
     if platform.system()=='Windows':
         call('python SGM.py', shell=True)
     else:
-        call('./Game -hdr -ssgi -ssr', shell=True)
+        call('./Game -ssr -ssgi -hdr -scene {}'.format(scene.name), shell=True)
     #reload(sgm)
     
     #t = threading.Thread(target=run_sgm, args=(scene,))

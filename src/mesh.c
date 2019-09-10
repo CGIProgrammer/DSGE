@@ -81,6 +81,14 @@ void sMeshDraw(sMesh* mesh)
 	glDrawElements(GL_TRIANGLES,mesh->ind_count,GL_UNSIGNED_SHORT,BUFFER_OFFSET(0));
 }
 
+void sMeshConstructor(sMesh* mesh, char* name)
+{
+	memset(mesh, 0, sizeof(mesh));
+	strcpy(mesh->name, name);
+	mesh->hash = S_Name2hash(name);
+	
+}
+
 void sMeshLoad(sMesh* mesh, sMaterial* mat,char* name)
 {
 	char filename[256];

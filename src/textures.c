@@ -191,6 +191,77 @@ void sTextureGenerateBlueNoise(sTexture* texture)
 	}
 }
 
+int sTextureLoadDDSFromString(sTexture* texture, char* content)
+{
+	glGetError();
+	void* dataPtr = content;
+
+	uint32_t signature    = *(uint32_t*)(dataPtr);
+	uint32_t height       = *(uint32_t*)(dataPtr+12);
+	uint32_t width        = *(uint32_t*)(dataPtr+16);
+	uint32_t mipMapNumber = *(uint32_t*)(dataPtr+28);
+	uint32_t formatCode   = *(uint32_t*)(dataPtr+84);
+
+	if (signature!=DDS_SIGNATURE)
+	{
+		//fprintf(stderr,"%s is not a DDS file\n",name);
+		return 2;
+	}
+
+	texture->width = width;
+	texture->height = height;
+	//printf("%hux%hu\n",width,height);
+
+	uint32_t format;
+	switch(formatCode)
+	{
+	case FORMAT_CODE_DXT1:
+		format = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+		break;
+	case FORMAT_CODE_DXT3:
+		format = GL_COMPRESSED_RGBA_S3TC_DXT3_EXT;
+		break;
+	case FORMAT_CODE_DXT5:
+		format = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+		break;
+	default:
+		return 1;
+	}
+	uint32_t blockSize = (format == GL_COMPRESSED_RGBA_S3TC_DXT1_EXT) ? 8 : 16;
+	uint32_t offset = DDS_HEADER_SIZE;
+
+	//puts("glGenTextures");
+	glc(glGenTextures(1,&texture->ID));
+	//puts("glBindTexture");
+	glc(glBindTexture(GL_TEXTURE_2D,texture->ID));
+	for (uint32_t level = 0; level < mipMapNumber; ++level)
+	{
+		//printf("%d texture lod\n", level);
+		uint32_t size = ((width+3)/4)*((height+3)/4)*blockSize;
+
+		glc(glCompressedTexImage2D(GL_TEXTURE_2D, level, format, width, height, 0, size, dataPtr + offset));
+		width = width > 1 ? width >> 1 : 1;
+		height = height > 1 ? height >> 1 : 1;
+		offset += size;
+	}
+	GLenum err = glGetError();
+	if (err!=GL_NO_ERROR)
+	{
+		fprintf(stderr,"Texture error %d\n", err);
+		//exit(-1);
+	}
+	//glGenerateMipmap(type);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, 16);
+	//puts("glTexParameteri");
+
+	glc(glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR));
+	glc(glTexParameteri( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+
+	//puts("glBindTexture");
+	glc(glBindTexture(GL_TEXTURE_2D, 0));
+	return 0;
+}
+
 int sTextureLoadDDS(sTexture* texture,char* name)
 {
 	glGetError();
