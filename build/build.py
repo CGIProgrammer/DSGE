@@ -63,6 +63,7 @@ if platform.system()=='Windows':
     #gcc_dir = '..\\mingw32\\bin\\gcc'
 else:
     libs = [
+        'pthread',
         'openal',
         'glfw',
         'ode',
