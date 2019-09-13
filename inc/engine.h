@@ -28,8 +28,8 @@
 
 
 //#define DRAW_BONES
-//#define glc(func) func
-#define glc(func) {func;GLenum err=glGetError(); if (err) printf("GLerror:%s:%d : %d\n",__FILE__,__LINE__,err);}
+#define glc(func) func
+//#define glc(func) {func;GLenum err=glGetError(); if (err) printf("GLerror:%s:%d : %d\n",__FILE__,__LINE__,err);}
 
 // Check windows
 #if _WIN32 || _WIN64
@@ -38,6 +38,12 @@ typedef uint64_t intptr;
 #else
 typedef uint32_t intptr;
 #endif
+#endif
+
+#define THREADS
+
+#ifdef THREADS
+#include "pthread.h"
 #endif
 
 // Check GCC
@@ -312,6 +318,7 @@ typedef struct
 
 void S_Vertex_Calc_Normal(sVertex*);
 void sMeshMakeBuffers(sMesh* mesh);
+void sMeshMakeDynamicBuffers(sMesh* mesh);
 void sMeshDraw(sMesh* mesh);
 void sMeshLoad(sMesh* mesh, sMaterial* mat,char* name);
 void sMeshDelete(sMesh* mesh);
