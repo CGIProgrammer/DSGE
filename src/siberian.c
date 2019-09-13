@@ -141,19 +141,21 @@ int main(void)
 	sRenderSetMotionBlur(1);
 	sRenderSetReflections(1);
 	sRenderSetHDR(1);
-	sEngineCreateWindow(1024,480,0);
-	sEngineSetSwapInterval(0);
+	sEngineCreateWindow(0,0,1);
+	sEngineSetSwapInterval(1);
 	sEngineStartOpenGL();
 	sScene scene;
 	memset(&scene, 0, sizeof(scene));
 	sTextureLoadCubemap(&cbm, "data/textures/cubemap/small_room.dds");
 
-	sSceneLoad(&scene,"shooting_range");
+	sSceneLoad(&scene,"demo_ranch");
 	//scene.camera.view_point = sSceneGetObject(&scene, "oКуб");
 	sEngineSetActiveScene(&scene);
 	sSceneSetSkyTexture(&scene, &cbm);
-	sSkeleton* rig = sSceneGetObject(&scene, "smetarig");
-	sPlayerInit(&scene, rig);
+	sSkeleton* rig = sSceneGetObject(&scene, "sBaseCharacter_rig");
+	if (rig)
+		sSkeletonSetPlayAction(rig, "BaseCharacter_bicycle", 0, ACTION_LOOP, 30, 66, 1);
+	sPlayerInit(&scene, 0);
 	sPlayerMouseLookOn(&scene);
 
 	/*fForm* list;

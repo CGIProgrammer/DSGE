@@ -356,13 +356,13 @@ static dGeomID load_triangle_mesh(char* name,sScene* scene)
 		readf(&mesh->uv2,1,1,fp);
 		readf(&mesh->ind_count,1,4,fp);mesh->indices = sCalloc(sizeof(index_t),mesh->ind_count);
 		readf(mesh->indices,sizeof(index_t),(size_s)mesh->ind_count,fp);
-		readf(&mesh->vert_count,1,4,fp);mesh->vertices = sCalloc(sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count);
-		readf(mesh->vertices,sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count,fp);
+		readf(&mesh->vert_count,1,4,fp);mesh->vertices = sCalloc(sizeof(smVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count);
+		readf(mesh->vertices,sizeof(smVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count,fp);
 		fclose(fp);
 	}
 
 	dGeomTriMeshDataBuildSingle(mesh_data,
-								mesh->vertices,sizeof(sVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count,
+								mesh->vertices,sizeof(smVertex)+mesh->deformed*12+mesh->uv2*8,mesh->vert_count,
 								mesh->indices,mesh->ind_count,sizeof(uint32_t[3]));
 								//,((void*)mesh->vertices) + 12);
 	geom = dCreateTriMesh(scene->space,mesh_data,0,0,0);

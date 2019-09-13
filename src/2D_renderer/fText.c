@@ -388,16 +388,10 @@ void fElementDrawRect(fElement* element)
 	glc(glBindBuffer(GL_ARRAY_BUFFER, _rectangle.VBO));
 	glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _rectangle.IBO));
 
-	glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)0));
+	glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)0));
 	glc(glEnableVertexAttribArray(0));
-	glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)12));
+	glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)12));
 	glc(glEnableVertexAttribArray(1));
-	glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)24));
-	glc(glEnableVertexAttribArray(2));
-	glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)32));
-	glc(glEnableVertexAttribArray(3));
-	glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)44));
-	glc(glEnableVertexAttribArray(4));
 
 	int x = sEngineGetWidth();
 	int y = sEngineGetHeight();
@@ -431,16 +425,10 @@ void fElementDrawText(fElement* ft)
 	glc(glBindBuffer(GL_ARRAY_BUFFER, _rectangle.VBO));
 	glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _rectangle.IBO));
 
-	glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)0));
+	glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)0));
 	glc(glEnableVertexAttribArray(0));
-	glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)12));
+	glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)12));
 	glc(glEnableVertexAttribArray(1));
-	glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)24));
-	glc(glEnableVertexAttribArray(2));
-	glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)32));
-	glc(glEnableVertexAttribArray(3));
-	glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(GLfloat[14]), (GLvoid*)44));
-	glc(glEnableVertexAttribArray(4));
 
 	glc(sMaterialUniformf(activeShader,"char_width", ft->font_width));
 	glc(sMaterialUniformf(activeShader,"char_height", ft->font_width * ft->font->height / ft->font->width));

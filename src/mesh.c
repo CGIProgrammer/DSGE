@@ -7,6 +7,7 @@
 #include "engine.h"
 #define HASH(var) _hash(&var,sizeof(var))
 
+static int _mesh_id_counter = 0;
 
 uint32_t S_Name2hash(char* name)
 {
@@ -54,6 +55,20 @@ void sMeshMakeBuffers(sMesh* mesh)
 
 }
 
+void sMeshMakeDynamicBuffers(sMesh* mesh)
+{
+	glc(glGenBuffers(1,&mesh->VBO));
+	glc(glGenBuffers(1,&mesh->IBO));
+
+	glc(glBindBuffer(GL_ARRAY_BUFFER,mesh->VBO));
+	glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,mesh->IBO));
+
+	glc(glBufferData(GL_ARRAY_BUFFER, sizeof(sVertex[mesh->vert_count]), mesh->vertices, GL_DYNAMIC_DRAW));
+
+	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_t)*mesh->ind_count, mesh->indices, GL_DYNAMIC_DRAW));
+
+}
+
 void sMeshDeleteBuffers(sMesh* mesh)
 {
 	glDeleteBuffers(1,&mesh->VBO);
@@ -85,13 +100,72 @@ void sMeshConstructor(sMesh* mesh, char* name)
 {
 	memset(mesh, 0, sizeof(mesh));
 	strcpy(mesh->name, name);
-	mesh->hash = S_Name2hash(name);
-	
+	mesh->hash = _mesh_id_counter++;
+}
+
+void sMeshSetVertices(sMesh* mesh, sVertex* verices, int vert_count)
+{
+	sFree(mesh->vertices);
+	mesh->vertices = sMalloc(sizeof(sVertex[vert_count]));
+	mesh->vert_count = vert_count;
+	memcpy(mesh->vertices, verices, sizeof(sVertex[vert_count]));
+	sMeshMakeDynamicBuffers(mesh);
+}
+
+void sMeshSetVertCoords(sMesh* mesh, float* coords, int vert_count)
+{
+	for (int i=0; i < MIN(mesh->vert_count, vert_count); i++)
+	{
+		mesh->vertices[i].vx = coords[0];
+		mesh->vertices[i].vy = coords[1];
+		mesh->vertices[i].vz = coords[2];
+		coords += 3;
+	}
+}
+
+void sMeshSetVertTextureCoords(sMesh* mesh, float* uv, int vert_count)
+{
+	for (int i=0; i < MIN(mesh->vert_count, vert_count); i++)
+	{
+		mesh->vertices[i].u = uv[0];
+		mesh->vertices[i].v = uv[1];
+		uv += 2;
+	}
+}
+
+void sMeshRecalculateNormals(sMesh* mesh)
+{
+	index_t* triangle = mesh->indices;
+	for (int i=0; i<mesh->ind_count/3; i++)
+	{
+		sVertex* vert1 = mesh->vertices + triangle[0];
+		sVertex* vert2 = mesh->vertices + triangle[1];
+		sVertex* vert3 = mesh->vertices + triangle[2];
+		laType v1 = Vector(vert1->vx, vert1->vy, vert1->vz);
+		laType v2 = Vector(vert2->vx, vert2->vy, vert2->vz);
+		laType v3 = Vector(vert3->vx, vert3->vy, vert3->vz);
+		laType vec_a = Sub(v2, v1);
+		laType vec_b = Sub(v3, v1);
+		laType normal = Crossn(vec_a, vec_b);
+		vert1->nx = vert2->nx = vert3->nx = normal.a[0];
+		vert1->ny = vert2->nx = vert3->nx = normal.a[1];
+		vert1->nz = vert2->nx = vert3->nx = normal.a[2];
+		triangle += 3;
+	}
+}
+
+void sMeshSetIndices(sMesh* mesh, int* indices, int ind_count)
+{
+	sFree(mesh->indices);
+	mesh->indices = sMalloc(sizeof(int[ind_count]));
+	mesh->ind_count = ind_count;
+	memcpy(mesh->indices, indices, sizeof(int[ind_count]));
 }
 
 void sMeshLoad(sMesh* mesh, sMaterial* mat,char* name)
 {
 	char filename[256];
+	mesh->hash = _mesh_id_counter++;
 	//memset(mesh, 0, sizeof(sMesh));
 	if (name)
 	{

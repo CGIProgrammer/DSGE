@@ -1021,15 +1021,15 @@ void sRenderShading(sCamera* camera)
     glc(glBindBuffer(GL_ARRAY_BUFFER,camera->render_plane.VBO));
     glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER,camera->render_plane.IBO));
 
-    glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(GLfloat), (GLvoid*)0));
+    glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)0));
     glc(glEnableVertexAttribArray(0));
-    glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(GLfloat), (GLvoid*)12));
+    glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)12));
     glc(glEnableVertexAttribArray(1));
-    glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 14 * sizeof(GLfloat), (GLvoid*)24));
+    glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)24));
     glc(glEnableVertexAttribArray(2));
-    glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(GLfloat), (GLvoid*)32));
+    glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)32));
     glc(glEnableVertexAttribArray(3));
-    glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, 14 * sizeof(GLfloat), (GLvoid*)44));
+    glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)44));
     glc(glEnableVertexAttribArray(4));
 
     sShaderValidate();
@@ -1424,38 +1424,41 @@ void sRenderDrawObject(sObject* object,sCamera* camera, _Bool cull_invisible)
 
     glc(glEnableVertexAttribArray(0));
 	glBindAttribLocation(program, 0, "pos");
-    glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)0));
+    glc(glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)0));
 
     glc(glEnableVertexAttribArray(2));
 	glBindAttribLocation(program, 2, "uv");
-    glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)24));
+    glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)24));
 
     if (camera->name[0]=='c')
     {
         glc(glEnableVertexAttribArray(1));
     	glBindAttribLocation(program, 1, "nor");
-        glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)12));
+        glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)12));
         glc(glEnableVertexAttribArray(3));
     	glBindAttribLocation(program, 3, "bin");
-        glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)32));
+        glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)32));
         glc(glEnableVertexAttribArray(4));
     	glBindAttribLocation(program, 4, "tang");
-        glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)44));
+        glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)44));
         if (mesh->uv2)
         {
             glc(glEnableVertexAttribArray(5));
-            glc(glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)56+mesh->deformed*12));
+    		glc(glBindAttribLocation(program, 5, "uv2"));
+            glc(glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)56));
         }
         else
         {
             glc(glEnableVertexAttribArray(5));
-            glc(glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)24));
+    		glc(glBindAttribLocation(program, 5, "uv2"));
+            glc(glVertexAttribPointer(5, 2, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)24));
         }
     }
     if (mesh->deformed)
     {
         glc(glEnableVertexAttribArray(6));
-        glc(glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, (14 + mesh->deformed*3+mesh->uv2*2) * sizeof(GLfloat), (GLvoid*)56));
+    	glc(glBindAttribLocation(program, 6, "weights"));
+        glc(glVertexAttribPointer(6, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)sizeof(smVertex) + sizeof(float[2])));
     }
     drawing:
     glc(glDrawElements(GL_TRIANGLES,mesh->ind_count,0x1401+sizeof(index_t),BUFFER_OFFSET(0)));
@@ -1525,6 +1528,26 @@ void sRenderDrawScene(sScene *scene)
 	glDepthMask( GL_TRUE );
 	//glDepthMask( GL_FALSE );
 	//glEnable(GL_DEPTH_WRITEMASK);
+
+	void* thr(void* arg) {
+		uintptr_t quarter = (uintptr_t)arg;
+		int start = scene->objects_count * quarter / 4;
+		int end = MIN(start + scene->objects_count/4, scene->objects_count);
+		for (size_s i=start;i<end;i++)
+		{
+			sObject* obj = scene->objects[i];
+			if (obj->mesh && _renderVectors)
+			{
+				if (obj->mesh->deformed)
+					obj->mesh->material->shader = scene->shader_list[5]->program;
+				else
+					obj->mesh->material->shader = scene->shader_list[4]->program;
+				sRenderDrawObject(obj,&scene->camera, 1);
+			}
+			obj->transform_global_previous = obj->transform_global;
+		}
+		return 0;
+	}
 	for (size_s i=0;i<scene->objects_count;i++)
 	{
 		sObject* obj = scene->objects[i];
@@ -1616,7 +1639,14 @@ void sRenderDrawScene(sScene *scene)
 	//_renderVectors = 1;
 	if (_renderVectors)
 		sCameraBindVectorsFB(&scene->camera);
-	for (size_s i=0;i<scene->objects_count;i++)
+	
+	pthread_t thread1,thread2,thread3,thread4;
+	thr((void*)0);
+	thr((void*)1);
+	thr((void*)2);
+	thr((void*)3);
+
+	/*for (size_s i=0;i<scene->objects_count;i++)
 	{
 		sObject* obj = scene->objects[i];
 		if (obj->mesh && _renderVectors)
@@ -1628,7 +1658,7 @@ void sRenderDrawScene(sScene *scene)
 			sRenderDrawObject(obj,&scene->camera, 1);
 		}
 		obj->transform_global_previous = obj->transform_global;
-	}
+	}*/
 	for (size_s i=0;i<scene->skeletons_count;i++)
 	{
 		sSkeleton* obj = scene->skeletons[i];

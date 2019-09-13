@@ -9,12 +9,6 @@
 #include "locales.h"
 #include "2D_renderer/2D_renderer.h"
 
-//#define THREADS
-
-#ifdef THREADS
-#include "pthread.h"
-#endif
-
 static _Bool glstarted = 0;
 static GLFWwindow* s_pWindow;
 

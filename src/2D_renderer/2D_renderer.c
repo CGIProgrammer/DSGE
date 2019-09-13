@@ -98,14 +98,20 @@ void formsInit(void)
 {
 	sTextureLoadDDS(&default_font, "data/fonts/default.dds");
 
-	glc(glGenBuffers(1, &_rectangle.VBO));
+	/*glc(glGenBuffers(1, &_rectangle.VBO));
 	glc(glGenBuffers(1, &_rectangle.IBO));
 
 	glc(glBindBuffer(GL_ARRAY_BUFFER, _rectangle.VBO));
 	glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, _rectangle.IBO));
 
 	glc(glBufferData(GL_ARRAY_BUFFER, sizeof(rectangle_points), rectangle_points, GL_STATIC_DRAW));
-	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(_rectangle_indices), _rectangle_indices, GL_STATIC_DRAW));
+	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(_rectangle_indices), _rectangle_indices, GL_STATIC_DRAW));*/
+
+	_rectangle.vertices = rectangle_points;
+	_rectangle.indices  = _rectangle_indices;
+	_rectangle.vert_count = sizeof(rectangle_points)/sizeof(rectangle_points[0]);
+	_rectangle.ind_count  = sizeof(_rectangle_indices)/sizeof(_rectangle_indices[0]);
+	sMeshMakeBuffers(&_rectangle);
 
 	sLoadVertexFromFile(&_rectangle_shader,"data/shaders/UI2/rectangle_vertex.glsl");
     sLoadFragmentFromFile(&_rectangle_shader,"data/shaders/UI2/rectangle_fragment.glsl");
