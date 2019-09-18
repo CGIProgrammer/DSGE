@@ -131,40 +131,63 @@ void reset(sScene* scene)
 		scene->behaviour = (void(*)(void*))reset;
 	}
 }
-void test();
+void test(void);
+void* logic_thread(void*);
 int main(void)
 {
 	sShaderSetVersion("330");
 	
-	sRenderSetSSGI(1);
-	sRenderSetBloom(1);
-	sRenderSetMotionBlur(1);
-	sRenderSetReflections(1);
-	sRenderSetHDR(1);
-	sEngineCreateWindow(0,0,1);
+	_renderDeferred = 1;
+	sRenderSetSSGI(0);
+	sRenderSetBloom(0);
+	sRenderSetMotionBlur(0);
+	sRenderSetReflections(0);
+	sRenderSetHDR(0);
+	sEngineCreateWindow(800,480,0);
 	sEngineSetSwapInterval(1);
 	sEngineStartOpenGL();
+	
 	sScene scene;
 	memset(&scene, 0, sizeof(scene));
 	sTextureLoadCubemap(&cbm, "data/textures/cubemap/small_room.dds");
 
+	fForm* list;
+	list = fListCreate(0,0, 100, 300,0);
+	//fListConstructor(&list, 300,100, 100, 300,0);
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");
+	fListAddItem(list, "kajsdhjk");
+
 	sSceneLoad(&scene,"demo_ranch");
 	//scene.camera.view_point = sSceneGetObject(&scene, "oКуб");
-	sEngineSetActiveScene(&scene);
+	//sEngineSetActiveScene(&scene);
 	sSceneSetSkyTexture(&scene, &cbm);
 	sSkeleton* rig = sSceneGetObject(&scene, "sBaseCharacter_rig");
 	if (rig)
 		sSkeletonSetPlayAction(rig, "BaseCharacter_bicycle", 0, ACTION_LOOP, 30, 66, 1);
 	sPlayerInit(&scene, 0);
 	sPlayerMouseLookOn(&scene);
+	sEngineStartLoop();
+	return 1;
 
-	/*fForm* list;
-	list = fListCreate(300,100, 100, 300,0);
+	//fForm* list;
+	list = fListCreate(0,0, 100, 300,0);
 	//fListConstructor(&list, 300,100, 100, 300,0);
 	fListAddItem(list, "kajsdhjk");
 	fListAddItem(list, "kajsdhjk");
 	fListAddItem(list, "kajsdhjk");
-	fListAddItem(list, "kajsdhjk");*/
-	sEngineStartLoop();
+	fListAddItem(list, "kajsdhjk");
+	while (!sEngineShouldClose())
+	{
+		logic_thread(0);
+		sRenderClear(0.25, 0.25, 0.25, 0.0);
+		fFormsProcess();
+		sEngineSwapBuffers();
+		//printf("%d\n", sKeyboardGetKeyState(GLFW_KEY_ESCAPE));
+		if (sKeyboardGetKeyState(GLFW_KEY_ESCAPE)) break;
+	}
+    sEngineClose();
+	//sPrintSizeOfAllGameStrictures();
 	return 0;
 }

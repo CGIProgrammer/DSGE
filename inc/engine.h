@@ -40,7 +40,7 @@ typedef uint32_t intptr;
 #endif
 #endif
 
-#define THREADS
+//#define THREADS
 
 #ifdef THREADS
 #include "pthread.h"
@@ -207,7 +207,7 @@ void sShaderCompileVertex(sShader*);
 void sShaderMake(sShader*);
 void sShaderCompileMake(sShader*);
 void sShaderCompileMakeFiles(sShader*,char*,char*);
-void sShaderValidate();
+void sShaderValidate(void);
 void sShaderDestroy(sShader* shader);
 
 //mesh.c

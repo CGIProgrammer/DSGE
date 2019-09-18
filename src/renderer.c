@@ -673,9 +673,9 @@ void sCameraInitFB(sCamera* camera)
     camera->render_plane.ind_count = sizeof(render_plane_ind)/sizeof(render_plane_ind[0]);
     glc(sMeshMakeBuffers(&camera->render_plane));
 
-    camera->render_result = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGB16F : RGB8I, _renderBloom, _renderBloom);
-    camera->render_texture1 = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGB16F : RGB8I, _renderBloom, _renderBloom);
-    camera->render_texture2 = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGB16F : RGB8I, _renderBloom, _renderBloom);
+    camera->render_result = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGBA16F : RGBA8I, _renderBloom, _renderBloom);
+    camera->render_texture1 = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGBA16F : RGBA8I, _renderBloom, _renderBloom);
+    camera->render_texture2 = GenRenderTexture(camera->width, camera->height, _renderHDR ? RGBA16F : RGBA8I, _renderBloom, _renderBloom);
 
     camera->noise = noise_texture.ID;
 
@@ -717,7 +717,7 @@ void sCameraInitFB(sCamera* camera)
 		if (_renderReflections)
 		{
 			sCameraAddPPShader(camera,&ssr_shader);
-			camera->mipmap_layers |= 1<<(sCameraGetFiltersCount(camera));
+			//camera->mipmap_layers |= 1<<(sCameraGetFiltersCount(camera));
 		}
 		if (_renderVectors)
 		{
@@ -1032,7 +1032,7 @@ void sRenderShading(sCamera* camera)
     glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)44));
     glc(glEnableVertexAttribArray(4));
 
-    sShaderValidate();
+    //sShaderValidate();
     glc(glDrawElements(GL_TRIANGLES,camera->render_plane.ind_count,0x1401+sizeof(index_t),BUFFER_OFFSET(0)));
 
     if (camera->filters[1])
@@ -1130,7 +1130,7 @@ void sRenderShading(sCamera* camera)
 			{
 				puts(shader_log_buffer);
 			}*/
-			sShaderValidate();
+			//sShaderValidate();
 			glc(glDrawElements(GL_TRIANGLES,camera->render_plane.ind_count,0x1401+sizeof(index_t),BUFFER_OFFSET(0)));
 		}
     }
@@ -1640,13 +1640,7 @@ void sRenderDrawScene(sScene *scene)
 	if (_renderVectors)
 		sCameraBindVectorsFB(&scene->camera);
 	
-	pthread_t thread1,thread2,thread3,thread4;
-	thr((void*)0);
-	thr((void*)1);
-	thr((void*)2);
-	thr((void*)3);
-
-	/*for (size_s i=0;i<scene->objects_count;i++)
+	for (size_s i=0;i<scene->objects_count;i++)
 	{
 		sObject* obj = scene->objects[i];
 		if (obj->mesh && _renderVectors)
@@ -1658,7 +1652,7 @@ void sRenderDrawScene(sScene *scene)
 			sRenderDrawObject(obj,&scene->camera, 1);
 		}
 		obj->transform_global_previous = obj->transform_global;
-	}*/
+	}
 	for (size_s i=0;i<scene->skeletons_count;i++)
 	{
 		sSkeleton* obj = scene->skeletons[i];

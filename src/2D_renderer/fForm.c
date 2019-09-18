@@ -184,6 +184,12 @@ void fFormDrawBounds(fForm* form)
 	glc(glEnableVertexAttribArray(0));
 	glc(glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)12));
 	glc(glEnableVertexAttribArray(1));
+	glc(glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)24));
+	glc(glEnableVertexAttribArray(1));
+	glc(glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)32));
+	glc(glEnableVertexAttribArray(3));
+	glc(glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(sVertex), (GLvoid*)44));
+	glc(glEnableVertexAttribArray(4));
 
 	int x = sEngineGetWidth();
 	int y = sEngineGetHeight();
@@ -197,7 +203,7 @@ void fFormDrawBounds(fForm* form)
 	glc(sMaterialUniformfv(activeShader,"color", color, 4));
 	glc(sMaterialUniformfv(activeShader,"transform", form->transform_global, 9));
 	glc(sMaterialUniformi(activeShader,"use_texture", 0));
-
+	glc(sShaderValidate());
 	glc(glDrawElements(GL_TRIANGLES, 6, 0x1401+sizeof(index_t),BUFFER_OFFSET(0)));
 }
 

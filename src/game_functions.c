@@ -1162,7 +1162,7 @@ void sSceneFunctionLoop(sScene* scene)
 	//dJointAddHinge2Torques(volga.joints[2],0.0, 10000.0/(80.0+rate1)*(sGetFrameTime()/0.016666));
 	//dJointAddHinge2Torques(volga.joints[3],0.0,-10000.0/(80.0+rate2)*(sGetFrameTime()/0.016666));
 }
-
+#include "2D_renderer/2D_renderer.h"
 void sPrintSizeOfAllGameStrictures(void)
 {
 	printf("sScene %lu\n",sizeof(sScene));
@@ -1178,4 +1178,6 @@ void sPrintSizeOfAllGameStrictures(void)
 	printf("sShader %lu\n",sizeof(sShader));
 	printf("sMaterial %lu\n",sizeof(sMaterial));
 	printf("sTexture %lu\n",sizeof(sTexture));
+	printf("fElement %lu\n",sizeof(fElement));
+	printf("fForm %lu\n",sizeof(fForm));
 }

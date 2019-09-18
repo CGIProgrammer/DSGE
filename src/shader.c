@@ -301,12 +301,15 @@ void sShaderMake(sShader* shader)
 	}
 }
 
-void sShaderValidate()
+void sShaderValidate(void)
 {
 	glValidateProgram(activeShader);
 	int log_len;
 	glGetProgramInfoLog(activeShader, sizeof(shader_log_buffer), &log_len, shader_log_buffer);
-	//printf("%s",shader_log_buffer);
+	if (log_len)
+	{
+		printf("%s",shader_log_buffer);
+	}
 }
 
 void sShaderCompileMake(sShader* shader)

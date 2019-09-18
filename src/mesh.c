@@ -51,7 +51,7 @@ void sMeshMakeBuffers(sMesh* mesh)
 
 	glc(glBufferData(GL_ARRAY_BUFFER, sizeof(sVertex[mesh->vert_count]), mesh->vertices, GL_STATIC_DRAW));
 
-	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_t)*mesh->ind_count, mesh->indices, GL_STATIC_DRAW));
+	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_t[mesh->ind_count]), mesh->indices, GL_STATIC_DRAW));
 
 }
 
@@ -67,6 +67,11 @@ void sMeshMakeDynamicBuffers(sMesh* mesh)
 
 	glc(glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(index_t)*mesh->ind_count, mesh->indices, GL_DYNAMIC_DRAW));
 
+}
+
+void sMeshBindBuffers(sMesh* mesh)
+{
+	
 }
 
 void sMeshDeleteBuffers(sMesh* mesh)
@@ -93,7 +98,7 @@ void sMeshDraw(sMesh* mesh)
 	glEnableVertexAttribArray(1);
 	glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(GLfloat), (GLvoid*)24);
 	glEnableVertexAttribArray(2);
-	glDrawElements(GL_TRIANGLES,mesh->ind_count,GL_UNSIGNED_SHORT,BUFFER_OFFSET(0));
+	glDrawElements(GL_TRIANGLES,mesh->ind_count,GL_UNSIGNED_INT,BUFFER_OFFSET(0));
 }
 
 void sMeshConstructor(sMesh* mesh, char* name)
