@@ -1,0 +1,7 @@
+[Dolphin]
+Timestamp=2019,10,11,22,51,41
+Version=4
+VisibleRoles=Details_text,Details_size,Details_modificationtime,Details_type,CustomizedDetails
+
+[Settings]
+HiddenFilesShown=true
