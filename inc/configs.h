@@ -1,4 +1,0 @@
-#define MAX_BONES_BITS  (8u)
-#define MAX_BONES  (1u<<MAX_BONES_BITS)
-#define BONE_IW_MASK_SHIFT  (32u-MAX_BONES_BITS)
-#define BONE_IW_MASK  ((1u<<BONE_IW_MASK_SHIFT)-1u)
