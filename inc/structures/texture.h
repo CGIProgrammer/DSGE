@@ -227,6 +227,16 @@ sTextureID sTextureCreate2D(char* name, uint16_t width, uint16_t height, sTextur
  */
 void sTextureGenerateMipMaps(sTextureID texture);
 
+
+/**
+ * @brief Вывод текстуры в активный фреймбуфер
+ * @param texture Выводимая текстура
+ * @param x Смещение по горизонтали
+ * @param y Смещение по вертикали
+ * @ingroup texture
+ */
+void sTextureDraw(sTextureID texture, float x, float y);
+
 /**
  * @brief Сохранение текстуры в файл
  * @param texture Сохраняемая текстура
@@ -244,6 +254,13 @@ void sTextureSave(sTextureID texture, const char* fname);
  */
 sTextureID sTextureLoad(const char* fname, const char* tname);
 
+
+/**
+ * @brief Включение фильтрации текстуры и генерация мип-текстур
+ * @param texture Текстура
+ * @ingroup texture
+ */
+void sTextureEnableMipmaps(sTextureID texture, int32_t aniso);
 
 /**
  * @brief Установка режима наложения текстуры

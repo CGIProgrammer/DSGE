@@ -31,6 +31,19 @@ extern "C" {
 
 
 /**
+ * @brief Настройка стандартного фреймбуфера
+ * @param width Ширина
+ * @param height Высота
+ */
+void sFrameBufferSetStd(uint16_t width, uint16_t height);
+
+
+/**
+ * @brief Получение стандартного фреймбуфера
+ */
+sFrameBuffer sFrameBufferGetStd(void);
+
+/**
  * @brief Создание нового фреймбуфера
  * @param width Ширина
  * @param height Высота
@@ -108,7 +121,7 @@ void sFrameBufferSetDepthTarget(sFrameBufferID fb, sTextureID texture);
  * 
  * @ingroup frame_buffer
  */
-void sFrameBufferBind(sFrameBufferID fb, uint16_t textures);
+void sFrameBufferBind(sFrameBufferID fb, uint16_t textures, bool bind_depth);
 
 
 /**

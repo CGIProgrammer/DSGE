@@ -6,7 +6,8 @@ uniform sampler2D gSpace;
 uniform sampler2D gMasks;
 uniform sampler2D gAmbient;
 uniform samplerCube cubemap;
-uniform float width, height;
+//uniform float width, height;
+uniform vec2 gResolution;
 uniform mat4 vCameraTransform;
 uniform mat4 vCameraProjectionInv;
 
@@ -27,9 +28,8 @@ void main()
 {
     if (texture(gAlbedo, tex_map).a < 0.5) {
         fragData[0] = fragData[1] = vec4(0.0, 0.0, 0.0, 1.0);
-        return;
+        discard;
     }
-    vec3 gamma = vec3(1.0);
     vec4 masks = texture(gMasks, tex_map);
     mNormal = gRenderNormal(gSpace, tex_map).xyz;
     mAmbient = texture(gAmbient, tex_map).rgb;
@@ -41,7 +41,6 @@ void main()
 
     worldPosition = gPosition(gSpace, tex_map, vCameraProjectionInv, vCameraTransform);
     view_vector = normalize(transpose(vCameraTransform)[3].xyz - worldPosition.xyz);
-    //mDiffuse.rgb = pow(mDiffuse.rgb, gamma);
     fragData[0].rgb = fragData[1].rgb = vec3(0.0);
     lSunDiffuse(fragData[0].rgb, fragData[1].rgb);
     lSpotDiffuse(fragData[0].rgb, fragData[1].rgb);

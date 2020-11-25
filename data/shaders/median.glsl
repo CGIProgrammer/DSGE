@@ -3,7 +3,7 @@
 input vec2 tex_map;
 uniform sampler2D gLSpecular, gAlbedo, gSpace, gOutput, gMasks;
 uniform samplerCube cubemap;
-uniform float width, height;
+uniform vec2 gResolution;
 uniform int gFilterPass;
 uniform mat4 vCameraProjectionInv, vCameraTransform;
 
@@ -13,14 +13,14 @@ vec2[] offsets = vec2[](
     vec2(-1.0, 1.0),vec2( 0.0, 1.0),vec2( 1.0, 1.0)
 );
 
-#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/vec2(width, height)), 0.0)
-#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/vec2(width, height)), 0.0)
-#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/vec2(width, height)), 0.0)
-#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/vec2(width, height)), 0.0)
-#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/vec2(width, height)), 0.0)
-#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/vec2(width, height)), 0.0)
-#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/vec2(width, height)), 0.0)
-#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/vec2(width, height)), 0.0)
+#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/gResolution), 0.0)
+#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/gResolution), 0.0)
+#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/gResolution), 0.0)
+#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/gResolution), 0.0)
+#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/gResolution), 0.0)
+#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/gResolution), 0.0)
+#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/gResolution), 0.0)
+#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/gResolution), 0.0)
 
 vec3 renderSky(mat4 ori)
 {
@@ -33,6 +33,12 @@ vec3 renderSky(mat4 ori)
                          vec4(0.0,0.0,0.0,1.0));
     skyboxVector = normalize(skyboxVector);
     return textureCubemap(cubemap, skyboxVector.xyz).rgb;
+}
+
+vec3 reinhard_extended(vec3 v, float max_white)
+{
+    vec3 numerator = v * (1.0f + (v / vec3(max_white * max_white)));
+    return numerator / (1.0f + v);
 }
 
 void main() {
@@ -75,12 +81,15 @@ void main() {
     } else {
         fragColor.rgb = values[0];
     }
-    //fragColor.rgb = values[0];
-    if (texture(gAlbedo, tex_map).a < 0.99) {
-        fragColor = vec4(renderSky(vCameraTransform), 1.0); //renderSky(vCameraTransform);
+    
+    if (texture(gAlbedo, tex_map).a < 1.0) {
+        fragColor = vec4(renderSky(vCameraTransform) * 2.0, 1.0); //renderSky(vCameraTransform);
+        //fragColor.rgb *= fragColor.rgb;
     } else {
-        fragColor.rgb = fragColor.rgb * texture(gAlbedo, tex_map).rgb + texture(gLSpecular, tex_map).rgb;
+        fragColor.rgb = fragColor.rgb + texture(gLSpecular, tex_map).rgb;
         fragColor.a = 1.0;
     }
-    fragColor.rgb = fragColor.rgb / (fragColor.rgb+1.0);
+    fragColor.rgb = pow(fragColor.rgb, vec3(0.454545));
+    fragColor.rgb = reinhard_extended(fragColor.rgb, 1.5);
+    //fragColor.rgb = (exp(2.0 * fragColor.rgb) - 1.0) / (exp(2.0 * fragColor.rgb) + 1.0);
 }

@@ -13,14 +13,14 @@ static sGameObjectID* objects = 0;
 
 static bool check_parent_loop(sGameObjectID obj1, sGameObjectID obj2)
 {
-    for (sGameObjectID par=obj1; par; par=obj1->parent)
+    /*for (sGameObjectID par=obj1; par->parent; par=par->parent)
     {
         if (par==obj2) return 1;
     }
-    for (sGameObjectID par=obj2; par; par=obj2->parent)
+    for (sGameObjectID par=obj2; par->parent; par=par->parent)
     {
         if (par==obj1) return 1;
-    }
+    }*/
     return 0;
 }
 

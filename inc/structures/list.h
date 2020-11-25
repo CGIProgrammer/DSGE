@@ -96,8 +96,7 @@
 #define sStaticListIndexOf(list, list_length, item) staticListIndexOf((void**)&(list), list_length, &item, sizeof(item))
 
 #define sListSwap(list, ind1, ind2) listSwapElements((void**)&(list), ind1, ind2)
-
-#define MAX_INDEX ((size_t)((1<<(sizeof(size_t)<<3))-1))
+#define MAX_INDEX SIZE_MAX
 
 #ifdef __cplusplus
 extern "C" {

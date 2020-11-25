@@ -7,6 +7,7 @@ extern "C" {
 
 static sFrameBufferID last_framebuffer = 0;
 static uint16_t last_framebuffer_textures = 0;
+static sFrameBuffer std_framebuffer = {.framebuffer_id = 0};
 
 static const GLuint sFrameBufferAttachments[17] = {
 	GL_COLOR_ATTACHMENT0,
@@ -27,6 +28,17 @@ static const GLuint sFrameBufferAttachments[17] = {
 	GL_COLOR_ATTACHMENT15,
 	GL_DEPTH_ATTACHMENT
 };
+
+void sFrameBufferSetStd(uint16_t width, uint16_t height)
+{
+    std_framebuffer.width = width;
+    std_framebuffer.height = height;
+}
+
+sFrameBuffer sFrameBufferGetStd(void)
+{
+    return std_framebuffer;
+}
 
 sFrameBuffer sFrameBufferCreate(uint16_t width, uint16_t height, bool depthbuffer)
 {
@@ -127,7 +139,52 @@ void sFrameBufferSetDepthTarget(sFrameBufferID fb, sTextureID texture)
     }
 }
 
-void sFrameBufferBind(sFrameBufferID fb, uint16_t textures)
+/*void sFrameBufferBindReading(sFrameBufferID fb, uint16_t textures)
+{
+    if (!fb) {
+        glc(glBindFramebuffer(GL_READ_FRAMEBUFFER, 0));
+        return;
+    }
+    glc(glBindFramebuffer(GL_READ_FRAMEBUFFER, fb->framebuffer_id));
+}
+
+void sFrameBufferBindDrawing(sFrameBufferID fb, uint16_t textures)
+{
+    if (!fb) {
+        glc(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
+        return;
+    }
+    glc(glViewport(0,0,fb->width, fb->height));
+    if (!glIsFramebuffer(fb->framebuffer_id)) {
+        if (fb->framebuffer_id) {
+            fprintf(stderr, "%ud is not a framebuffer (%hux%hu)\n", fb->framebuffer_id, fb->width, fb->height);
+            puts((const char*)0);
+        } else {
+            glc(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
+            last_framebuffer = 0;
+        }
+        return;
+    }
+    //printf("Framebuffer (%hux%hu)\n", fb->width, fb->height);
+    glc(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb->framebuffer_id));
+    
+    size_t i, att=0;
+    //printf("Binding ");
+    for (i=0; i<16; i++) {
+        if ((textures&(1<<i)) && fb->color_render_targets[i]) {
+            //printf("Binding %s\n", fb->color_render_targets[i]->name);
+            glc(glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + att, fb->color_render_targets[i]->type, fb->color_render_targets[i]->ID, 0));
+            att++;
+        }
+    }
+    
+    //printf("\nglDrawBuffers(%lu, sFrameBufferAttachments)\n", att);
+    glc(glDrawBuffers(att, sFrameBufferAttachments));
+    last_framebuffer = fb;
+    last_framebuffer_textures = textures;
+}*/
+
+void sFrameBufferBind(sFrameBufferID fb, uint16_t textures, bool bind_depth)
 {
     if (fb == last_framebuffer && textures==last_framebuffer_textures) return;
     if (!fb) {
@@ -139,7 +196,7 @@ void sFrameBufferBind(sFrameBufferID fb, uint16_t textures)
     if (!glIsFramebuffer(fb->framebuffer_id)) {
         if (fb->framebuffer_id) {
             fprintf(stderr, "%ud is not a framebuffer (%hux%hu)\n", fb->framebuffer_id, fb->width, fb->height);
-            puts((const char*)0);
+            exit(-1);
         } else {
             glc(glBindFramebuffer(GL_FRAMEBUFFER, 0));
             last_framebuffer = 0;
@@ -149,12 +206,13 @@ void sFrameBufferBind(sFrameBufferID fb, uint16_t textures)
     //printf("Framebuffer (%hux%hu)\n", fb->width, fb->height);
     glc(glBindFramebuffer(GL_FRAMEBUFFER, fb->framebuffer_id));
     
-    if (fb->renderbuffer_id) {
+    if (fb->renderbuffer_id*bind_depth) {
         glc(glEnable(GL_DEPTH_TEST));
         glc(glDepthFunc(GL_LEQUAL));
         glc(glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, fb->renderbuffer_id));
     } else {
         glc(glDisable(GL_DEPTH_TEST));
+        glc(glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, 0));
     }
     size_t i, att=0;
     //printf("Binding ");
@@ -203,7 +261,7 @@ void sFrameBufferDelete(sFrameBufferID fb)
     fb->width = 0;
     fb->height = 0;
     if (fb==last_framebuffer) {
-        sFrameBufferBind(0, 0);
+        sFrameBufferBind(0, 0, 0);
     }
 }
 

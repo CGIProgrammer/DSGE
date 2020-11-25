@@ -55,7 +55,11 @@ typedef enum {
 	lPointVarCount,
 
 	vObjectTransform = 0,
+	vObjectTransformPrev,
 	vCameraTransform,
+	vCameraTransformStable,
+	vCameraTransformPrev,
+
 	vCameraProjection,
 	vCameraProjectionInv,
 	lSpotCount,
@@ -75,6 +79,9 @@ typedef enum {
 	fFresnelValue,
 	fTexScrollX,
 	fTexScrollY,
+	gSize,
+	gPosition,
+	gResolution,
 	vfVarCount
 } sShaderUniformLocation;
 

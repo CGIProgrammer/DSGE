@@ -52,7 +52,10 @@ typedef enum {
     gOutputAIndex,
     gOutputBIndex,
     gOutputDiffuseIndex,
-    gOutputSpecularIndex
+    gOutputSpecularIndex,
+	gRenderAccumulator1,
+	gRenderAccumulator2,
+	gVectors
 } RenderTargetBit;
 
 #define gAlbedoBit (1<<gAlbedoIndex)
@@ -63,6 +66,9 @@ typedef enum {
 #define gOutputBBit (1<<gOutputBIndex)
 #define gOutputDiffuseBit (1<<gOutputDiffuseIndex)
 #define gOutputSpecularBit (1<<gOutputSpecularIndex)
+#define gRenderAccumulator1Bit (1<<gRenderAccumulator1)
+#define gRenderAccumulator2Bit (1<<gRenderAccumulator2)
+#define gVectorsBit (1<<gVectors)
 
 typedef struct
 {
@@ -134,7 +140,7 @@ typedef void (*sGameObjectCallback)(sGameObjectID);
 typedef struct sFrameBuffer* sFrameBufferID;
 typedef struct sCameraComponent* sCameraComponentID;
 typedef struct sLightComponent* sLightComponentID;
-typedef void (*sCameraRenderPipelineCallback)(sCameraComponentID, sGameObjectID*, sGameObjectID*, sTextureID*);
+typedef void (*sCameraRenderPipelineCallback)(sCameraComponentID, sGameObjectID*, sGameObjectID*, sTextureID);
 typedef void (*sLightRenderPipelineCallback)(sLightComponentID, sGameObjectID*);
 
 typedef struct sFrameBuffer

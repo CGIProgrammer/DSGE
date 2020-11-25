@@ -34,6 +34,7 @@ uniform samplerCube lPointShadowMaps[4];
 uniform sampler2D lSunShadowMap, lSunShadowMapNear, lSunShadowMapNearDyn;
 uniform int lSpotCount;
 uniform int lPointCount;
+uniform int gDitherIteration;
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0)
 {
@@ -102,7 +103,7 @@ float lShadowCubeSample(samplerCube smplr, vec3 vector, float fz)
     float mD_2 = mD*mD;
     float p = variance / (variance + mD_2);
     float shd_s = max(p, float(fz <= moments.x + 0.01));
-    float shd_h = float(fz < moments.x + 1.05);
+    float shd_h = float(fz < moments.x+0.003*fz);
 
     return shd_h;
 }
@@ -110,15 +111,12 @@ float lShadowCubeSample(samplerCube smplr, vec3 vector, float fz)
 float lShadowSample(sampler2D smplr, vec4 global_coordinates, mat4 itransform, float fz)
 {
     global_coordinates *= itransform;
-    vec2 crd = global_coordinates.xy/global_coordinates.w;
-    float moment = float(fz <= abs(texture(smplr, crd*0.5+0.5 + blueRand2(crd, 0)/256.0).r)+0.03*fz);
-    //moment +=      float(fz <= abs(texture(smplr, crd*0.5+0.5 + blueRand2(crd, 1)/256.0).r)+0.03*fz);
-    //moment +=      float(fz <= abs(texture(smplr, crd*0.5+0.5 + blueRand2(crd, 2)/256.0).r)+0.03*fz);
-    //moment +=      float(fz <= abs(texture(smplr, crd*0.5+0.5 + blueRand2(crd, 3)/256.0).r)+0.03*fz);
+    vec2 crd = global_coordinates.xy/global_coordinates.w * 0.5 + 0.5;
     int cnt = 4;
+    float moment = float(fz <= abs(texture(smplr,   crd + blueRand2(tex_map, gDitherIteration*cnt)/1024.0).r)+0.003*fz);
     for (int i=1; i<cnt; i++) 
     {
-        moment += float(fz <= abs(texture(smplr, crd*0.5+0.5 + blueRand2(crd, i)/256.0).r)+0.03*fz);
+        moment += float(fz <= abs(texture(smplr, crd + blueRand2(tex_map, i + gDitherIteration*cnt)/1024.0).r)+0.003*fz);
     }
     if (abs(crd.x)<1.0 && abs(crd.y)<1.0)
         return moment / float(cnt);
@@ -138,14 +136,31 @@ mat4 remove_projection(mat4 mat)
         vec4(tmat[3].xy * m, -tmat[3].w, 1.0)
     ));
 }
+
 void lSunDiffuse(inout vec3 diffuse, inout vec3 specular)
+{
+    vec3 spec, diff;
+    mat4 itransform = remove_projection(lSun.itransform);
+    vec4 kuk = worldPosition*lSun.itransform;
+    float lightDistance = (1.0-abs(kuk.z))*lSun.depth_range*0.5/kuk.w;
+    float shadow = lShadowSample(lSunShadowMap, worldPosition, lSun.itransform, abs(lightDistance));
+    vec3 V = normalize(transpose(vCameraTransform)[3].xyz - worldPosition.xyz);
+    //diffuse += max(dot(mNormal, -normalize(lSun.itransform[2].xyz)), 0.0) * shadow;
+    
+    lightModel(lSun.color.rgb, mNormal, -normalize(lSun.itransform[2].xyz) * 0.1, V, diff, spec);
+    diffuse += diff*shadow;
+    specular += spec*shadow;
+}
+
+/*void lSunDiffuse(inout vec3 diffuse, inout vec3 specular)
 {
     mat4 itransform = remove_projection(lSun.itransform);
     vec4 kuk = worldPosition*lSun.itransform;
     float lightDistance = (1.0-abs(kuk.z))*lSun.depth_range*0.5/kuk.w;
     float shadow = lShadowSample(lSunShadowMap, worldPosition, lSun.itransform, abs(lightDistance));
-    diffuse += max(dot(mNormal, -normalize(lSun.itransform[2].xyz)), 0.0) * shadow;
-}
+    diffuse += 5.0 * max(dot(mNormal, -normalize(lSun.itransform[2].xyz)), 0.0) * shadow;
+}*/
+
 void lSpotDiffuse(inout vec3 diffuse, inout vec3 specular)
 {
     vec3 spec, diff;
@@ -160,6 +175,7 @@ void lSpotDiffuse(inout vec3 diffuse, inout vec3 specular)
         vec2 coords = lightSpacePosition.xy/lightSpacePosition.z * lSpots[0].angle_tan;
         float spotFactor = smoothstep(1.0, lSpots[0].blending, length(coords));
         float shadow_sample = lShadowSample(lSpotShadowMaps[0], worldPosition, lSpots[0].itransform, lightDistance);
+        //shadow_sample = 1.0;
         lightModel(lSpots[0].color.rgb, mNormal, dir, V, diff, spec);
         diffuse += diff*shadow_sample*spotFactor;
         specular += spec*shadow_sample*spotFactor;
@@ -175,14 +191,14 @@ void lPointDiffuse(inout vec3 diffuse, inout vec3 specular)
         vec3 V = normalize(transpose(vCameraTransform)[3].xyz - worldPosition.xyz);
         vec3 dir = lPoints[0].position - worldPosition.xyz;
         float l = length(dir);
-        float shadow = lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 0)*0.05, l);
-        shadow += lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 1)*0.05, l);
-        shadow += lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 2)*0.05, l);
-        shadow += lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 3)*0.05, l);
+        float shadow = lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 0 + gDitherIteration*4)*0.05, l);
+        shadow +=      lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 1 + gDitherIteration*4)*0.05, l);
+        shadow +=      lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 2 + gDitherIteration*4)*0.05, l);
+        shadow +=      lShadowCubeSample(lPointShadowMaps[0], dir+blueRand3(tex_map, 3 + gDitherIteration*4)*0.05, l);
         shadow *= 0.25;
         lightModel(lPoints[0].color.rgb, mNormal, dir, V, diff, spec);
-        diffuse += diff*shadow;
-        specular += spec*shadow;
+        diffuse  += diff * shadow;
+        specular += spec * shadow;
     }
 }
 

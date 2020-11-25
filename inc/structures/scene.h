@@ -111,10 +111,17 @@ void sSceneDraw(sSceneID scene);
 
 
 /**
- * @brief Загрузка сцены из файла
+ * @brief Загрузка сцены из текстового файла
  * @ingroup scene
  */
 sSceneID sSceneLoadFromText(char* fname);
+
+
+/**
+ * @brief Загрузка сцены из бинарного файла
+ * @ingroup scene
+ */
+sSceneID sSceneLoadBin(const char* fname);
 
 /**
  * @brief Создание простой демосцены

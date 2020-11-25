@@ -1,9 +1,8 @@
 #include "data/shaders/functions/extensions.glsl"
 
 input vec2 tex_map;
-uniform sampler2D gLighting, gAlbedo, gSpace, gOutput, gMasks;
-uniform float width, height;
-uniform int gFilterPass;
+uniform sampler2D gAlbedo, gSpace, gOutput, gMasks;
+uniform vec2 gResolution;
 
 vec2[] offsets = vec2[](
     vec2(-1.0,-1.0),vec2( 0.0,-1.0),vec2( 1.0,-1.0),
@@ -11,14 +10,14 @@ vec2[] offsets = vec2[](
     vec2(-1.0, 1.0),vec2( 0.0, 1.0),vec2( 1.0, 1.0)
 );
 
-#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/vec2(width, height)), 0.0)
-#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/vec2(width, height)), 0.0)
-#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/vec2(width, height)), 0.0)
-#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/vec2(width, height)), 0.0)
-#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/vec2(width, height)), 0.0)
-#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/vec2(width, height)), 0.0)
-#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/vec2(width, height)), 0.0)
-#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/vec2(width, height)), 0.0)
+#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/gResolution), 0.0)
+#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/gResolution), 0.0)
+#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/gResolution), 0.0)
+#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/gResolution), 0.0)
+#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/gResolution), 0.0)
+#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/gResolution), 0.0)
+#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/gResolution), 0.0)
+#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/gResolution), 0.0)
 
 vec4 mean_curva(sampler2D image, vec2 center_crd)
 {
@@ -50,12 +49,12 @@ vec4 mean_curva(sampler2D image, vec2 center_crd)
 }
 
 void main() {
-    //vec2 pass = float(gFilterPass/2 == (gFilterPass+1)/2) / vec2(width, height);
-    if (texture(gAlbedo, tex_map).a < 0.5)
+    float alpha = texture(gAlbedo, tex_map).a;
+    if (alpha < 0.5)
     {
       fragColor = texture(gOutput, tex_map);
       return;
     }
     fragColor.rgb = mean_curva(gOutput, tex_map).rgb;
-    fragColor.a = 1.0;
+    fragColor.a = texture(gOutput, tex_map).a;
 }

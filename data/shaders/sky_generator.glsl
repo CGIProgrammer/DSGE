@@ -31,13 +31,14 @@ const float DEGRAD = M_PI / 180.0;
 uniform sampler2D gOutput, gAlbedo;
 input vec2 tex_map;
 uniform samplerCube cubemap;
-uniform float width, height, iTime;
+uniform float iTime;
+uniform vec2 gResolution;
 uniform mat4 vCameraTransform;
 uniform mat4 vCameraTransformInv;
 uniform mat4 vCameraProjection;
 uniform mat4 vCameraProjectionInv;
-float sunx = 0.2;
-float suny = 0.25;
+float sunx = -0.5;
+float suny = 0.4;
 float moonx = 0.1;
 float moony = 0.5;
 float cloudy = 0.2;
@@ -48,8 +49,8 @@ const float s2 = s * s;
 const float SI = 0.0; //sun intensity for sun
 
 //rendering quality 
-const int steps = 256; //16 is fast, 128 or 256 is extreme high
-const int stepss = 128; //16 is fast, 16 or 32 is high 
+const int steps = 16; //16 is fast, 128 or 256 is extreme high
+const int stepss = 32; //16 is fast, 16 or 32 is high 
 
 float t = 12.0; //fix time. 12.0 91.0, 97.0, 188.0, 72.0, 74.0
 
@@ -411,14 +412,12 @@ void main()
     * GL_TEXTURE_CUBE_MAP_POSITIVE_Z
     * GL_TEXTURE_CUBE_MAP_NEGATIVE_Z
     */
-    fragData[0] = vec4(renderSky(RotateY( 90.0)*RotateX(-90.0)), 1.0);
-    fragData[1] = vec4(renderSky(RotateY(-90.0)*RotateX(-90.0)), 1.0);
-
-    fragData[3] = vec4(renderSky(RotateY(180.0)*RotateX(180.0)), 1.0);
-    fragData[2] = vec4(renderSky(RotateY(180.0)*RotateX(  0.0)), 1.0);
-
-    fragData[4] = vec4(renderSky(RotateY(180.0)*RotateX(-90.0)), 1.0);
-    fragData[5] = vec4(renderSky(RotateX(-90.0)), 1.0);
+    fragData[0] = vec4(renderSky(RotateY( 90.0)*RotateX(-90.0)), 1.0) * 2.0;
+    fragData[1] = vec4(renderSky(RotateY(-90.0)*RotateX(-90.0)), 1.0) * 2.0;
+    fragData[3] = vec4(renderSky(RotateY(180.0)*RotateX(180.0)), 1.0) * 2.0;
+    fragData[2] = vec4(renderSky(RotateY(180.0)*RotateX(  0.0)), 1.0) * 2.0;
+    fragData[4] = vec4(renderSky(RotateY(180.0)*RotateX(-90.0)), 1.0) * 2.0;
+    fragData[5] = vec4(renderSky(RotateX(-90.0)), 1.0)                * 2.0;
 }
 /*
 void main() {

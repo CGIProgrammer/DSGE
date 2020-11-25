@@ -6,7 +6,7 @@ input vec2 light_uv;
 input mat3 TBN;
 input vec3 view_vector;
 input vec4 position;
-input vec2 tex_map;
+input vec4 position_prev, position_stable;
 
 uniform mat4 vCameraTransform;
 
@@ -76,7 +76,8 @@ void main()
     tbn = transpose(tbn);
 
     pbr(tbn);
-
+    vec3 gamma = vec3(2.2);
+    mDiffuse.rgb = pow(mDiffuse.rgb, gamma);
     if (mDiffuse.a < 0.1)
     {
         discard;
@@ -110,6 +111,7 @@ void main()
     fragData[1] = vec4(mNormal*0.5+0.5, pack_depth(position.w));
     fragData[2] = vec4(mSpecular, mRoughness, mMetallic, fFresnelValue);
     fragData[3] = vec4(mAmbient, 1.0);
+    fragData[4] = vec4((position_stable.xy/position_stable.w*0.5+0.5) - (position_prev.xy/position_prev.w*0.5+0.5), position_prev.z, pack_depth(position_prev.w));
 #endif
 
 #if defined(SHADOW)

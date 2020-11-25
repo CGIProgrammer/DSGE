@@ -43,6 +43,7 @@ typedef struct sLightComponent {
 /**
  * @brief Создание буфера теней
  * @param size Разрешение буфера
+ * @param shadow Отбрасывание теней
  * @param lt Тип источника света
  * sLightPoint - точечный источник (светит равномерно по всем сторонам)
  * sLightSpot - ограниченный по углу направленный истоник (фонарик, прожектор)
@@ -50,7 +51,7 @@ typedef struct sLightComponent {
  * 
  * @ingroup light_component
  */
-sLightComponentID sLightCreateShadowBuffer(uint16_t size, sLightType lt);
+sLightComponentID sLightCreateShadowBuffer(uint16_t size, sLightType lt, bool shadow);
 
 
 /**

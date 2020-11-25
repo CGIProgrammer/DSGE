@@ -3,7 +3,7 @@
 input vec2 tex_map;
 uniform sampler2D gLSpecular, gAlbedo, gSpace, gOutput, gMasks;
 uniform samplerCube cubemap;
-uniform float width, height;
+uniform vec2 gResolution;
 uniform int gFilterPass;
 uniform mat4 vCameraProjectionInv, vCameraTransform;
 
@@ -13,14 +13,14 @@ vec2[] offsets = vec2[](
     vec2(-1.0, 1.0),vec2( 0.0, 1.0),vec2( 1.0, 1.0)
 );
 
-#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/vec2(width, height)), 0.0)
-#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/vec2(width, height)), 0.0)
-#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/vec2(width, height)), 0.0)
-#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/vec2(width, height)), 0.0)
-#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/vec2(width, height)), 0.0)
-#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/vec2(width, height)), 0.0)
-#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/vec2(width, height)), 0.0)
-#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/vec2(width, height)), 0.0)
+#define LEFT(sampler, uv)         max(texture(sampler, uv + offsets[3]/gResolution), 0.0)
+#define RIGHT(sampler, uv)        max(texture(sampler, uv + offsets[4]/gResolution), 0.0)
+#define TOP(sampler, uv)          max(texture(sampler, uv + offsets[1]/gResolution), 0.0)
+#define BOTTOM(sampler, uv)       max(texture(sampler, uv + offsets[6]/gResolution), 0.0)
+#define TOPLEFT(sampler, uv)      max(texture(sampler, uv + offsets[0]/gResolution), 0.0)
+#define TOPRIGHT(sampler, uv)     max(texture(sampler, uv + offsets[2]/gResolution), 0.0)
+#define BOTTOMLEFT(sampler, uv)   max(texture(sampler, uv + offsets[5]/gResolution), 0.0)
+#define BOTTOMRIGHT(sampler, uv)  max(texture(sampler, uv + offsets[7]/gResolution), 0.0)
 
 
 void main() {

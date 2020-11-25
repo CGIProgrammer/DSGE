@@ -308,7 +308,10 @@ static GLuint sShaderLoadFromFile(const char* name, const char* file_name, bool 
 static void sShaderCacheUniforms(sShaderID shader)
 {
 	sShaderCacheUniform(shader, base_vars, vObjectTransform);
+	sShaderCacheUniform(shader, base_vars, vObjectTransformPrev);
 	sShaderCacheUniform(shader, base_vars, vCameraTransform);
+	sShaderCacheUniform(shader, base_vars, vCameraTransformPrev);
+	sShaderCacheUniform(shader, base_vars, vCameraTransformStable);
 	sShaderCacheUniform(shader, base_vars, vCameraProjection);
 	sShaderCacheUniform(shader, base_vars, vCameraProjectionInv);
 	sShaderCacheUniform(shader, base_vars, lSpotCount);
@@ -328,6 +331,10 @@ static void sShaderCacheUniforms(sShaderID shader)
 	sShaderCacheUniform(shader, base_vars, fFresnelValue);
 	sShaderCacheUniform(shader, base_vars, fTexScrollX);
 	sShaderCacheUniform(shader, base_vars, fTexScrollY);
+	sShaderCacheUniform(shader, base_vars, fTexScrollX);
+	sShaderCacheUniform(shader, base_vars, gSize);
+	sShaderCacheUniform(shader, base_vars, gPosition);
+	sShaderCacheUniform(shader, base_vars, gResolution);
 
 	sShaderCacheUniform(shader, sunlight_vars, lSunColor);
 	sShaderCacheUniform(shader, sunlight_vars, lSunTransform);
@@ -386,6 +393,7 @@ void sShaderLoadHL(
 	sShaderID* skeleton_shadow
 )
 {
+	if (!file_name) return;
 	if (base) {
 		*base = sShaderLoadAndMake(
 		"vertex_base", "frag_base",
@@ -499,23 +507,10 @@ bool sShaderBind(sShaderID shader)
 	}
 	if (res) {
 		sMaterialBind(0);
-		if (shader) {
-			glc(glUseProgram(shader->program_id));
-		} else {
-			glc(glUseProgram(0));
-		}
+		glUseProgram(shader ? shader->program_id : 0);
 	}
 	sShaderActive = shader;
 	return res;
-
-	
-    if (shader != sShaderActive)
-    {
-        sShaderActive=shader;
-        glUseProgram(shader->program_id);
-        glGetError();
-    }
-    return res;
 }
 
 bool sShaderBindTextureToID(sShaderID shader, GLuint id, sTextureID texture)
@@ -565,6 +560,7 @@ bool sShaderBindTexture(sShaderID shader, char* name, sTextureID texture)
 
 void sShaderBindUniformFloatArrayToID(sShaderID shader, GLuint id, float* data, uint32_t count)
 {
+	if (!shader) return;
 	switch (count)
     {
         case 2 : glUniform2fv(id,1,(const float*)data);break;
@@ -586,6 +582,7 @@ void sShaderBindUniformFloatArray(sShaderID shader, char* name, float* data, uin
 
 void sShaderBindUniformFloatToID(sShaderID shader, GLuint id, float data)
 {
+	if (!shader) return;
     glUniform1f(id,data);
 }
 void sShaderBindUniformFloat(sShaderID shader, char* name, float data)
@@ -597,6 +594,7 @@ void sShaderBindUniformFloat(sShaderID shader, char* name, float data)
 
 void sShaderBindUniformFloat2ToID(sShaderID shader, GLuint id, float x, float y)
 {
+	if (!shader) return;
     glUniform2f(id, x, y);
 }
 void sShaderBindUniformFloat2(sShaderID shader, char* name, float x, float y)
@@ -608,6 +606,7 @@ void sShaderBindUniformFloat2(sShaderID shader, char* name, float x, float y)
 
 void sShaderBindUniformFloat3ToID(sShaderID shader, GLuint id, float x, float y, float z)
 {
+	if (!shader) return;
     glUniform3f(id, x, y, z);
 }
 void sShaderBindUniformFloat3(sShaderID shader, char* name, float x, float y, float z)
@@ -619,6 +618,7 @@ void sShaderBindUniformFloat3(sShaderID shader, char* name, float x, float y, fl
 
 void sShaderBindUniformFloat4ToID(sShaderID shader, GLuint id, float x, float y, float z, float w)
 {
+	if (!shader) return;
     glUniform4f(id, x, y, z, w);
 }
 void sShaderBindUniformFloat4(sShaderID shader, char* name, float x, float y, float z, float w)
@@ -630,6 +630,7 @@ void sShaderBindUniformFloat4(sShaderID shader, char* name, float x, float y, fl
 
 void sShaderBindUniformIntToID(sShaderID shader, GLuint id, int val)
 {
+	if (!shader) return;
     glUniform1i(id, val);
 }
 void sShaderBindUniformInt(sShaderID shader, char* name, int val)
@@ -641,6 +642,7 @@ void sShaderBindUniformInt(sShaderID shader, char* name, int val)
 
 void sShaderBindUniformInt2ToID(sShaderID shader, GLuint id, int x, int y)
 {
+	if (!shader) return;
     glUniform2i(id, x, y);
 }
 void sShaderBindUniformInt2(sShaderID shader, char* name, int x, int y)
@@ -652,6 +654,7 @@ void sShaderBindUniformInt2(sShaderID shader, char* name, int x, int y)
 
 void sShaderBindUniformInt3ToID(sShaderID shader, GLuint id, int x, int y, int z)
 {
+	if (!shader) return;
     glUniform3i(id, x, y, z);
 }
 void sShaderBindUniformInt3(sShaderID shader, char* name, int x, int y, int z)
@@ -663,6 +666,7 @@ void sShaderBindUniformInt3(sShaderID shader, char* name, int x, int y, int z)
 
 void sShaderBindUniformInt4ToID(sShaderID shader, GLuint id, int x, int y, int z, int w)
 {
+	if (!shader) return;
     glUniform4i(id, x, y, z, w);
 }
 void sShaderBindUniformInt4(sShaderID shader, char* name, int x, int y, int z, int w)
@@ -721,7 +725,7 @@ void sShaderBindLight(sShaderID shader, sGameObjectID light_object)
 
 void sShaderBindLights(sShaderID shader, sGameObjectID* lights)
 {
-	int lights_count = sListGetSize(lights);
+	size_t lights_count = sListGetSize(lights);
 	sShaderUnbindLights(shader);
     for (size_t l=0; l<lights_count; l++) {
         glc(sShaderBindLight(shader, lights[l]));

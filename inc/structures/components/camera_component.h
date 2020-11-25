@@ -28,10 +28,15 @@ extern "C" {
 typedef struct sCameraComponent {
     laMatrix projection;
     laMatrix projection_inv;
+    laMatrix dither;
     bool parallel;
     float field_of_view;
     sFrameBuffer framebuffer;
+    sFrameBuffer pp_framebuffer;
     sShaderID* shaders;
+    sShaderID txaa;
+    sShaderID soap;
+    bool tss;
     sCameraRenderPipelineCallback rpclbk;
     sGameObjectID user;
 } sCameraComponent;
@@ -96,7 +101,7 @@ sCameraComponentID sCameraComponentCreateForwardRenderer(uint16_t width, uint16_
  * @param camera Компонент камеры
  * @ingroup camera_component
  */
-sCameraComponentID sCameraInitDeferredRenderer(uint16_t width, uint16_t height, float FOV);
+sCameraComponentID sCameraInitDeferredRenderer(uint16_t width, uint16_t height, float FOV, bool tss);
 
 
 /**

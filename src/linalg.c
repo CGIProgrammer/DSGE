@@ -14,6 +14,8 @@ extern "C" {
 typedef _Bool bool;
 #endif
 
+void (*segfault)(void) = 0;
+
 const laMatrix laIdentity = {{1.0,0.0,0.0,0.0,
 					  0.0,1.0,0.0,0.0,
 					  0.0,0.0,1.0,0.0,
@@ -115,7 +117,7 @@ laMatrix laAddf(laMatrix a,float b)
 	if (a.type!=3 && a.type!=4 && a.type!=9 && a.type!=16)
 	{
 		fprintf(stderr, "laType: invalid types for Addf\n");
-		exit(-1);
+		segfault();
 	}
 #endif
 
@@ -167,7 +169,7 @@ laMatrix laMulf(laMatrix a,float b)
 	if (a.type!=3 && a.type!=4 && a.type!=9 && a.type!=16)
 	{
 		fprintf(stderr, "laType: invalid type for Mulf (%d)\n", a.type);
-		exit(-1);
+		segfault();
 	}
 #endif
 
@@ -187,7 +189,7 @@ laMatrix laDivf(laMatrix a,float b)
 	if (a.type!=3 && a.type!=4 && a.type!=9 && a.type!=16)
 	{
 		printf("Invalid types for Divf\n");
-		exit(-1);
+		segfault();
 	}
 #endif
 
@@ -329,7 +331,7 @@ laMatrix laAdd(laMatrix a,laMatrix b)
 	else
 	{
 		printf("Invalid types for summa\n");
-		exit(-1);
+		segfault();
 	}
 #endif
 	return result;
@@ -377,7 +379,7 @@ laMatrix laSub(laMatrix a,laMatrix b)
 	else
 	{
 		printf("Invalid types for summa\n");
-		exit(-1);
+		segfault();
 	}
 #endif
 	return result;
@@ -389,7 +391,7 @@ laMatrix lsCross(laMatrix a,laMatrix b)
 	if ((a.type!=VECTOR && a.type!=VECTOR4) || (b.type!=VECTOR && b.type!=VECTOR4))
 	{
 		printf("Invalid types for cross\n");
-		exit(-1);
+		segfault();
 	}
 #endif
 	laMatrix result;
@@ -1255,7 +1257,7 @@ void laMulArrays(
 		fprintf(stderr, "Invalid types for Mul (%dx%d <-> %dx%d)\n",
 				(int)ra, (int)ca,
 				(int)rb, (int)cb);
-		exit(-1);
+		segfault();
 	}
 	float (*a_mat)[ca] = (float(*)[ca])a;
 	float (*b_mat)[cb] = (float(*)[cb])b;
@@ -1272,7 +1274,6 @@ void laMulArrays(
 
 void laInvertArray(float *result, float *arr, int n)
 {
-	char fname[256];
 	double (*a)[n] = (double(*)[n])sMalloc(sizeof(double[n][n]));
 	double (*b)[n] = (double(*)[n])sMalloc(sizeof(double[n][n]));
 	float (*orig)[n] = (float(*)[n])arr;
@@ -1291,7 +1292,7 @@ void laInvertArray(float *result, float *arr, int n)
 		index = k;
 		if (max==0) {
 			for (int i = k + 1; i < n; i++) {
-				if (abs(a[k][i]) > abs(max)) {
+				if (fabs(a[k][i]) > fabs(max)) {
 					max = a[k][i];
 					index = i;
 				}

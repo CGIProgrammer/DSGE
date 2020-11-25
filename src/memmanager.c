@@ -74,7 +74,7 @@ void sFree2(void** ptr)
 	{
 		return;
 	}
-    for (int i=0; i<sSizeof(ptr)/sizeof(uintptr_t); i++)
+    for (size_t i=0; i<sSizeof(ptr)/sizeof(uintptr_t); i++)
     {
         sFree(ptr[i]);
     }

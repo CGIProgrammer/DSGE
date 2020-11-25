@@ -14,8 +14,8 @@ extern "C" {
 #endif
 
 static sMaterialID* materials = 0;
-static sMaterialID sMaterialActive = 0;
-extern sShaderID sShaderActive;
+static sMaterialID  sMaterialActive = 0;
+extern sShaderID    sShaderActive;
 
 
 sMaterialID sMaterialCreate(char* name)

@@ -20,10 +20,10 @@ static sMeshID last_drawn = 0;
 static sShaderID last_called_shader = 0;
 
 static const sVertex render_plane[4] =
-{{-1.0,-1.0, 0.0,	0.0, 0.0, 1.0,	 0.0, 0.0},
-{-1.0, 1.0, 0.0,	0.0, 0.0, 1.0,	 0.0, 1.0},
-{ 1.0, 1.0, 0.0,	0.0, 0.0, 1.0,	 1.0, 1.0},
-{ 1.0,-1.0, 0.0,	0.0, 0.0, 1.0,	 1.0, 0.0}};
+{{-1.0,-1.0, 0.0,	0.0, 0.0, 1.0,	 0.0, 0.0, 0,0,0, 0,0,0, 0,0, 0,0,0},
+{-1.0, 1.0, 0.0,	0.0, 0.0, 1.0,	 0.0, 1.0, 0,0,0, 0,0,0, 0,0, 0,0,0},
+{ 1.0, 1.0, 0.0,	0.0, 0.0, 1.0,	 1.0, 1.0, 0,0,0, 0,0,0, 0,0, 0,0,0},
+{ 1.0,-1.0, 0.0,	0.0, 0.0, 1.0,	 1.0, 0.0, 0,0,0, 0,0,0, 0,0, 0,0,0}};
 index_t render_plane_ind[6] = {0,3,2,2,1,0};
 
 /*static const sVertex ui_plane[4] =
@@ -488,9 +488,12 @@ void sMeshDraw(sMeshID mesh)
 		}
 	}
 	//glValidateProgram();
-    glDrawElements(GL_TRIANGLES,mesh->ind_count, GL_UNSIGNED_INT,BUFFER_OFFSET(0));
+    glDrawElements(GL_TRIANGLES, mesh->ind_count, GL_UNSIGNED_INT, BUFFER_OFFSET(0));
 	last_drawn = mesh;
 	last_called_shader = sShaderActive;
+
+	//glc(glBindBuffer(GL_ARRAY_BUFFER, 0));
+	//glc(glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
 }
 
 void sMeshClear(void)

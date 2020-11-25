@@ -24,6 +24,8 @@ extern "C" {
 #endif
 
 static sTextureID* textures = 0;
+static sMeshID _draw_surface = 0;
+static sShaderID _base_shader = 0;
 
 static int sCompressedTextureArrayOpen(DDS_DATA *file, const char *name)
 {
@@ -409,19 +411,6 @@ sTextureID sTextureLoadDDSCubemap(const char* name)
 	return texture;
 }
 
-static void mulmat(float *a, float *b, float *c, uint32_t size)
-{
-	for (uint32_t i=0;i<size;i++)
-	{
-		float val = 0.0;
-		for (uint32_t j=0;j<size;j++)
-		{
-			val += a[j] * b[j*size + i];
-		}
-		c[i] = val;
-	}
-}
-
 void transpose(float *a,uint16_t size)
 {
 	for (uint16_t i=0;i<size;i++)
@@ -481,84 +470,12 @@ void gen_fa_mat(float* arr, uint16_t size, float(*fu)(float,float))
 #define MIN2(a,b) ((a)<(b) ? (a) : (b))
 #define MIX(a,b,c) ((a) + ((b)-(a))*(c))
 
-static int dxdy[][2] = {
+/*static int dxdy[][2] = {
 		{-1,-2},{0,-2},	{1,-2},	{-2,-1},{-1,-1},
 		{0,-1},	{1,-1},	{2,-1},	{-2,0},	{-1,0},
 		{1,0},	{2,0},	{-2,1},	{-1,1},	{0,1},
 		{1,1},	{2,1},	{-1,2},	{0,2},	{1,2},	{0,0}
-	};
-
-static void* generate_binpat(uint16_t side)
-{
-	int radius = 3;
-	uint8_t (*result)[side] = (uint8_t(*)[side])sNewArray(uint8_t, side*side);
-	int ddc = sizeof(dxdy)/sizeof(dxdy[0]);
-	for (int a=0; a<side*side; a++) {
-		int x0=rand()%side;
-		int y0=rand()%side;
-		int skip = 0;
-		if (result[y0][x0]) {
-			continue;
-		}
-		for (int i=0; i<ddc; i++) {
-			int x = (x0+dxdy[i][0])%side;
-			int y = (y0+dxdy[i][1])%side;
-			if (result[y][x]) {
-				skip = 1;
-				break;
-			}
-		}
-		if (!skip) {
-			result[y0][x0] = 255;
-		}
-	}
-
-	return (void*)result;
-}
-
-static void find_cluster_in_binpat(uint8_t* data, int res, int radius, int* crd_x, int* crd_y)
-{
-	uint8_t (*binpat)[res] = (uint8_t(*)[res])data;	int tvx, tvy;
-	int mx=0;
-	for (int y0=0; y0<res; y0++) {
-		for (int x0=0; x0<res; x0++) {
-			if (!binpat[y0][x0]) continue;
-			int clust = 0;
-			for (int i=0; i<sizeof(dxdy)/sizeof(dxdy[0]); i++) {
-				int x=(x0+dxdy[i][1])%res;
-				int y=(y0+dxdy[i][0])%res;
-				clust += binpat[y][x]!=0;
-			}
-			if (clust>mx) {
-				mx = clust;
-				*crd_x = x0;
-				*crd_y = y0;
-			}
-		}
-	}
-}
-
-static void find_void_in_binpat(uint8_t* data, int res, int radius, int* crd_x, int* crd_y)
-{
-	uint8_t (*binpat)[res] = (uint8_t(*)[res])data;	int tvx, tvy;
-	int mx=0;
-	for (int y0=0; y0<res; y0++) {
-		for (int x0=0; x0<res; x0++) {
-			if (binpat[y0][x0]) continue;
-			int _void = 0;
-			for (int i=0; i<sizeof(dxdy)/sizeof(dxdy[0]); i++) {
-				int x=(x0+dxdy[i][1])%res;
-				int y=(y0+dxdy[i][0])%res;
-				_void += binpat[y][x]==0;
-			}
-			if (_void>mx) {
-				mx = _void;
-				*crd_x = x0;
-				*crd_y = y0;
-			}
-		}
-	}
-}
+	};*/
 
 sTextureID sTextureGenerateWhiteNoise(int seed, int w, int h)
 {
@@ -579,7 +496,7 @@ sTextureID sTextureGenerateBlueNoise(int w, int h)
 	sTextureID bufferA = sTextureCreate2D("BNA", w, h, RGB8I, 0, 0, 0);
 	sTextureID bufferB = sTextureCreate2D("BNB", w, h, RGB8I, 0, 0, 0);
 	sFrameBuffer fb = sFrameBufferCreate(w, h, 0);
-	sMeshID screen = sMeshCreateScreenPlane();
+	if (!_draw_surface) _draw_surface = sMeshCreateScreenPlane();
     sFrameBufferAddRenderTarget(&fb, bufferA);
 	sFrameBufferAddRenderTarget(&fb, bufferB);
 	sShaderBind(filter);
@@ -589,18 +506,30 @@ sTextureID sTextureGenerateBlueNoise(int w, int h)
 		source = i&1 ? bufferA : bufferB;
 		result = i&1 ? bufferB : bufferA;
 		int target = i&1 ? 2 : 1;
-		sFrameBufferBind(&fb, target);
+		sFrameBufferBind(&fb, target, 0);
 		sShaderBindTexture(filter, "channel", source);
-		sShaderBindUniformFloat(filter, "width", w);
-		sShaderBindUniformFloat(filter, "height", h);
+		sShaderBindUniformFloatArray(filter, "gResolution", (float[]){w, h}, 2);
 		sShaderBindUniformInt(filter, "iFrame", i);
-		glc(sMeshDraw(screen));
+		glc(sMeshDraw(_draw_surface));
 	}
 	sTextureDelete(source);
 	sFrameBufferDelete(&fb);
 	sTextureSetTiling(result, sTextureRepeat);
-	sMeshDeleteBuffers(screen);
 	return result;
+}
+
+void sTextureDraw(sTextureID texture, float x, float y)
+{
+	if (!texture || x<0.0 || y<0.0) return;
+	if (!_draw_surface) _draw_surface = sMeshCreateScreenPlane();
+	if (!_base_shader) _base_shader = sShaderMakeFromFiles("data/shaders/draw_texture_vert.glsl", "data/shaders/draw_texture_frag.glsl");
+	sFrameBuffer fb = sFrameBufferGetStd();
+	sShaderBind(_base_shader);
+	sShaderBindTexture(_base_shader, "gTexture", texture);
+	sShaderBindUniformFloat2ToID(_base_shader, _base_shader->base_vars[gResolution], fb.width, fb.height);
+	sShaderBindUniformFloat2ToID(_base_shader, _base_shader->base_vars[gPosition], x, y);
+	sShaderBindUniformFloat2ToID(_base_shader, _base_shader->base_vars[gSize], texture->width, texture->height);
+	glc(sMeshDraw(_draw_surface));
 }
 
 void sTextureGenerateMipMaps(sTextureID texture)
@@ -725,9 +654,26 @@ sTextureID sTextureLoad(const char* fname, const char* tname)
 	case 4 : texture = sTextureCreate2D(tname ? tname : fname, width, height, RGBA8I, 0, 0, (void*)data); break;
 	}
 	stbi_image_free((void*)data);
+	sTextureSetTiling(texture, sTextureRepeat);
+	glc(glTexParameteri(texture->type, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+	glc(glTexParameteri(texture->type, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
 	return texture;
 }
 #endif
+
+void sTextureEnableMipmaps(sTextureID texture, int32_t aniso)
+{
+	sTextureGenerateMipMaps(texture);
+	glc(glTexParameteri(texture->type, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+	glc(glTexParameteri(texture->type, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR));
+	if (aniso>16) {
+		aniso = 16;
+	}
+	if (aniso<0) {
+		aniso = 0;
+	}
+	glc(glTexParameteri(texture->type, GL_MAX_TEXTURE_MAX_ANISOTROPY, aniso));
+}
 
 size_t sTextureGetQuantity(void)
 {

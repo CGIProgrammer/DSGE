@@ -1,7 +1,7 @@
 #include "data/shaders/functions/extensions.glsl"
 
 uniform sampler2D channel;
-uniform float width, height;
+uniform vec2 gResolution;
 uniform int iFrame;
 input vec2 tex_map;
 
@@ -63,9 +63,8 @@ vec2 quantify_error (sampler2D channel, int component, ivec2 p, ivec2 sz, float 
 
 void main()
 {
-    vec2 szf = vec2(width, height);
-    ivec2 sz = ivec2(szf);
-    ivec2 p0 = ivec2(tex_map*szf);
+    ivec2 sz = ivec2(gResolution);
+    ivec2 p0 = ivec2(tex_map*gResolution);
     vec2 maskf = hash21(float(iFrame));
     int M = 60 * 60;
     int F = (iFrame % M);
