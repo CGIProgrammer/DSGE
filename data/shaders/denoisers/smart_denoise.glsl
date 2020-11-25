@@ -2,7 +2,7 @@
 
 input vec2 tex_map;
 uniform sampler2D gLighting, gAlbedo, gSpace, gOutput, gMasks;
-uniform float width, height;
+uniform vec2 gResolution;
 uniform int gFilterPass;
 
 #define INV_SQRT_OF_2PI 0.39894228040143267793994605993439  // 1.0/SQRT_OF_2PI
@@ -61,5 +61,5 @@ void main() {
       fragColor = texture(gOutput, tex_map);
       return;
     }
-    fragColor = smartDeNoise(gOutput, tex_map, 5.0, 2.0, 0.25);
+    fragColor = smartDeNoise(gOutput, tex_map, 2.0, 2.0, 0.25);
 }

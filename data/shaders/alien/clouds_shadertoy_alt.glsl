@@ -44,7 +44,8 @@
 #define PI 3.14159265358979323846
 
 input vec2 tex_map;
-uniform float width, height, iTime;
+uniform float iTime;
+uniform vec2 gResolution;
 uniform mat4 vCameraProjectionInv, vCameraTransform;
 
 //#define cloud2

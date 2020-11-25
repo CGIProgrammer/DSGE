@@ -200,16 +200,16 @@ vec3 gRenderNormal(sampler2D normalMap4, vec2 screenCoord)
 vec4 textureCubemap(samplerCube spheremap, vec3 vector)
 {
   vec4 s = texture(spheremap, vector.xzy);
-  vec4 glare = max(s-0.9, 0.0) * 5.0;
-  s.rgb = s.rgb/0.9 + glare.rgb;
+  //vec4 glare = max(s-0.9, 0.0) * 5.0;
+  //s.rgb = s.rgb/0.9 + glare.rgb;
   return s;
 }
 
 vec4 textureCubemap(samplerCube spheremap, vec3 vector, float level)
 {
   vec4 s = textureLod(spheremap, vector.xzy, level);
-  vec4 glare = max(s-0.9, 0.0) * 5.0;
-  s.rgb = s.rgb/0.9 + glare.rgb;
+  //vec4 glare = max(s-0.9, 0.0) * 5.0;
+  //s.rgb = s.rgb/0.9 + glare.rgb;
   return s;
 }
 

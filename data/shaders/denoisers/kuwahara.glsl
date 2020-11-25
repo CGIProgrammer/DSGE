@@ -2,7 +2,7 @@
 
 input vec2 tex_map;
 uniform sampler2D gLighting, gAlbedo, gSpace, gOutput, gMasks;
-uniform float width, height;
+uniform vec2 gResolution;
 uniform int gFilterPass;
 
 #define ACTIVATE_FILTER 1
@@ -61,7 +61,7 @@ vec4 GetKernelMeanAndVariance(vec2 uv, vec4 Range, mat2 RotationMatrix)
             offset = vec2(x,y);
             #endif
             
-            vec2 Coords = (uv + offset) / vec2(width, height);
+            vec2 Coords = (uv + offset) / gResolution;
             vec3 PixelColor = texture(gOutput, Coords).rgb;
             
             Mean+= PixelColor;
@@ -114,12 +114,12 @@ vec3 KuwaharaFilter(vec2 uv)
 }
 
 void main() {
-    //vec2 pass = float(gFilterPass/2 == (gFilterPass+1)/2) / vec2(width, height);
+    //vec2 pass = float(gFilterPass/2 == (gFilterPass+1)/2) / gResolution;
     if (texture(gAlbedo, tex_map).a < 0.5)
     {
       fragColor = texture(gOutput, tex_map);
       return;
     }
     
-    fragColor = vec4(KuwaharaFilter(tex_map * vec2(width, height)), 1.0);
+    fragColor = vec4(KuwaharaFilter(tex_map * gResolution), 1.0);
 }
