@@ -1,4 +1,3 @@
-use vulkano::pipeline::graphics::vertex_input::VertexMember;
 use crate::texture::TexturePixelFormat;
 
 pub trait NalgebraPixelType
@@ -22,8 +21,11 @@ pub type UVec2 = nalgebra::Vector2<u32>; impl NalgebraPixelType for UVec2 { fn p
 pub type UVec3 = nalgebra::Vector3<u32>; impl NalgebraPixelType for UVec3 { fn pix_fmt(&self) -> TexturePixelFormat { TexturePixelFormat::RGB32u }}
 pub type UVec4 = nalgebra::Vector4<u32>; impl NalgebraPixelType for UVec4 { fn pix_fmt(&self) -> TexturePixelFormat { TexturePixelFormat::RGBA32u }}
 
+#[allow(dead_code)]
 pub type Mat2 = nalgebra::Matrix2<f32>;
+#[allow(dead_code)]
 pub type Mat3 = nalgebra::Matrix3<f32>;
+#[allow(dead_code)]
 pub type Mat4 = nalgebra::Matrix4<f32>;
 
 #[allow(dead_code)]

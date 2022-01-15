@@ -13,11 +13,10 @@ use image::io::Reader as ImageReader;
 use vulkano::format::Format;
 
 #[allow(dead_code)]
-use vulkano::device::{Device, Queue};
+use vulkano::device::{Queue};
 
 #[allow(dead_code)]
 use vulkano::image::{
-    StorageImage,
     ImmutableImage,
     AttachmentImage,
     MipmapsCount,
@@ -41,6 +40,7 @@ use dds_header::DDSHeader;
 use ktx_header::KTXHeader;
 pub use pixel_format::TexturePixelFormat;
 
+#[allow(dead_code)]
 pub enum TextureViewType
 {
     Storage,
@@ -48,6 +48,7 @@ pub enum TextureViewType
     Attachment
 }
 
+#[allow(dead_code)]
 pub struct Texture
 {
     name: String,
@@ -94,9 +95,6 @@ use vulkano::buffer::{CpuAccessibleBuffer, BufferUsage};
 use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
 use std::sync::atomic::AtomicBool;
 
-use vulkano::image::ImageDimensions;
-use vulkano::SafeDeref;
-
 pub struct ImmutableImagePatch<A = PotentialDedicatedAllocation<StdMemoryPoolAlloc>> {
     _image: UnsafeImage,
     _dimensions: TextureDimensions,
@@ -106,6 +104,7 @@ pub struct ImmutableImagePatch<A = PotentialDedicatedAllocation<StdMemoryPoolAll
     _layout: ImageLayout,
 }
 
+#[allow(dead_code)]
 impl Texture
 {
     pub fn builder() -> TextureBuilder
@@ -332,6 +331,7 @@ pub struct TextureBuilder
     max_lod: f32,
 }
 
+#[allow(dead_code)]
 impl TextureBuilder
 {
     pub fn name(&mut self, name: &str) -> &mut Self

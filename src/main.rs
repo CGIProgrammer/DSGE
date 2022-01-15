@@ -5,8 +5,7 @@ extern crate vulkano;
 mod teapot;
 
 use std::sync::Arc;
-use vulkano::buffer::{BufferUsage, CpuBufferPool};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
 use vulkano::device::{
     Device, DeviceExtensions, Features, Queue,
     physical::{
@@ -15,11 +14,9 @@ use vulkano::device::{
     }
 };
 
-use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage, AttachmentImage, view::ImageView, ImageCreateFlags, ImageDimensions, ImageLayout, SampleCount, StorageImage};
+use vulkano::image::{ImageAccess, ImageUsage, SwapchainImage, view::ImageView, SampleCount, ImageLayout};
 use vulkano::instance::Instance;
-use vulkano::pipeline::{PipelineBindPoint, Pipeline, graphics::viewport::{Viewport}};
-use vulkano::descriptor_set::PersistentDescriptorSet;
-use vulkano::render_pass::{Framebuffer as VkFramebuffer, RenderPass, RenderPassDesc, AttachmentDesc, SubpassDesc, SubpassDependencyDesc};
+use vulkano::render_pass::{RenderPass, RenderPassDesc, AttachmentDesc, SubpassDesc};
 use vulkano::swapchain::{self, AcquireError, Swapchain, Surface, SwapchainCreationError, PresentMode};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::format::Format;
@@ -46,10 +43,8 @@ mod components;
 use shader::*;
 use mesh::*;
 use texture::*;
-use references::*;
 use framebuffer::*;
 use texture::TexturePixelFormat;
-use glenums::GLSLSampler;
 
 trait Radian
 {
@@ -499,8 +494,6 @@ impl Application {
 
     pub fn event_loop(mut self) -> Arc<EventLoop<()>>
     {
-        let mut frame = 0;
-        
         self.event_pump.run(move |event: Event<()>, _wtar: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow| {
             //*control_flow = ControlFlow::Wait;
             match event {
@@ -523,8 +516,6 @@ impl Application {
                         println!("recreate_swapchain");
                     }
                     self.recreate_swapchain = self.renderer.draw();
-                    //println!("frame {}",frame);
-                    frame += 1;
                 },
                 _ => { }
             }
@@ -561,6 +552,7 @@ impl shader::ShaderStructUniform for ObjectTransform
 //impl shader::PipelineUniform for ObjectTransform {}
 
 #[derive(Default)]
+#[allow(dead_code)]
 struct Location { x: f32, y: f32 }
 
 impl shader::ShaderStructUniform for Location

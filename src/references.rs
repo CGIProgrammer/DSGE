@@ -1,8 +1,3 @@
-//use super::texture::Texture;
-use super::mesh::Mesh;
-//use super::game_object::GameObject;
-//use super::material::Material;
-use super::shader::{ShaderProgram};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 type ThreadSafeRcBox<T> = Arc<Mutex<T>>;
