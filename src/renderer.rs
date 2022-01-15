@@ -6,13 +6,13 @@ use vulkano::device::{
         PhysicalDeviceType
     }
 };
-use vulkano::swapchain::{self, AcquireError, SwapchainAcquireFuture, Swapchain, SwapchainCreationError, Surface, PresentMode};
+use vulkano::swapchain::{self, AcquireError, Swapchain, SwapchainCreationError, Surface, PresentMode};
 use vulkano::image::{view::ImageView, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
 use vulkano::render_pass::{RenderPass, RenderPassDesc, SubpassDesc, AttachmentDesc};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
-use vulkano::command_buffer::{PrimaryAutoCommandBuffer, AutoCommandBufferBuilder, CommandBufferUsage};
-use winit::window::{Window, WindowBuilder, Fullscreen};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use winit::window::{Window};
 //use vulkano::
 
 use std::sync::Arc;
@@ -116,6 +116,7 @@ pub struct Renderer
     _aspect : f32,
 }
 
+#[allow(dead_code)]
 impl Renderer
 {
     pub fn from_winit(win: Arc<Surface<Window>>, vsync: bool) -> Self

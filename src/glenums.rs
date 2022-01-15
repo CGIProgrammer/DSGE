@@ -145,6 +145,7 @@ pub enum GLSLType
     DMat4 = 0x4480 | (0xF & (AttribNumType::DOUBLE as isize)),
 }
 
+#[allow(dead_code)]
 impl GLSLType
 {
     fn get_gl_const(self) -> u32
@@ -169,9 +170,7 @@ impl GLSLType
             AttribNumType::SHORT | AttribNumType::INT =>
                 ("i", "int"),
             AttribNumType::UNSIGNED_SHORT | AttribNumType::UNSIGNED_INT =>
-                ("u", "uint"),
-            _ =>
-                ("", "")
+                ("u", "uint")
         };
         match self {
             Self::Sampler1D => return String::from("sampler1D"),
@@ -198,6 +197,8 @@ impl GLSLType
     }
 }
 
+#[allow(dead_code)]
+#[allow(non_camel_case_types)]
 pub enum AttribNumType
 {
     BYTE = 0,
@@ -287,6 +288,7 @@ impl std::fmt::Display for AttribType
     }
 }
 
+#[allow(dead_code)]
 impl AttribType
 {
     pub fn get_gl_const(self) -> AttribNumType
@@ -326,9 +328,7 @@ impl AttribType
             AttribNumType::SHORT | AttribNumType::INT =>
                 ("i", "int"),
             AttribNumType::UNSIGNED_SHORT | AttribNumType::UNSIGNED_INT =>
-                ("u", "uint"),
-            _ =>
-                ("", "")
+                ("u", "uint")
         };
         match (rows, columns)
         {

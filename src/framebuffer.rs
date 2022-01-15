@@ -1,24 +1,10 @@
 use std::sync::Arc;
-use vulkano::swapchain::{Swapchain};
-use vulkano::image::{
-    SwapchainImage,
-    AttachmentImage as VkAttachmentImage,
-    view::{
-        ImageView as VkImageView
-    }
-};
 use vulkano::render_pass::{
     Framebuffer as VkFramebuffer,
     RenderPass as VkRenderPass,
-    RenderPassDesc as VkRenderPassDesc,
-    AttachmentDesc as VkAttachmentDesc,
-    SubpassDesc as VkSubpassDesc,
-    SubpassDependencyDesc as VkSubpassDependencyDesc,
 };
 
-use vulkano::device::{Device, Queue};
-use vulkano::pipeline::{PipelineBindPoint, Pipeline, graphics::viewport::{Viewport}};
-use winit::window::Window;
+use vulkano::pipeline::{graphics::viewport::{Viewport}};
 use crate::texture::*;
 
 pub type FramebufferRef = RcBox<Framebuffer>;
@@ -39,6 +25,7 @@ pub struct Framebuffer
     _vk_fb: Option<Arc<VkFramebuffer>>,
 }
 
+#[allow(dead_code)]
 impl Framebuffer
 {
     pub fn new(width: u16, height: u16) -> FramebufferRef
@@ -103,9 +90,8 @@ impl Framebuffer
     }
 }
 
-use vulkano::command_buffer::pool::standard::StandardCommandPoolBuilder;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SubpassContents, PrimaryAutoCommandBuffer};
-use vulkano::render_pass::{RenderPass, Subpass};
+use vulkano::render_pass::{RenderPass};
 use vulkano::command_buffer::pool::CommandPoolBuilderAlloc;
 
 pub trait FramebufferBinder

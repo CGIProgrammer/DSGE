@@ -3,6 +3,7 @@ use crate::material::{MaterialRef};
 use crate::game_object::GameObjectRef;
 use super::Component;
 
+#[allow(dead_code)]
 pub struct VisualComponent
 {
     mesh : MeshRef,
@@ -10,6 +11,7 @@ pub struct VisualComponent
     owner : Option<GameObjectRef>
 }
 
+#[allow(dead_code)]
 impl VisualComponent
 {
     pub fn new(mesh: MeshRef, material: MaterialRef) -> Self

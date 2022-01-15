@@ -10,6 +10,7 @@ pub enum TextureType
     TextureCube
 }
 
+#[allow(dead_code)]
 impl TextureType
 {
     pub fn stringify(self) -> String

@@ -1,6 +1,5 @@
 extern crate spirv_compiler;
 
-use super::types::*;
 use std::collections::HashMap;
 pub use super::glenums::{ShaderType, GLSLVersion, GLSLType, AttribType};
 use std::sync::Arc;
@@ -9,8 +8,6 @@ use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::RenderPass;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
-use crate::texture::Texture;
-use crate::glenums::*;
 use crate::references::*;
 use crate::vulkano::pipeline::Pipeline;
 
@@ -464,7 +461,6 @@ impl ShaderProgram
 
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::buffer::{CpuBufferPool, BufferUsage};
-use vulkano::render_pass::{Subpass};
 use vulkano::command_buffer::pool::CommandPoolBuilderAlloc;
 use vulkano::pipeline::PipelineBindPoint;
 

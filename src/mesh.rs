@@ -7,12 +7,11 @@ use std::path::Path;
 use super::types::*;
 use std::sync::Arc;
 
-use vulkano::buffer::{BufferUsage, CpuBufferPool, CpuAccessibleBuffer, TypedBufferAccess, ImmutableBuffer};
-use vulkano::device::{Device, Queue};
-use vulkano::render_pass::RenderPass;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, SubpassContents};
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
+use vulkano::device::{Queue};
+use vulkano::command_buffer::{AutoCommandBufferBuilder};
 
-use super::teapot::{Normal, SmallVertex, INDICES, NORMALS, VERTICES};
+use super::teapot::{INDICES, NORMALS, VERTICES};
 pub use crate::references::*;
 //static mut LAST_DRAWN: GLuint = GLuint::MAX;
 
@@ -55,6 +54,7 @@ pub struct VkVertex {
     pub v_grp: [u32; 3],
 }
 
+#[allow(dead_code)]
 impl VkVertex {
     pub fn to_vertex(&self) -> Vertex
     {
@@ -114,6 +114,7 @@ pub struct MeshBuilder
     _index_buffer : Option<IndexBufferRef>
 }
 
+#[allow(dead_code)]
 impl MeshBuilder
 {
     pub fn push_quad_coords(&mut self, a: &Vec3, b: &Vec3, c: &Vec3, d: &Vec3) -> &mut Self
@@ -219,9 +220,8 @@ impl MeshBuilder
         let deformed = read_struct::<bool, File>(&mut file).unwrap();
         let uv_count = (if read_struct::<bool, File>(&mut file).unwrap() {2} else {1}) as u8;
         let ind_count = read_struct::<u32, File>(&mut file).unwrap() as usize;
-        let mut indices = vec!(0; ind_count as usize);
         let self_ind_count = self._indices.len();
-        for i in 0..ind_count {
+        for _ in 0..ind_count {
             let index = read_struct::<u32, File>(&mut file).unwrap();
             self._indices.push(self_ind_count as u32 + index as u32);
         }

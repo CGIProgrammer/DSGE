@@ -1,7 +1,3 @@
-use std::sync::Arc;
-use std::borrow::BorrowMut;
-use std::ops::DerefMut;
-
 use crate::references::*;
 use crate::types::*;
 use crate::shader::{ShaderStructUniform};
@@ -48,6 +44,7 @@ impl ShaderStructUniform for GOTransfotmUniform
     }
 }
 
+#[allow(dead_code)]
 impl GOTransform
 {
     pub fn identity() -> Self
@@ -69,11 +66,13 @@ impl GOTransform
     }
 }
 
+#[allow(dead_code)]
 pub struct GameObjectComposite
 {
     obj : GameObject,
 }
 
+#[allow(dead_code)]
 impl GameObjectComposite
 {
     pub fn component<C : Component + 'static>(mut self, component : C) -> Self
