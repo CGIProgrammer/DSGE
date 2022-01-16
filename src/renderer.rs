@@ -13,7 +13,6 @@ use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
 use winit::window::{Window};
-//use vulkano::
 
 use std::sync::Arc;
 
@@ -24,6 +23,7 @@ use crate::mesh::{MeshRef, Mesh, MeshBinder};
 use crate::shader::{ShaderProgramRef, ShaderProgramBinder};
 use crate::references::*;
 use crate::types::Mat4;
+use crate::components::camera::CameraUniform;
 
 struct GBuffer
 {
@@ -86,9 +86,9 @@ impl GBuffer
         Self {
             _device : queue.device().clone(),
             _render_pass : RenderPass::new(queue.device().clone(), desc).unwrap(),
-            _albedo : Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RGB8u, queue.clone()).unwrap(),
-            _normals : Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RGB8u, queue.clone()).unwrap(),
-            _specromet : Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RGB8u, queue.clone()).unwrap(),
+            _albedo : Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
+            _normals : Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
+            _specromet : Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
             _vectors : Texture::new_empty_2d("gVectors", width, height, TexturePixelFormat::RGBA16f, queue.clone()).unwrap(),
             _depth : Texture::new_empty_2d("gDepth", width, height, TexturePixelFormat::Depth16u, queue.clone()).unwrap(),
         }
@@ -114,16 +114,16 @@ pub struct Renderer
     _gbuffer : GBuffer,
     _postprocess_pass : Arc<RenderPass>,
     _aspect : f32,
+    _camera : CameraUniform
 }
 
 #[allow(dead_code)]
 impl Renderer
 {
-    pub fn from_winit(win: Arc<Surface<Window>>, vsync: bool) -> Self
+    pub fn from_winit(vk_instance : Arc<Instance>, win: Arc<Surface<Window>>, vsync: bool) -> Self
     {
-        let required_extensions = vulkano_win::required_extensions();
-        let vk_instance = Instance::new(None, Version::V1_2, &required_extensions, None).unwrap();
         let dimensions = win.window().inner_size().into();
+        println!("{:?}", dimensions);
         let device_extensions = DeviceExtensions {
             khr_swapchain: true,
             ..DeviceExtensions::none()
@@ -238,11 +238,22 @@ impl Renderer
             _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, queue.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
-            _draw_list : Vec::new()
+            _draw_list : Vec::new(),
+            _camera : CameraUniform::identity(dimensions[0] as f32 / dimensions[1] as f32, 80.0, 0.1, 100.0)
         }
     }
 
-    fn update_swapchain(&mut self)
+    pub fn width(&self) -> u16
+    {
+        self._vk_surface.window().inner_size().width as u16
+    }
+
+    pub fn height(&self) -> u16
+    {
+        self._vk_surface.window().inner_size().height as u16
+    }
+
+    pub fn update_swapchain(&mut self)
     {
         let dimensions: [u32; 2] = self._vk_surface.window().inner_size().into();
         let (new_swapchain, new_images) =
@@ -315,6 +326,7 @@ impl Renderer
             if shader.box_id() != shid {
                 shid = shader.box_id();
                 meid = -1;
+                shader.take_mut().make_pipeline(vulkano::render_pass::Subpass::from(self._postprocess_pass.clone(), 0).unwrap());
                 command_buffer_builder
                     .bind_shader_program(shader);
             }
@@ -324,6 +336,7 @@ impl Renderer
             };
             let mut shd = shader.take_mut();
             shd.uniform(&tr, 0);
+            shd.uniform(&self._camera, 0);
             shd.uniform(texture, 1);
             drop(shd);
             command_buffer_builder.bind_shader_uniforms(shader);
@@ -333,7 +346,7 @@ impl Renderer
                 meid = mesh.box_id();
             }
         }
-
+        command_buffer_builder.end_render_pass().unwrap();
         let command_buffer = command_buffer_builder.build().unwrap();
         let future = self._frame_finish_event
             .take()
@@ -357,5 +370,15 @@ impl Renderer
                 self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
             }
         };
+    }
+
+    pub fn queue(&self) -> &Arc<Queue>
+    {
+        &self._queue
+    }
+
+    pub fn device(&self) -> &Arc<Device>
+    {
+        &self._device
     }
 }
