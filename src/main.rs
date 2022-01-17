@@ -79,6 +79,7 @@ impl Application {
         v_shd
             .default_vertex_attributes()
             .output("col", shader::AttribType::FVec3)
+            .output("nor", shader::AttribType::FVec3)
             .output("tex_map", shader::AttribType::FVec2)
             .uniform::<game_object::GOTransfotmUniform>("object", 0)
             .uniform::<components::camera::CameraUniform>("camera", 0)
@@ -86,8 +87,8 @@ impl Application {
             .code("
                 void main() {
                     col = v_nor;
-                    vec4 pos = vec4(v_pos, 1.0);
-                    pos = camera.projection * object.transform * pos;
+                    vec4 pos = camera.projection * object.transform * vec4(v_pos, 1.0);
+                    nor = (object.transform * vec4(v_nor, 0.0)).xyz;
                     tex_map = v_pos.xy*0.5+0.5;
                     gl_Position = pos;
                 }"
@@ -96,12 +97,17 @@ impl Application {
         let mut f_shd = shader::Shader::builder(shader::ShaderType::Fragment, renderer.device().clone());
             f_shd
             .input("col", shader::AttribType::FVec3)
+            .input("nor", shader::AttribType::FVec3)
             .input("tex_map", shader::AttribType::FVec2)
-            .output("f_color", shader::AttribType::FVec4)
+            .output("gAlbedo", shader::AttribType::FVec3)
+            .output("gNormals", shader::AttribType::FVec3)
+            .output("gMasks", shader::AttribType::FVec3)
+            .output("gVectors", shader::AttribType::FVec4)
             .uniform_sampler2d("tex", 1, false)
             .code("
                 void main() {
-                    f_color = texture(tex, tex_map.xy);
+                    gAlbedo = texture(tex, tex_map.xy).rgb;
+                    gNormals = normalize(nor)*0.5+0.5;
                     //f_color = vec4(1.0,1.0,1.0, 1.0);
                 }"
             ).build().unwrap();
@@ -117,7 +123,7 @@ impl Application {
             .push_teapot()
             //.push_screen_plane()
             //.push_from_file("../dsge/data/mesh/GiantWarriorChampion_Single.mesh")
-            .build(renderer.queue().clone()).unwrap();
+            .build(renderer.device().clone()).unwrap();
         
         Ok(Self {
             renderer: renderer,
@@ -158,7 +164,7 @@ impl Application {
                         -self.counter.sin(), 0.0, self.counter.cos(), 0.0,
                          0.0, 0.0, 0.0, 1.0,
                     );
-                    self.renderer.begin_frame();
+                    self.renderer.begin_geametry_pass();
                     self.renderer.draw(self.mesh.clone(), self.texture.clone(), self.shader.clone(), transform);
                     self.renderer.end_frame();
                     self.counter += 0.1;
@@ -170,7 +176,7 @@ impl Application {
 }
 
 fn main() {
-    let mut app = Application::new("DSGE VK", 800, 600, false, true).unwrap();
+    let mut app = Application::new("DSGE VK", 800, 600, false, false).unwrap();
     app.renderer.update_swapchain();
     app.event_loop();
     println!("Выход");
