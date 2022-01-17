@@ -10,6 +10,7 @@ use vulkano::render_pass::RenderPass;
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use crate::references::*;
 use crate::vulkano::pipeline::Pipeline;
+use vulkano::device::Device;
 
 pub type ShaderProgramRef = RcBox<ShaderProgram>;
 
@@ -326,7 +327,7 @@ impl PipelineBuilder
         self
     }
 
-    pub fn build(&mut self, device: Arc<vulkano::device::Device>) -> Result<ShaderProgramRef, String>
+    pub fn build(&mut self, device: Arc<Device>) -> Result<ShaderProgramRef, String>
     {        
         Ok(
             ShaderProgramRef::construct(
@@ -353,7 +354,7 @@ pub trait PipelineUniform: ShaderStructUniform + std::marker::Send + std::marker
 #[allow(dead_code)]
 pub struct ShaderProgram
 {
-    device : Arc<vulkano::device::Device>,
+    device : Arc<Device>,
     pipeline : Option<Arc<vulkano::pipeline::GraphicsPipeline>>,
     render_pass : Option<Arc<RenderPass>>,
     //uniforms_values: HashMap<usize, Vec<Arc<dyn ShaderStructUniform + std::marker::Send + std::marker::Sync + 'static>>>,
@@ -378,6 +379,11 @@ impl ShaderProgram
             uniforms : HashMap::new(),
             depth_test : false
         }
+    }
+
+    pub fn device(&self) -> &Arc<Device>
+    {
+        &self.device
     }
 
     pub fn pipeline(&self) -> Option<Arc<GraphicsPipeline>>
@@ -435,6 +441,7 @@ impl ShaderProgram
     
     pub fn make_pipeline(&mut self, subpass : vulkano::render_pass::Subpass)
     {
+        let depth_test = subpass.has_depth();
         let mut pipeline = vulkano::pipeline::GraphicsPipeline::start()
             .vertex_input_state(BuffersDefinition::new().vertex::<super::mesh::VkVertex>());
         if self.vertex_shader.is_some() {
@@ -452,8 +459,11 @@ impl ShaderProgram
         pipeline = pipeline
             .input_assembly_state(vulkano::pipeline::graphics::input_assembly::InputAssemblyState::new())
             .viewport_state(vulkano::pipeline::graphics::viewport::ViewportState::viewport_dynamic_scissor_irrelevant())
-            .render_pass(subpass)
-            .depth_stencil_state(DepthStencilState::simple_depth_test());
+            .render_pass(subpass);
+        
+        if depth_test {
+            pipeline = pipeline.depth_stencil_state(DepthStencilState::simple_depth_test());
+        }
         //if self.
         self.pipeline = Some(pipeline.build(self.device.clone()).unwrap());
     }

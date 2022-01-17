@@ -13,7 +13,7 @@ use image::io::Reader as ImageReader;
 use vulkano::format::Format;
 
 #[allow(dead_code)]
-use vulkano::device::{Queue};
+use vulkano::device::{Queue, Device};
 
 #[allow(dead_code)]
 use vulkano::image::{
@@ -56,7 +56,7 @@ pub struct Texture
     _vk_image_dims: TextureDimensions,
     _vk_image_view: Arc<dyn ImageViewAbstract + 'static>,
     _vk_sampler: Arc<TextureSampler>,
-    _vk_queue: Arc<Queue>,
+    _vk_device: Arc<Device>,
 
     min_filter: TextureFilter,
     mag_filter: TextureFilter,
@@ -125,37 +125,37 @@ impl Texture
         }
     }
 
-    pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim1d{width: length as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(queue, pix_fmt, dims)
+            .build_attachment(device, pix_fmt, dims)
     }
 
-    pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim2d{width: width as u32, height: height as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(queue, pix_fmt, dims)
+            .build_attachment(device, pix_fmt, dims)
     }
 
-    pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim3d{width: width as u32, height: height as u32, depth: layers as u32};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(queue, pix_fmt, dims)
+            .build_attachment(device, pix_fmt, dims)
     }
 
-    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let img_dims = img.image().dimensions();
-        let sampler = TextureSampler::simple_repeat_linear_no_mipmap(queue.device().clone());
+        let sampler = TextureSampler::simple_repeat_linear_no_mipmap(device.clone());
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
         //TextureDimensions{width: img_dims[0], }
         Ok(RcBox::construct(Self{
@@ -164,7 +164,7 @@ impl Texture
             _vk_image_dims : img_dims,
             _vk_image_view : img,
             _vk_sampler : sampler,
-            _vk_queue : queue.clone(),
+            _vk_device : device.clone(),
 
             min_filter : TextureFilter::Linear,
             mag_filter : TextureFilter::Linear,
@@ -300,7 +300,7 @@ impl Texture
     pub fn update_sampler(&mut self)
     {
         self._vk_sampler = TextureSampler::new(
-            self._vk_queue.device().clone(),
+            self._vk_device.clone(),
             self.mag_filter,
             self.min_filter,
             self.mip_mode,
@@ -379,10 +379,10 @@ impl TextureBuilder
         self.mag_filter = filter;
         self
     }
-    pub fn build_attachment(&mut self, queue: Arc<Queue>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
+    pub fn build_attachment(&mut self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
     {
         let texture = AttachmentImage::sampled_input_attachment(
-            queue.device().clone(),
+            device.clone(),
             [dimensions.width(), dimensions.height()],
             pix_fmt.vk_format()
         ).unwrap();
@@ -391,9 +391,9 @@ impl TextureBuilder
             name: "".to_string(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
-            _vk_queue: queue.clone(),
+            _vk_device: device.clone(),
             _vk_sampler: TextureSampler::new(
-                queue.device().clone(),
+                device.clone(),
                 self.mag_filter,
                 self.min_filter,
                 self.mip_mode,
@@ -420,6 +420,7 @@ impl TextureBuilder
 
     pub fn build_immutable_compressed<Rdr : Read + Seek + BufRead>(&mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
     {
+        let device = queue.device();
         let header : Box<dyn CompressedFormat>;
         let mut header_bytes = vec!(0u8; 128);
         reader.read(header_bytes.as_mut_slice()).unwrap();
@@ -468,9 +469,9 @@ impl TextureBuilder
             name: "".to_string(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
-            _vk_queue: queue.clone(),
+            _vk_device: device.clone(),
             _vk_sampler: TextureSampler::new(
-                queue.device().clone(),
+                device.clone(),
                 self.mag_filter,
                 self.min_filter,
                 self.mip_mode,
@@ -528,7 +529,7 @@ impl TextureBuilder
             name: "".to_string(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
-            _vk_queue: queue.clone(),
+            _vk_device: queue.device().clone(),
             _vk_sampler: TextureSampler::new(
                 queue.device().clone(),
                 self.mag_filter,
@@ -569,7 +570,7 @@ impl TextureBuilder
         ImageCreationError,
     >
     {
-        
+        let device = queue.device();
         let usage = ImageUsage {
             transfer_destination: true,
             transfer_source: true,
@@ -580,20 +581,20 @@ impl TextureBuilder
         let layout = ImageLayout::ShaderReadOnlyOptimal;
 
         let (mut image, initializer) = ImmutableImage::uninitialized(
-            queue.device().clone(),
+            device.clone(),
             dimensions,
             format.vk_format(),
             if mip_map_count > 1 { MipmapsCount::Log2 } else { MipmapsCount::One },
             usage,
             flags,
             layout,
-            queue.device().active_queue_families(),
+            device.active_queue_families(),
         )?;
 
         let init = SubImage::new(initializer, 0, 1, 0, 1, ImageLayout::ShaderReadOnlyOptimal);
 
         let mut cbb = AutoCommandBufferBuilder::primary(
-            queue.device().clone(),
+            device.clone(),
             queue.family(),
             CommandBufferUsage::MultipleSubmit,
         )?;
@@ -623,7 +624,7 @@ impl TextureBuilder
             let size = (blocks * block_size) as usize;
 
             let source = CpuAccessibleBuffer::from_iter(
-                queue.device().clone(),
+                device.clone(),
                 BufferUsage::transfer_source(),
                 false,
                 data[data_offset..data_offset+size].iter().cloned(),

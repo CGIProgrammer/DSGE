@@ -1,4 +1,4 @@
-use vulkano::Version;
+pub mod postprocessor;
 use vulkano::device::{
     Device, DeviceExtensions, Features, Queue,
     physical::{
@@ -7,11 +7,11 @@ use vulkano::device::{
     }
 };
 use vulkano::swapchain::{self, AcquireError, Swapchain, SwapchainCreationError, Surface, PresentMode};
-use vulkano::image::{view::ImageView, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
-use vulkano::render_pass::{RenderPass, RenderPassDesc, SubpassDesc, AttachmentDesc};
+use vulkano::image::{view::{ImageView, ImageViewAbstract}, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
+use vulkano::render_pass::{RenderPass, RenderPassDesc, Subpass, SubpassDesc, AttachmentDesc};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use winit::window::{Window};
 
 use std::sync::Arc;
@@ -20,13 +20,34 @@ use crate::game_object::GOTransfotmUniform;
 use crate::texture::{Texture, TexturePixelFormat, TextureRef};
 use crate::framebuffer::{Framebuffer, FramebufferRef, FramebufferBinder};
 use crate::mesh::{MeshRef, Mesh, MeshBinder};
-use crate::shader::{ShaderProgramRef, ShaderProgramBinder};
+use crate::shader::{ShaderProgramRef, ShaderStructUniform, ShaderProgramBinder, Shader, ShaderProgram, ShaderType};
 use crate::references::*;
 use crate::types::Mat4;
+use crate::glenums::AttribType;
 use crate::components::camera::CameraUniform;
+use postprocessor::RenderPostprocessingGraph;
+
+impl ShaderStructUniform for i32
+{
+    fn structure() -> String
+    {
+        "{int value;}".to_string()
+    }
+
+    fn glsl_type_name() -> String
+    {
+        "32DummyInt".to_string()
+    }
+
+    fn texture(&self) -> Option<&TextureRef>
+    {
+        None
+    }
+}
 
 struct GBuffer
 {
+    _frame_buffer: FramebufferRef,
     _device      : Arc<Device>,
     _render_pass : Arc<RenderPass>,
     _albedo      : TextureRef,
@@ -38,12 +59,24 @@ struct GBuffer
 
 impl GBuffer
 {
-    fn new(width : u16, height : u16, queue : Arc<Queue>) -> Self
+    fn new(width : u16, height : u16, device : Arc<Device>) -> Self
     {
+        let fb = Framebuffer::new(width, height);
+        let albedo = Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
+        let normals = Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
+        let masks = Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
+        let vectors = Texture::new_empty_2d("gVectors", width, height, TexturePixelFormat::RGBA16f, device.clone()).unwrap();
+        let depth = Texture::new_empty_2d("gDepth", width, height, TexturePixelFormat::Depth16u, device.clone()).unwrap();
+        fb.take_mut().add_color_attachment(albedo.clone(), [0.5, 0.5, 0.5].into()).unwrap();
+        fb.take_mut().add_color_attachment(normals.clone(), [0.0, 0.0, 0.0].into()).unwrap();
+        fb.take_mut().add_color_attachment(masks.clone(), [0.0, 0.0, 0.0].into()).unwrap();
+        fb.take_mut().add_color_attachment(vectors.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
+        fb.take_mut().set_depth_attachment(depth.clone(), 1.0.into());
+
         let formats = [
-            TexturePixelFormat::RGB8u,
-            TexturePixelFormat::RGB16f,
-            TexturePixelFormat::RGB8u,
+            TexturePixelFormat::RGBA8i,
+            TexturePixelFormat::RGBA8i,
+            TexturePixelFormat::RGBA8i,
             TexturePixelFormat::RGBA16f,
             TexturePixelFormat::Depth16u
         ];
@@ -84,13 +117,14 @@ impl GBuffer
             vec![]
         );
         Self {
-            _device : queue.device().clone(),
-            _render_pass : RenderPass::new(queue.device().clone(), desc).unwrap(),
-            _albedo : Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
-            _normals : Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
-            _specromet : Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RG8i, queue.clone()).unwrap(),
-            _vectors : Texture::new_empty_2d("gVectors", width, height, TexturePixelFormat::RGBA16f, queue.clone()).unwrap(),
-            _depth : Texture::new_empty_2d("gDepth", width, height, TexturePixelFormat::Depth16u, queue.clone()).unwrap(),
+            _device : device.clone(),
+            _render_pass : RenderPass::new(device.clone(), desc).unwrap(),
+            _albedo : albedo,
+            _normals : normals,
+            _specromet : masks,
+            _vectors : vectors,
+            _depth : depth,
+            _frame_buffer : fb
         }
     }
 }
@@ -111,10 +145,13 @@ pub struct Renderer
     
     _framebuffers : Vec<FramebufferRef>,
     _screen_plane : MeshRef,
+    _screen_plane_shader : ShaderProgramRef,
     _gbuffer : GBuffer,
     _postprocess_pass : Arc<RenderPass>,
     _aspect : f32,
-    _camera : CameraUniform
+    _camera : CameraUniform,
+
+    _postprocessor : RenderPostprocessingGraph,
 }
 
 #[allow(dead_code)]
@@ -156,9 +193,6 @@ impl Renderer
         let (device, mut queues) = Device::new(
             physical_device,
             &features,
-            // Some devices require certain extensions to be enabled if they are present
-            // (e.g. `khr_portability_subset`). We add them to the device extensions that we're going to
-            // enable.
             &physical_device
                 .required_extensions()
                 .union(&device_extensions),
@@ -178,7 +212,6 @@ impl Renderer
     
             let format = caps.supported_formats[0].0;
             
-            //println!("Количество буферов в цепи обновления {}", caps.min_image_count);
             Swapchain::start(device.clone(), win.clone())
                 .num_images(caps.min_image_count)
                 .format(format)
@@ -196,7 +229,7 @@ impl Renderer
             AttachmentDesc {
                 format: swapchain.format(),
                 samples: SampleCount::Sample1,
-                load: vulkano::render_pass::LoadOp::Clear,
+                load: vulkano::render_pass::LoadOp::DontCare,
                 store: vulkano::render_pass::StoreOp::Store,
                 stencil_load: vulkano::render_pass::LoadOp::Clear,
                 stencil_store: vulkano::render_pass::StoreOp::Store,
@@ -234,12 +267,15 @@ impl Renderer
             _postprocess_pass : final_render_pass,
             _sc_images : images,
             _framebuffers : Vec::new(),
-            _screen_plane : Mesh::make_screen_plane(queue.clone()).unwrap(),
-            _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, queue.clone()),
+            _screen_plane : Mesh::make_screen_plane(device.clone()).unwrap(),
+            _screen_plane_shader : Self::make_screen_plane_shader(device.clone()),
+            _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, device.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
-            _camera : CameraUniform::identity(dimensions[0] as f32 / dimensions[1] as f32, 80.0, 0.1, 100.0)
+            _camera : CameraUniform::identity(dimensions[0] as f32 / dimensions[1] as f32, 80.0, 0.1, 100.0),
+
+            _postprocessor : RenderPostprocessingGraph::new(queue.clone())
         }
     }
 
@@ -263,7 +299,7 @@ impl Renderer
                 Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
             };
         self._aspect = dimensions[0] as f32 / dimensions[1] as f32;
-        let db = Texture::new_empty_2d("depth", dimensions[0] as u16, dimensions[1] as u16, TexturePixelFormat::Depth16u, self._queue.clone()).unwrap();
+        let db = Texture::new_empty_2d("depth", dimensions[0] as u16, dimensions[1] as u16, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
         
         self._swapchain = new_swapchain;
         let dimensions = new_images[0].dimensions().width_height();
@@ -271,7 +307,7 @@ impl Renderer
         self._framebuffers = new_images
             .iter()
             .map(|image| {
-                let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._queue.clone()).unwrap();
+                let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._device.clone()).unwrap();
                 let fb = Framebuffer::new(dimensions[0] as u16, dimensions[1] as u16);
                 fb.take_mut().add_color_attachment(cb.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
                 fb.take_mut().set_depth_attachment(db.clone(), 1.0.into());
@@ -280,53 +316,36 @@ impl Renderer
             .collect::<Vec<_>>();
     }
 
+    pub fn begin_geametry_pass(&mut self)
+    {
+        self._draw_list.clear();
+    }
+
     pub fn draw(&mut self, mesh : MeshRef, tex : TextureRef, shader : ShaderProgramRef, transform : Mat4)
     {
         self._draw_list.push((mesh, tex, shader, transform));
     }
 
-    pub fn begin_frame(&mut self)
+    pub fn end_geametry_pass(&self) -> PrimaryAutoCommandBuffer
     {
-        self._draw_list.clear();
-    }
-
-    pub fn end_frame(&mut self)
-    {
-        self._frame_finish_event.as_mut().unwrap().cleanup_finished();
-        if self._need_to_update_sc {
-            self.update_swapchain();
-            self._need_to_update_sc = false;
-        }
-        let (image_num, suboptimal, acquire_future) =
-        match swapchain::acquire_next_image(self._swapchain.clone(), None) {
-            Ok(r) => r,
-            Err(AcquireError::OutOfDate) => {
-                self.update_swapchain();
-                self.begin_frame();
-                return;
-            }
-            Err(e) => panic!("Failed to acquire next image: {:?}", e),
-        };
-        
-        if suboptimal {
-            self._need_to_update_sc = true;
-        }
-
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self._device.clone(),
             self._queue.family(),
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
-        command_buffer_builder.bind_framebuffer(self._framebuffers[image_num].clone(), self._postprocess_pass.clone()).unwrap();
+        let gbuffer_rp = &self._gbuffer._render_pass;
+        let gbuffer_fb = &self._gbuffer._frame_buffer;
+        let geom_pass = Subpass::from(gbuffer_rp.clone(), 0).unwrap();
+
+        command_buffer_builder
+            .bind_framebuffer(gbuffer_fb.clone(), gbuffer_rp.clone()).unwrap();
 
         let mut shid = -1;
-        let mut meid = -1;
         for (mesh, texture, shader, transform) in &self._draw_list
         {
             if shader.box_id() != shid {
                 shid = shader.box_id();
-                meid = -1;
-                shader.take_mut().make_pipeline(vulkano::render_pass::Subpass::from(self._postprocess_pass.clone(), 0).unwrap());
+                shader.take_mut().make_pipeline(geom_pass.clone());
                 command_buffer_builder
                     .bind_shader_program(shader);
             }
@@ -341,19 +360,67 @@ impl Renderer
             drop(shd);
             command_buffer_builder.bind_shader_uniforms(shader);
             
-            if mesh.box_id() != meid {
-                command_buffer_builder.bind_mesh(mesh.clone());
-                meid = mesh.box_id();
-            }
+            command_buffer_builder.bind_mesh(mesh);
         }
+
         command_buffer_builder.end_render_pass().unwrap();
-        let command_buffer = command_buffer_builder.build().unwrap();
+        command_buffer_builder.build().unwrap()
+    }
+
+    pub fn postprocess_pass(&self, sci_index : usize) -> PrimaryAutoCommandBuffer
+    {
+        let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
+            self._device.clone(),
+            self._queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
+        ).unwrap();
+        let subpass = vulkano::render_pass::Subpass::from(self._postprocess_pass.clone(), 0).unwrap();
+        
+        let mut shd = self._screen_plane_shader.take_mut();
+        shd.make_pipeline(subpass);
+        shd.uniform(&self._gbuffer._albedo, 1);
+        drop(shd);
+
+        command_buffer_builder
+            .bind_framebuffer(self._framebuffers[sci_index].clone(), self._postprocess_pass.clone()).unwrap()
+            .bind_shader_program(&self._screen_plane_shader)
+            .bind_shader_uniforms(&self._screen_plane_shader)
+            .bind_mesh(&self._screen_plane);
+        
+        command_buffer_builder.end_render_pass().unwrap();
+        command_buffer_builder.build().unwrap()
+    }
+
+    pub fn end_frame(&mut self)
+    {
+        self._frame_finish_event.as_mut().unwrap().cleanup_finished();
+        if self._need_to_update_sc {
+            self.update_swapchain();
+            self._need_to_update_sc = false;
+        }
+        let (image_num, suboptimal, acquire_future) =
+        match swapchain::acquire_next_image(self._swapchain.clone(), None) {
+            Ok(r) => r,
+            Err(AcquireError::OutOfDate) => {
+                self.update_swapchain();
+                self.begin_geametry_pass();
+                return;
+            }
+            Err(e) => panic!("Failed to acquire next image: {:?}", e),
+        };
+        
+        if suboptimal {
+            self._need_to_update_sc = true;
+        }
+        
+        let gp_command_buffer = self.end_geametry_pass();
+        let pp_command_buffer = self.postprocess_pass(image_num);
+
         let future = self._frame_finish_event
-            .take()
-            .unwrap()
+            .take().unwrap()
+            .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
             .join(acquire_future)
-            .then_execute(self._queue.clone(), command_buffer)
-            .unwrap()
+            .then_execute(self._queue.clone(), pp_command_buffer).unwrap()
             .then_swapchain_present(self._queue.clone(), self._swapchain.clone(), image_num)
             .then_signal_fence_and_flush();
 
@@ -380,5 +447,37 @@ impl Renderer
     pub fn device(&self) -> &Arc<Device>
     {
         &self._device
+    }
+
+    fn make_screen_plane_shader(device: Arc<Device>) -> ShaderProgramRef
+    {
+        let mut v_builder = Shader::builder(ShaderType::Vertex, device.clone());
+        let mut f_builder = Shader::builder(ShaderType::Fragment, device.clone());
+        v_builder
+            .default_vertex_attributes()
+            .output("coords", AttribType::FVec2)
+            .code("
+                void main() {
+                    coords = v_pos.xy*0.5+0.5;
+                    gl_Position = vec4(v_pos, 1.0);
+                }
+            ");
+        f_builder
+            .input("coords", AttribType::FVec2)
+            .uniform_sampler2d("img", 1, false)
+            //.uniform_sampler2d("prev", 1, false)
+            .output("fragColor", AttribType::FVec4)
+            .code("
+                void main() {
+                    //vec4 a = texture(prev, coords);
+                    vec4 b = texture(img, coords);
+                    fragColor = b; //mix(a, b, 0.1);
+                }
+            ")
+        ;
+        let mut sh_builder = ShaderProgram::builder();
+        sh_builder.vertex(&v_builder.build().unwrap());
+        sh_builder.fragment(&f_builder.build().unwrap());
+        sh_builder.build(device.clone()).unwrap()
     }
 }

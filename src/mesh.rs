@@ -8,7 +8,7 @@ use super::types::*;
 use std::sync::Arc;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::device::{Queue};
+use vulkano::device::{Queue, Device};
 use vulkano::command_buffer::{AutoCommandBufferBuilder};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
@@ -295,18 +295,18 @@ impl MeshBuilder
             )
     }
 
-    pub fn build(&mut self, queue: Arc<Queue>) -> Result<MeshRef, String>
+    pub fn build(&mut self, device: Arc<Device>) -> Result<MeshRef, String>
     {
         
         //self._vertex_buffer = Some(ImmutableBuffer::from_iter(self._vertices.clone(), BufferUsage::all(), queue.clone()).unwrap().0);
         //self._index_buffer  = Some(ImmutableBuffer::from_iter(self._indices.clone(), BufferUsage::all(), queue.clone()).unwrap().0);
     
-        self._vertex_buffer = Some(CpuAccessibleBuffer::from_iter(queue.device().clone(), BufferUsage::all(), false, self._vertices.clone()).unwrap());
-        self._index_buffer  = Some(CpuAccessibleBuffer::from_iter(queue.device().clone(), BufferUsage::all(), false, self._indices.clone()).unwrap());
+        self._vertex_buffer = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._vertices.clone()).unwrap());
+        self._index_buffer  = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._indices.clone()).unwrap());
 
         let mesh = Mesh {
             name: self._name.clone(),
-            queue: queue,
+            device: device,
             deformed: false,
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -324,7 +324,7 @@ pub struct Mesh {
     name: String,
     indices: Vec<u32>,
     vertices: Vec<VkVertex>,
-    queue: Arc<Queue>,
+    device: Arc<Device>,
     vertex_buffer: Option<VertexBufferRef>,
     index_buffer : Option<IndexBufferRef>,
     pub bbox: BoundingBox,
@@ -342,7 +342,7 @@ impl Mesh {
         res
     }
 
-    pub fn make_screen_plane(queue: Arc<Queue>) -> Result<MeshRef, String>
+    pub fn make_screen_plane(device: Arc<Device>) -> Result<MeshRef, String>
     {
         let mut plane = Mesh::builder("screen_plane");
         plane
@@ -356,10 +356,10 @@ impl Mesh {
                 &Vec3::new( 1.0,  1.0, 0.0),
                 &Vec3::new( 1.0, -1.0, 0.0)
             );
-        plane.build(queue)
+        plane.build(device)
     }
 
-    pub fn make_cube(name : &str, queue: Arc<Queue>) -> Result<MeshRef, String>
+    pub fn make_cube(name : &str, device: Arc<Device>) -> Result<MeshRef, String>
     {
         let mut cube = Mesh::builder(name);
         cube.push_quad_coords(
@@ -398,7 +398,7 @@ impl Mesh {
             &Vec3::new(-1.0, -1.0,  1.0),
             &Vec3::new(-1.0, -1.0, -1.0),
         )
-        .build(queue)
+        .build(device)
     }
 
     pub fn vertex_buffer(&self) -> Option<VertexBufferRef>
@@ -414,12 +414,12 @@ impl Mesh {
 
 pub trait MeshBinder
 {
-    fn bind_mesh(&mut self, mesh: MeshRef) -> &mut Self;
+    fn bind_mesh(&mut self, mesh: &MeshRef) -> &mut Self;
 }
 
 impl <L, P>MeshBinder for AutoCommandBufferBuilder<L, P>
 {
-    fn bind_mesh(&mut self, mesh: MeshRef) -> &mut Self
+    fn bind_mesh(&mut self, mesh: &MeshRef) -> &mut Self
     {
         let vbo = mesh.take().vertex_buffer().unwrap();
         let ibo = mesh.take().index_buffer().unwrap();
