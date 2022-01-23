@@ -13,6 +13,7 @@ pub struct CameraUniform
     pub projection_inverted : Mat4,
 }
 
+#[allow(dead_code)]
 impl CameraUniform
 {
     pub fn identity(aspect: f32, fov: f32, znear: f32, zfar: f32) -> Self

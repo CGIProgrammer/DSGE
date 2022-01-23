@@ -14,44 +14,18 @@ use vulkano::device::Device;
 
 pub type ShaderProgramRef = RcBox<ShaderProgram>;
 
-#[allow(dead_code)]
-#[derive(Clone)]
-pub struct ShaderUniform
+/// Trait для единообразной передачи uniform-структур и текстур в GLSL шейдер.
+/// Он же используется для сборки GLSL шейдера
+pub trait ShaderStructUniform
 {
-    _type: GLSLType,
-    _location: i32,
-    _set: i32,
-    _name: String
+    fn structure() -> String;       // Должна возвращать текстовое представление структуры типа для GLSL
+    fn glsl_type_name() -> String;  // Должна возвращать название типа
+    fn texture(&self) -> Option<&crate::texture::TextureRef>; // Позволяет получить текстуру, если структура является таковой
 }
 
-#[allow(dead_code)]
-impl ShaderUniform
-{
-    pub fn new(_type: GLSLType, name: &str) -> Self
-    {
-        Self {
-            _type: _type,
-            _name: name.to_string(),
-            _location: 0,
-            _set: 0
-        }
-    }
-
-    pub fn location(&self) -> i32
-    {
-        self._location
-    }
-
-    pub fn name(&self) -> &str
-    {
-        self._name.as_str()
-    }
-}
-
-//#[allow(dead_code)]
+/// Структура для построения GLSL шейдера и компиляции его в SPIR-V
 pub struct Shader
 {
-    attributes: Vec<(String, AttribType)>,
     glsl_version: GLSLVersion,
     sh_type: ShaderType,
     device: Arc<vulkano::device::Device>,
@@ -65,12 +39,8 @@ pub struct Shader
 impl std::fmt::Debug for Shader
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut attrib_list = Vec::new();
         let mut outputs_list = Vec::new();
         let mut inputs_list = Vec::new();
-        for i in &self.attributes {
-            attrib_list.push(format!("{}: {}", i.0, i.1));
-        }
         for i in &self.inputs {
             inputs_list.push(format!("{}: {}", i.0, i.1));
         }
@@ -79,7 +49,6 @@ impl std::fmt::Debug for Shader
         }
         f.debug_struct("Shader")
          .field("glsl_version", &self.glsl_version)
-         .field("attributes", &attrib_list.join(", "))
          .field("inputs", &inputs_list.join(", "))
          .field("outputs", &outputs_list.join(", "))
          .finish()
@@ -94,6 +63,7 @@ impl Shader
         self.source.clone()
     }
 
+    /// Построить щейдер указанного типа
     pub fn builder(shader_type: ShaderType, device: Arc<vulkano::device::Device>) -> Self
     {
         let gl_version = GLSLVersion::V450;
@@ -104,7 +74,6 @@ impl Shader
         }
         
         Self {
-            attributes : Vec::new(),
             glsl_version : gl_version,
             sh_type : shader_type,
             module : None,
@@ -116,31 +85,20 @@ impl Shader
         }
     }
 
-    pub fn vertex_attribute(&mut self, name: &str, type_: AttribType) -> &mut Self
-    {
-        match self.sh_type {
-            ShaderType::Vertex =>
-                self.source += format!("layout(location={}) in {} {};\n", self.attributes.len(), type_.get_glsl_name().as_str(), name).as_str(),
-            _ => 
-                panic!("Атрибуты вершин поддерживаются только вершинными Vertex шейдерами")
-        };
-        self.attributes.push((name.to_string(), type_));
-        self
-    }
-
+    /// Атрибуты вершин по умолчанию
     pub fn default_vertex_attributes(&mut self) -> &mut Self
     {
         self
-            .vertex_attribute("v_pos", AttribType::FVec3)
-            .vertex_attribute("v_nor", AttribType::FVec3)
-            .vertex_attribute("v_bin", AttribType::FVec3)
-            .vertex_attribute("v_tan", AttribType::FVec3)
-            .vertex_attribute("v_tex1", AttribType::FVec2)
-            .vertex_attribute("v_tex2", AttribType::FVec2)
-            .vertex_attribute("v_grp", AttribType::UVec3)
+            .input("v_pos", AttribType::FVec3)
+            .input("v_nor", AttribType::FVec3)
+            .input("v_bin", AttribType::FVec3)
+            .input("v_tan", AttribType::FVec3)
+            .input("v_tex1", AttribType::FVec2)
+            .input("v_tex2", AttribType::FVec2)
+            .input("v_grp", AttribType::UVec3)
     }
 
-    // Сделать объявление структур.
+    /// Объявление uniform-переменных
     pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str, set: usize) -> &mut Self
     {
         let mut uniforms_in_set = match self.uniforms.get(&set) { Some(uc) => uc.clone(), None => 0 };
@@ -150,6 +108,10 @@ impl Shader
         self
     }
 
+    /// Объявление одномерного сэмплера (текстуры)
+    /// `name` - название внутри шейдера
+    /// `set` - номер множества uniform-переменных
+    /// `array` - объявить как массив
     pub fn uniform_sampler1d(&mut self, name: &str, set: usize, array : bool) -> &mut Self
     {
         let mut uniforms_in_set = match self.uniforms.get(&set) { Some(uc) => uc.clone(), None => 0 };
@@ -159,6 +121,10 @@ impl Shader
         self
     }
 
+    /// Объявление двухмерного сэмплера
+    /// `name` - название внутри шейдера
+    /// `set` - номер множества uniform-переменных
+    /// `array` - объявить как массив
     pub fn uniform_sampler2d(&mut self, name: &str, set: usize, array : bool) -> &mut Self
     {
         let mut uniforms_in_set = match self.uniforms.get(&set) { Some(uc) => uc.clone(), None => 0 };
@@ -168,6 +134,10 @@ impl Shader
         self
     }
 
+    /// Объявление трёхмерного сэмплера
+    /// `name` - название внутри шейдера
+    /// `set` - номер множества uniform-переменных
+    /// Не может быть массивом
     pub fn uniform_sampler3d(&mut self, name: &str, set: usize) -> &mut Self
     {
         let mut uniforms_in_set = match self.uniforms.get(&set) { Some(uc) => uc.clone(), None => 0 };
@@ -177,6 +147,7 @@ impl Shader
         self
     }
 
+    /// Объявляет выход шейдера
     pub fn output(&mut self, name: &str, type_: AttribType) -> &mut Self
     {
         let layout_location = 
@@ -190,6 +161,7 @@ impl Shader
         self
     }
 
+    /// Объявляет вход шейдера
     pub fn input(&mut self, name: &str, type_: AttribType) -> &mut Self
     {
         let layout_location = 
@@ -203,6 +175,7 @@ impl Shader
         self
     }
 
+    /// Добавляет код
     pub fn code(&mut self, code: &str) -> &mut Self
     {   
         self.source += code;
@@ -210,6 +183,8 @@ impl Shader
         self
     }
 
+    /// Строит шейдер.
+    /// Здесь GLSL код компилируется в SPIR-V, и из него формируется `ShaderModule`
     pub fn build(&mut self) -> Result<&Self, String>
     {
         let mut compiler = spirv_compiler::CompilerBuilder::new().with_source_language(spirv_compiler::SourceLanguage::GLSL).build().unwrap();
@@ -239,71 +214,40 @@ impl Shader
             }
         };
     }
-    
-    pub fn is_compatible_by_inout(&self, other: &Self) -> bool
-    {
-        // По in out переменным
-        for (ks, input) in &self.inputs {
-            let mut valid_input = false;
-            for (ko, output) in &other.outputs {
-                if ks==ko {
-                    valid_input |= true;
-                    if (*output as usize) != (*input as usize) {
-                        return false;
-                    }
-                }
-            }
-            if !valid_input {
-                return false;
-            }
-        };
-        true
-    }
-    pub fn is_compatible_by_stages(&self, other: &Self) -> bool
-    {
-        // По типу шейдеров
-        match (other.sh_type, self.sh_type)
-        {
-            (ShaderType::Vertex, ShaderType::Fragment) |
-            (ShaderType::Vertex, ShaderType::TesselationControl) |
-            (ShaderType::TesselationControl, ShaderType::TesselationEval) |
-            (ShaderType::TesselationEval, ShaderType::Geometry) |
-            (ShaderType::Vertex, ShaderType::Geometry) |
-            (ShaderType::Geometry, ShaderType::Fragment) => 
-                true,
-            _ => 
-                false
-        }
-    }
 }
 
+/// Строитель шейдера
 #[allow(dead_code)]
-pub struct PipelineBuilder
+pub struct ShaderProgramBuilder
 {
     vertex_shader: Option<Arc<vulkano::shader::ShaderModule>>,
     fragment_shader: Option<Arc<vulkano::shader::ShaderModule>>,
+    fragment_outputs: HashMap<String, AttribType>,
     tess_controll: Option<Arc<vulkano::shader::ShaderModule>>,
     tess_eval: Option<Arc<vulkano::shader::ShaderModule>>,
     compute: Option<Arc<vulkano::shader::ShaderModule>>,
-    uniforms  : HashMap<String, ShaderUniform>,
-    depth_test: bool
+    //uniforms  : HashMap<String, ShaderUniform>,
 }
 
 #[allow(dead_code)]
-impl PipelineBuilder
+impl ShaderProgramBuilder
 {
+    /// Фрагментный шейдер
     pub fn fragment(&mut self, shader: &Shader) -> &mut Self
     {
         self.fragment_shader = shader.module.clone();
+        self.fragment_outputs = shader.outputs.clone();
         self
     }
 
+    /// Вершинный шейдер
     pub fn vertex(&mut self, shader: &Shader) -> &mut Self
     {
         self.vertex_shader = shader.module.clone();
         self
     }
 
+    /// Пара тесселяционных шейдеров
     pub fn tesselation(&'static mut self, eval: &Shader, control: &Shader) -> &mut Self
     {
         self.tess_controll = control.module.clone();
@@ -311,22 +255,14 @@ impl PipelineBuilder
         self
     }
 
-    pub fn depth_test(&mut self) -> &mut Self
-    {
-        self
-    }
-
+    /// Вычислительный шейдер
+    /// TODO: реализовать
     pub fn compute(&mut self) -> &mut Self
     {
         panic!("Не реализовано");
     }
 
-    pub fn enable_depth_test(&mut self) -> &mut Self
-    {
-        self.depth_test = true;
-        self
-    }
-
+    /// Строит шейдерную программу
     pub fn build(&mut self, device: Arc<Device>) -> Result<ShaderProgramRef, String>
     {        
         Ok(
@@ -342,6 +278,7 @@ impl PipelineBuilder
                     tess_controll : self.tess_controll.clone(),
                     tess_eval : self.tess_eval.clone(),
                     compute : self.compute.clone(),
+                    fragment_outputs : self.fragment_outputs.clone()
                 }
             )
         )
@@ -351,6 +288,7 @@ impl PipelineBuilder
 use vulkano::descriptor_set::persistent::PersistentDescriptorSetBuilder;
 pub trait PipelineUniform: ShaderStructUniform + std::marker::Send + std::marker::Sync {}
 
+/// Шейдерная программа
 #[allow(dead_code)]
 pub struct ShaderProgram
 {
@@ -361,6 +299,7 @@ pub struct ShaderProgram
     uniforms_sets: HashMap<usize, PersistentDescriptorSetBuilder>,
     vertex_shader : Option<Arc<vulkano::shader::ShaderModule>>,
     fragment_shader : Option<Arc<vulkano::shader::ShaderModule>>,
+    fragment_outputs : HashMap<String, AttribType>,
     tess_controll : Option<Arc<vulkano::shader::ShaderModule>>,
     tess_eval : Option<Arc<vulkano::shader::ShaderModule>>,
     compute : Option<Arc<vulkano::shader::ShaderModule>>,
@@ -368,16 +307,15 @@ pub struct ShaderProgram
 
 impl ShaderProgram
 {
-    pub fn builder() -> PipelineBuilder
+    pub fn builder() -> ShaderProgramBuilder
     {
-        PipelineBuilder {
+        ShaderProgramBuilder {
             vertex_shader : None,
             fragment_shader : None,
+            fragment_outputs : HashMap::new(),
             tess_controll : None,
             tess_eval : None,
             compute : None,
-            uniforms : HashMap::new(),
-            depth_test : false
         }
     }
 
@@ -391,27 +329,11 @@ impl ShaderProgram
         self.pipeline.clone()
     }
     
-    /*pub fn uniform_sampler(&self, si: &Texture, set_num: usize)
+    /// Передаёт uniform-переменную в шейдер
+    /// Может передавать как `TextureRef`, так и структуры, для которых определён trait ShaderStructUniform
+    pub fn uniform<T>(&mut self, obj: &T, set_num: usize)
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
     {
-        let desc_set_layout = self.pipeline.as_ref().unwrap().layout().descriptor_set_layouts().get(set_num).unwrap();
-        
-        let set_builder = match self.uniforms_sets.get_mut(&set_num) {
-            Some(builder) => {
-                builder
-            },
-            None => {
-                let set_b = PersistentDescriptorSet::start(desc_set_layout.clone());
-                self.uniforms_sets.insert(set_num, set_b);
-                self.uniforms_sets.get_mut(&set_num).unwrap()
-            }
-        };
-
-        set_builder.add_sampled_image(si.image_view().clone(), si.sampler().clone()).unwrap();
-    }*/
-
-    pub fn uniform<T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static>(&mut self, obj: &T, set_num: usize)
-    {
-
         let desc_set_layout = self.pipeline.as_ref().unwrap().layout().descriptor_set_layouts().get(set_num).unwrap();
         
         let set_builder = match self.uniforms_sets.get_mut(&set_num) {
@@ -439,6 +361,8 @@ impl ShaderProgram
         
     }
     
+    /// Построить `Pipeline`
+    /// Необходимо вызывать при изменении `Subpass`а.
     pub fn make_pipeline(&mut self, subpass : vulkano::render_pass::Subpass)
     {
         let depth_test = subpass.has_depth();
@@ -467,12 +391,27 @@ impl ShaderProgram
         //if self.
         self.pipeline = Some(pipeline.build(self.device.clone()).unwrap());
     }
+
+    #[allow(dead_code)]
+    pub fn outputs(&self) -> &HashMap<String, AttribType>
+    {
+        &self.fragment_outputs
+    }
 }
 
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 use vulkano::buffer::{CpuBufferPool, BufferUsage};
 use vulkano::command_buffer::pool::CommandPoolBuilderAlloc;
 use vulkano::pipeline::PipelineBindPoint;
+
+/*
+ * trait для удобной передачи шейдеров и uniform данных в AutoCommandBufferBuilder
+ */
+pub trait ShaderProgramBinder
+{
+    fn bind_shader_program(&mut self, shader: &ShaderProgramRef) -> &mut Self;
+    fn bind_shader_uniforms(&mut self, shader: &ShaderProgramRef) -> &mut Self;
+}
 
 impl <P: CommandPoolBuilderAlloc>ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer<P::Alloc>, P>
 {
@@ -498,17 +437,4 @@ impl <P: CommandPoolBuilderAlloc>ShaderProgramBinder for AutoCommandBufferBuilde
         }
         self
     }
-}
-
-pub trait ShaderProgramBinder
-{
-    fn bind_shader_program(&mut self, shader: &ShaderProgramRef) -> &mut Self;
-    fn bind_shader_uniforms(&mut self, shader: &ShaderProgramRef) -> &mut Self;
-}
-
-pub trait ShaderStructUniform
-{
-    fn structure() -> String;
-    fn glsl_type_name() -> String;
-    fn texture(&self) -> Option<&crate::texture::TextureRef>;
 }

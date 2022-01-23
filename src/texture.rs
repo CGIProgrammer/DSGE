@@ -48,6 +48,7 @@ pub enum TextureViewType
     Attachment
 }
 
+/// Текстура (она же изображение)
 #[allow(dead_code)]
 pub struct Texture
 {
@@ -57,6 +58,8 @@ pub struct Texture
     _vk_image_view: Arc<dyn ImageViewAbstract + 'static>,
     _vk_sampler: Arc<TextureSampler>,
     _vk_device: Arc<Device>,
+
+    _pix_fmt: TexturePixelFormat,
 
     min_filter: TextureFilter,
     mag_filter: TextureFilter,
@@ -74,7 +77,7 @@ impl ShaderStructUniform for TextureRef
 {
     fn glsl_type_name() -> String
     {
-        "sampler".to_string()
+        String::new()
     }
 
     fn structure() -> String
@@ -95,6 +98,11 @@ use vulkano::buffer::{CpuAccessibleBuffer, BufferUsage};
 use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
 use std::sync::atomic::AtomicBool;
 
+/// Патч-структура, аналогичная ImmutableImage из vulkano.
+/// Предназначена для изменения приватного флага initialized.
+/// Эта структура в составе vulkano не позволяет только генерировать mip-уровни но не загружать их.
+/// В vulkano имеются функции, которые могут это делать,
+/// однако они требуют установки вышеупомянутого приватного флага.
 pub struct ImmutableImagePatch<A = PotentialDedicatedAllocation<StdMemoryPoolAlloc>> {
     _image: UnsafeImage,
     _dimensions: TextureDimensions,
@@ -125,37 +133,54 @@ impl Texture
         }
     }
 
+    pub fn name(&self) -> &String
+    {
+        &self.name
+    }
+
+    /// Создаёт линейный массив пикселей заданной длины
     pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim1d{width: length as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(device, pix_fmt, dims)
+            .build_mutable(device, pix_fmt, dims)
     }
 
+    /// Создаёт плоское 2D изображение заданой ширины и высоты
     pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim2d{width: width as u32, height: height as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(device, pix_fmt, dims)
+            .build_mutable(device, pix_fmt, dims)
     }
 
+    /// Создаёт воксельный 3D массив, заданный длиной, шириной и высотой
     pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let dims = TextureDimensions::Dim3d{width: width as u32, height: height as u32, depth: layers as u32};
         let mut texture_builder = Texture::builder();
         texture_builder
             .name(name)
-            .build_attachment(device, pix_fmt, dims)
+            .build_mutable(device, pix_fmt, dims)
     }
 
+    pub fn pix_fmt(&self) -> &TexturePixelFormat
+    {
+        &self._pix_fmt
+    }
+
+    /// Создаёт `TextureRef` на основе `ImageViewAbstract`.
+    /// В основном используется для представления swapchain изображения в виде текстуры
+    /// для вывода результата рендеринга
     pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let img_dims = img.image().dimensions();
         let sampler = TextureSampler::simple_repeat_linear_no_mipmap(device.clone());
+        let pix_fmt = TexturePixelFormat::from_vk_format(img.image().format())?;
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
         //TextureDimensions{width: img_dims[0], }
         Ok(RcBox::construct(Self{
@@ -165,6 +190,8 @@ impl Texture
             _vk_image_view : img,
             _vk_sampler : sampler,
             _vk_device : device.clone(),
+
+            _pix_fmt : pix_fmt,
 
             min_filter : TextureFilter::Linear,
             mag_filter : TextureFilter::Linear,
@@ -179,6 +206,8 @@ impl Texture
         }))
     }
 
+    /// Загрузка изображения-текстуры из файла.
+    /// Поддерживаются форматы dds, ktx и все форматы, поддерживаемые crate'ом image
     pub fn from_file<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<TextureRef, String>
     {
         let extension = path.as_ref().extension();
@@ -206,73 +235,108 @@ impl Texture
         }
     }
 
+    /// Возвращает представление изображения
     pub fn image_view(&self) -> &Arc<dyn ImageViewAbstract>
     {
         &self._vk_image_view
     }
 
+    /// Возвращает сэмплер изображения
     pub fn sampler(&self) -> &Arc<TextureSampler>
     {
         &self._vk_sampler
     }
 
+    /// Задаёт адресный режим доступа к изображению по горизонтали.
     pub fn set_horizontal_address(&mut self, repeat_mode: TextureRepeatMode)
     {
         self.u_repeat = repeat_mode;
     }
+
+    /// Задаёт адресный режим доступа к изображению по вертикали.
     pub fn set_vertical_address(&mut self, repeat_mode: TextureRepeatMode)
     {
         self.v_repeat = repeat_mode;
     }
+
+    /// Задаёт адресный режим доступа к воксельному изображению по глубине.
     pub fn set_depth_address(&mut self, repeat_mode: TextureRepeatMode)
     {
         self.w_repeat = repeat_mode;
     }
+
+    /// Задаёт режим использования mip-уровней.
+    /// `Linear` - плавный переход от уровня у уровню
+    /// `Nearest` - резкий переход от уровня у уровню
     pub fn set_mipmap(&mut self, mipmap_mode: MipmapMode)
     {
         self.mip_mode = mipmap_mode;
     }
+
+    /// Задаёт степень анизотропной фльтрации.
+    /// max_aniso - степень фильтрации
     pub fn set_anisotropy(&mut self, max_aniso: f32)
     {
         self.max_anisotropy = max_aniso;
     }
+
+    /// Задаёт фильтрацию при сжатии ихображения
     pub fn set_min_filter(&mut self, filter: TextureFilter)
     {
         self.min_filter = filter;
     }
+
+    /// Задаёт фильтрацию при растягивании изображения
     pub fn set_mag_filter(&mut self, filter: TextureFilter)
     {
         self.mag_filter = filter;
     }
 
+    /// Набор геттеров для получения вышеуказанных полей.
+    
+    /// Режим адресации по горизонтали
     pub fn horizontal_address(&self) -> TextureRepeatMode
     {
         self.u_repeat
     }
+
+    /// Режим адресации по вертикали
     pub fn vertical_address(&self) -> TextureRepeatMode
     {
         self.v_repeat
     }
+
+    /// Режим адресации по глубине
     pub fn depth_address(&self) -> TextureRepeatMode
     {
         self.w_repeat
     }
+
+    /// Режим mip-текстурирования
     pub fn mipmap(&self) -> MipmapMode
     {
         self.mip_mode
     }
+
+    /// Степень анизотропии
     pub fn anisotropy(&self) -> f32
     {
         self.max_anisotropy
     }
+
+    /// Фильтр сжатия изображения
     pub fn min_filter(&self) -> TextureFilter
     {
         self.min_filter
     }
+
+    /// Фильтр растягивания изображения
     pub fn mag_filter(&self) -> TextureFilter
     {
         self.mag_filter
     }
+
+    /// Ширина (длина для 1D текстур)
     pub fn width(&self) -> u32
     {
         match self._vk_image_dims {
@@ -281,6 +345,8 @@ impl Texture
             TextureDimensions::Dim3d{width, ..} => width,
         }
     }
+
+    /// Высота (1 писель для 1D текстур)
     pub fn height(&self) -> u32
     {
         match self._vk_image_dims {
@@ -289,6 +355,8 @@ impl Texture
             TextureDimensions::Dim3d{width:_, height, ..} => height,
         }
     }
+
+    /// Глубина (1 пиксель для 1D и 2D текстур)
     pub fn depth(&self) -> u32
     {
         match self._vk_image_dims {
@@ -297,6 +365,8 @@ impl Texture
             TextureDimensions::Dim3d{width:_, height:_, depth} => depth,
         }
     }
+
+    /// Обновление сэмплера текстуры
     pub fn update_sampler(&mut self)
     {
         self._vk_sampler = TextureSampler::new(
@@ -315,6 +385,7 @@ impl Texture
     }
 }
 
+/// Строитель для `TextureRef`
 pub struct TextureBuilder
 {
     _vk_image_dims: Option<TextureDimensions>,
@@ -334,52 +405,64 @@ pub struct TextureBuilder
 #[allow(dead_code)]
 impl TextureBuilder
 {
+    /// Задаёт имя
     pub fn name(&mut self, name: &str) -> &mut Self
     {
         self.name = name.to_string();
         self
     }
+
+    /// Задаёт адресный режим по горизонтали
     pub fn horizontal_address(&mut self, repeat_mode: TextureRepeatMode) -> &mut Self
     {
         self.u_repeat = repeat_mode;
         self
     }
+
+    /// Задаёт адресный режим по вертикали
     pub fn vertical_address(&mut self, repeat_mode: TextureRepeatMode) -> &mut Self
     {
         self.v_repeat = repeat_mode;
         self
     }
+
+    /// Задаёт адресный режим по глубине
     pub fn depth_address(&mut self, repeat_mode: TextureRepeatMode) -> &mut Self
     {
         self.w_repeat = repeat_mode;
         self
     }
+
+    /// Задаёт режим mip-уровней
     pub fn mipmap(&mut self, mipmap_mode: MipmapMode) -> &mut Self
     {
         self.mip_mode = mipmap_mode;
         self
     }
+
+    /// Задаёт степень анизотропии
     pub fn anisotropy(&mut self, max_aniso: f32) -> &mut Self
     {
         self.max_anisotropy = max_aniso;
         self
     }
-    pub fn build_storage(&mut self, texture_dimensions: TextureDimensions) -> &mut Self
-    {
-        self._vk_image_dims = Some(texture_dimensions);
-        self
-    }
+    
+    /// Задаёт фильтр сжатия
     pub fn min_filter(&mut self, filter: TextureFilter) -> &mut Self
     {
         self.min_filter = filter;
         self
     }
+
+    /// Задаёт фильтр растягивания
     pub fn mag_filter(&mut self, filter: TextureFilter) -> &mut Self
     {
         self.mag_filter = filter;
         self
     }
-    pub fn build_attachment(&mut self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
+
+    /// Строит изменяемое изображение
+    pub fn build_mutable(&mut self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
     {
         let texture = AttachmentImage::sampled_input_attachment(
             device.clone(),
@@ -388,10 +471,11 @@ impl TextureBuilder
         ).unwrap();
         
         Ok(RcBox::construct(Texture {
-            name: "".to_string(),
+            name: self.name.to_string(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: device.clone(),
+            _pix_fmt: pix_fmt,
             _vk_sampler: TextureSampler::new(
                 device.clone(),
                 self.mag_filter,
@@ -418,6 +502,7 @@ impl TextureBuilder
         }))
     }
 
+    /// Строит неизменяемое сжатое изображение
     pub fn build_immutable_compressed<Rdr : Read + Seek + BufRead>(&mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
     {
         let device = queue.device();
@@ -466,10 +551,11 @@ impl TextureBuilder
 
         tex_future.flush().unwrap();
         Ok(RcBox::construct(Texture {
-            name: "".to_string(),
+            name: self.name.clone(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: device.clone(),
+            _pix_fmt: header.pixel_format(),
             _vk_sampler: TextureSampler::new(
                 device.clone(),
                 self.mag_filter,
@@ -496,8 +582,10 @@ impl TextureBuilder
         }))
     }
 
+    /// Строит неизменяемое несжатое изображение
     pub fn build_immutable<Rdr : Read + Seek + BufRead>(&mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
     {
+        let pix_fmt = TexturePixelFormat::from_vk_format(Format::R8G8B8A8_SRGB)?;
         let img_rdr = ImageReader::new(reader).with_guessed_format();
         if img_rdr.is_err() {
             return Err(String::from("Неизвестный формат изображения"));
@@ -526,10 +614,11 @@ impl TextureBuilder
 
         tex_future.flush().unwrap();
         Ok(RcBox::construct(Texture {
-            name: "".to_string(),
+            name: self.name.clone(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: queue.device().clone(),
+            _pix_fmt: pix_fmt,
             _vk_sampler: TextureSampler::new(
                 queue.device().clone(),
                 self.mag_filter,
@@ -556,7 +645,8 @@ impl TextureBuilder
         }))
     }
 
-    pub fn custom_immutable_image(
+    /// Функция, аналогичная фуикции immutable_image структуры ImmutableImage из vulkano.
+    fn custom_immutable_image(
         data: &[u8],
         dimensions: TextureDimensions,
         mip_map_count: u32,
@@ -616,7 +706,8 @@ impl TextureBuilder
                 return Err(ImageCreationError::FormatNotSupported);
             }
         };
-        //println!("Попытка загрузить файл формата {}", format.stringify());
+        
+        // Загрузка mip-уровней.
         for i in 0..mip_map_count {
             //println!("mip-map {}/{}", i, mip_map_count);
             let block_size = u64s * 8;
@@ -651,6 +742,7 @@ impl TextureBuilder
             Err(e) => unreachable!("{:?}", e),
         };
         
+        // Установка флага инициализации внутреннего изображения vulkano
         unsafe {
             (&mut image as *mut Arc<ImmutableImage> as *mut Arc<ImmutableImagePatch>).as_ref().unwrap().initialized.store(true, std::sync::atomic::Ordering::Relaxed);
         }
@@ -659,13 +751,14 @@ impl TextureBuilder
     }
 }
 
+/// Общий Trait для заголовков всех сжатых форматов
 pub trait CompressedFormat
 {
-    fn pixel_format(&self) -> TexturePixelFormat;
-    fn dimensions(&self) -> (u32, u32);
-    fn mip_levels(&self) -> u32;
-    fn header_size(&self) -> usize;
-    fn block_size(&self) -> usize;
+    fn pixel_format(&self) -> TexturePixelFormat;   // Формат блока
+    fn dimensions(&self) -> (u32, u32);             // Размер
+    fn mip_levels(&self) -> u32;                    // Количество mip-уровней
+    fn header_size(&self) -> usize;                 // Размер заголовка в байтах
+    fn block_size(&self) -> usize;                  // Размер блока в байтах
 }
 
 impl CompressedFormat for DDSHeader {

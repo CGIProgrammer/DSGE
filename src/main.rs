@@ -1,6 +1,5 @@
 extern crate winit;
 extern crate vulkano;
-//extern crate nalgebra;
 
 mod teapot;
 
@@ -53,6 +52,7 @@ pub struct Application {
     counter: f32
 }
 
+/// Базовый пример
 impl Application {
     pub fn new(title: &str, width: u16, height: u16, fullscreen: bool, _vsync: bool) -> Result<Self, String>
     {
@@ -69,7 +69,7 @@ impl Application {
             .unwrap();
 
         let renderer = renderer::Renderer::from_winit(vk_instance, surface, _vsync);
-        let texture = Texture::from_file(renderer.queue().clone(), "image_img.dds").unwrap();
+        let texture = Texture::from_file(renderer.queue().clone(), "image_img.png").unwrap();
         texture.take_mut().set_anisotropy(16.0);
         texture.take_mut().set_mipmap(MipmapMode::Linear);
         texture.take_mut().set_mag_filter(TextureFilter::Linear);
@@ -116,13 +116,10 @@ impl Application {
         let graph_pip = pip_builder
             .vertex(&v_shd)
             .fragment(&f_shd)
-            .enable_depth_test()
             .build(renderer.device().clone()).unwrap();
             
         let mesh = Mesh::builder("default teapot")
             .push_teapot()
-            //.push_screen_plane()
-            //.push_from_file("../dsge/data/mesh/GiantWarriorChampion_Single.mesh")
             .build(renderer.device().clone()).unwrap();
         
         Ok(Self {
@@ -138,7 +135,7 @@ impl Application {
     pub fn event_loop(mut self) -> Arc<EventLoop<()>>
     {
         self.event_pump.run(move |event: Event<()>, _wtar: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow| {
-            //*control_flow = ControlFlow::Wait;
+            
             match event {
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
@@ -176,7 +173,7 @@ impl Application {
 }
 
 fn main() {
-    let mut app = Application::new("DSGE VK", 800, 600, false, false).unwrap();
+    let mut app = Application::new("DSGE VK", 800, 600, false, true).unwrap();
     app.renderer.update_swapchain();
     app.event_loop();
     println!("Выход");

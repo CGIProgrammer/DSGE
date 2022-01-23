@@ -1,3 +1,6 @@
+/// Компоненты для `GameObject`
+/// Пока в зачаточном состоянии
+
 pub mod camera;
 pub mod visual;
 

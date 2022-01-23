@@ -7,7 +7,7 @@ use vulkano::device::{
     }
 };
 use vulkano::swapchain::{self, AcquireError, Swapchain, SwapchainCreationError, Surface, PresentMode};
-use vulkano::image::{view::{ImageView, ImageViewAbstract}, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
+use vulkano::image::{view::ImageView, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
 use vulkano::render_pass::{RenderPass, RenderPassDesc, Subpass, SubpassDesc, AttachmentDesc};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
@@ -45,16 +45,19 @@ impl ShaderStructUniform for i32
     }
 }
 
+/*
+ * Буфер для сохранения результатов прохода геометрии (geometry pass)
+ */
 struct GBuffer
 {
     _frame_buffer: FramebufferRef,
     _device      : Arc<Device>,
-    _render_pass : Arc<RenderPass>,
-    _albedo      : TextureRef,
-    _normals     : TextureRef,
-    _specromet   : TextureRef, // specromet - specular, roughness, metallic
-    _vectors     : TextureRef,
-    _depth       : TextureRef
+    _geometry_pass : Arc<RenderPass>,
+    _albedo      : TextureRef, // Цвет поверхности
+    _normals     : TextureRef, // Нормали
+    _specromet   : TextureRef, // specromet - specular, roughness, metallic. TODO пока ничем не заполняется
+    _vectors     : TextureRef, // Векторы скорости. TODO пока ничем не заполняется
+    _depth       : TextureRef  // Глубина. TODO пока ничем не заполняется
 }
 
 impl GBuffer
@@ -62,16 +65,18 @@ impl GBuffer
     fn new(width : u16, height : u16, device : Arc<Device>) -> Self
     {
         let fb = Framebuffer::new(width, height);
+        let mut _fb = fb.take_mut();
         let albedo = Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
         let normals = Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
         let masks = Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
         let vectors = Texture::new_empty_2d("gVectors", width, height, TexturePixelFormat::RGBA16f, device.clone()).unwrap();
         let depth = Texture::new_empty_2d("gDepth", width, height, TexturePixelFormat::Depth16u, device.clone()).unwrap();
-        fb.take_mut().add_color_attachment(albedo.clone(), [0.5, 0.5, 0.5].into()).unwrap();
-        fb.take_mut().add_color_attachment(normals.clone(), [0.0, 0.0, 0.0].into()).unwrap();
-        fb.take_mut().add_color_attachment(masks.clone(), [0.0, 0.0, 0.0].into()).unwrap();
-        fb.take_mut().add_color_attachment(vectors.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
-        fb.take_mut().set_depth_attachment(depth.clone(), 1.0.into());
+        _fb.add_color_attachment(albedo.clone(), [0.5, 0.5, 0.5].into()).unwrap();
+        _fb.add_color_attachment(normals.clone(), [0.0, 0.0, 0.0].into()).unwrap();
+        _fb.add_color_attachment(masks.clone(), [0.0, 0.0, 0.0].into()).unwrap();
+        _fb.add_color_attachment(vectors.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
+        _fb.set_depth_attachment(depth.clone(), 1.0.into());
+        drop(_fb);
 
         let formats = [
             TexturePixelFormat::RGBA8i,
@@ -116,9 +121,10 @@ impl GBuffer
             }],
             vec![]
         );
+
         Self {
             _device : device.clone(),
-            _render_pass : RenderPass::new(device.clone(), desc).unwrap(),
+            _geometry_pass : RenderPass::new(device.clone(), desc).unwrap(),
             _albedo : albedo,
             _normals : normals,
             _specromet : masks,
@@ -129,6 +135,7 @@ impl GBuffer
     }
 }
 
+/// Основная структура для рендеринга
 pub struct Renderer
 {
     _context : Arc<Instance>,
@@ -137,6 +144,7 @@ pub struct Renderer
     _queue : Arc<Queue>,
     _swapchain : Arc<Swapchain<Window>>,
     _sc_images : Vec<Arc<SwapchainImage<Window>>>,
+    _sc_textures : Vec<TextureRef>,
 
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
@@ -200,7 +208,7 @@ impl Renderer
         ).unwrap();
         
         println!(
-            "Using device: {} (type: {:?})",
+            "Используется устройство: {} (type: {:?})",
             physical_device.properties().device_name,
             physical_device.properties().device_type,
         );
@@ -257,7 +265,7 @@ impl Renderer
         );
         let final_render_pass = RenderPass::new(device.clone(), final_renderpass).unwrap();
         
-        Renderer {
+        let mut result = Renderer {
             _vk_surface : win,
             _swapchain : swapchain,
             _aspect : dimensions[0] as f32 / dimensions[1] as f32,
@@ -274,9 +282,22 @@ impl Renderer
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
             _camera : CameraUniform::identity(dimensions[0] as f32 / dimensions[1] as f32, 80.0, 0.1, 100.0),
+            _sc_textures : Vec::new(),
+            _postprocessor : RenderPostprocessingGraph::new(queue.clone(), dimensions[0] as u16, dimensions[1] as u16)
+        };
+        result.resize(dimensions[0] as u16, dimensions[1] as u16);
+        result
+    }
 
-            _postprocessor : RenderPostprocessingGraph::new(queue.clone())
-        }
+    pub fn resize(&mut self, width: u16, height: u16)
+    {
+        self._gbuffer = GBuffer::new(width, height, self._device.clone());
+        /* Создание узлов и связей графа постобработки */
+        /* На данный момент это размытие в движении */
+        self._postprocessor.reset();
+        let acc = self._postprocessor.acc_mblur(width, height);  // Создание ноды размытия в движении
+        self._postprocessor.link_stages(acc, 0, acc, 2);  // Соединение накопительного выхода со входом ноды
+        self._postprocessor.link_stages(acc, 1, 0, 0);    // Соединение ноды с выходом.
     }
 
     pub fn width(&self) -> u16
@@ -289,6 +310,8 @@ impl Renderer
         self._vk_surface.window().inner_size().height as u16
     }
 
+    /// Обновление swapchain изображений
+    /// Как правило необходимо при изменении размера окна
     pub fn update_swapchain(&mut self)
     {
         let dimensions: [u32; 2] = self._vk_surface.window().inner_size().into();
@@ -304,36 +327,41 @@ impl Renderer
         self._swapchain = new_swapchain;
         let dimensions = new_images[0].dimensions().width_height();
 
-        self._framebuffers = new_images
-            .iter()
-            .map(|image| {
-                let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._device.clone()).unwrap();
-                let fb = Framebuffer::new(dimensions[0] as u16, dimensions[1] as u16);
-                fb.take_mut().add_color_attachment(cb.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
-                fb.take_mut().set_depth_attachment(db.clone(), 1.0.into());
-                fb
-            })
-            .collect::<Vec<_>>();
+        self._framebuffers.clear();
+        self._sc_textures.clear();
+        for image in new_images
+        {
+            let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._device.clone()).unwrap();
+            let fb = Framebuffer::new(dimensions[0] as u16, dimensions[1] as u16);
+            fb.take_mut().add_color_attachment(cb.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
+            fb.take_mut().set_depth_attachment(db.clone(), 1.0.into());
+            self._framebuffers.push(fb);
+            self._sc_textures.push(cb);
+        }
+        self.resize(dimensions[0] as u16, dimensions[1] as u16);
     }
 
+    /// Начинает проход геометрии
     pub fn begin_geametry_pass(&mut self)
     {
         self._draw_list.clear();
     }
 
+    /// Передаёт объект для растеризации
     pub fn draw(&mut self, mesh : MeshRef, tex : TextureRef, shader : ShaderProgramRef, transform : Mat4)
     {
         self._draw_list.push((mesh, tex, shader, transform));
     }
 
-    pub fn end_geametry_pass(&self) -> PrimaryAutoCommandBuffer
+    /// Фомирует буфер команд GPU
+    pub fn build_geametry_pass(&self) -> PrimaryAutoCommandBuffer
     {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self._device.clone(),
             self._queue.family(),
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
-        let gbuffer_rp = &self._gbuffer._render_pass;
+        let gbuffer_rp = &self._gbuffer._geometry_pass;
         let gbuffer_fb = &self._gbuffer._frame_buffer;
         let geom_pass = Subpass::from(gbuffer_rp.clone(), 0).unwrap();
 
@@ -353,6 +381,7 @@ impl Renderer
                 transform : transform.clone(),
                 transform_prev : transform.clone()
             };
+
             let mut shd = shader.take_mut();
             shd.uniform(&tr, 0);
             shd.uniform(&self._camera, 0);
@@ -367,7 +396,8 @@ impl Renderer
         command_buffer_builder.build().unwrap()
     }
 
-    pub fn postprocess_pass(&self, sci_index : usize) -> PrimaryAutoCommandBuffer
+    /// Тестовая функция постобработки. Просто пропускает изображение через шейдер.
+    fn postprocess_pass(&self, sci_index : usize) -> PrimaryAutoCommandBuffer
     {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self._device.clone(),
@@ -391,6 +421,7 @@ impl Renderer
         command_buffer_builder.build().unwrap()
     }
 
+    /// Выполняет все сформированные буферы команд
     pub fn end_frame(&mut self)
     {
         self._frame_finish_event.as_mut().unwrap().cleanup_finished();
@@ -413,14 +444,18 @@ impl Renderer
             self._need_to_update_sc = true;
         }
         
-        let gp_command_buffer = self.end_geametry_pass();
-        let pp_command_buffer = self.postprocess_pass(image_num);
+        self._postprocessor.set_input(1, 1, &self._gbuffer._albedo);
+        self._postprocessor.set_output(0, self._sc_textures[image_num].clone());
 
+        let pp_command_buffer = self._postprocessor.execute_graph();
+        let gp_command_buffer = self.build_geametry_pass();
+
+        //let mut f2 : Option<vulkano::command_buffer::CommandBufferExecFuture<_, _>>;
         let future = self._frame_finish_event
             .take().unwrap()
             .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
             .join(acquire_future)
-            .then_execute(self._queue.clone(), pp_command_buffer).unwrap()
+            .then_execute_same_queue(pp_command_buffer).unwrap()
             .then_swapchain_present(self._queue.clone(), self._swapchain.clone(), image_num)
             .then_signal_fence_and_flush();
 
@@ -449,6 +484,7 @@ impl Renderer
         &self._device
     }
 
+    /// Создаёт шейдер для тестовой потобработки.
     fn make_screen_plane_shader(device: Arc<Device>) -> ShaderProgramRef
     {
         let mut v_builder = Shader::builder(ShaderType::Vertex, device.clone());
