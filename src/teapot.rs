@@ -7,6 +7,8 @@
 // notice may not be copied, modified, or distributed except
 // according to those terms.
 
+// Ютовский чайник из примера vulkano
+
 #[derive(Default, Copy, Clone)]
 pub struct SmallVertex {
     pub position: (f32, f32, f32),

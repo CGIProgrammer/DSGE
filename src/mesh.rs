@@ -3,29 +3,27 @@ use std::vec::Vec;
 use std::fs::{File};
 use super::utils::{read_struct};
 use std::path::Path;
-//use std::collections::HashMap;
 use super::types::*;
 use std::sync::Arc;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::device::{Queue, Device};
+use vulkano::device::Device;
 use vulkano::command_buffer::{AutoCommandBufferBuilder};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
 pub use crate::references::*;
-//static mut LAST_DRAWN: GLuint = GLuint::MAX;
-
 pub type MeshRef = RcBox<Mesh>;
 
+/// Структура вершины
 #[derive(Copy, Clone, Default)]
 pub struct Vertex {
-    pub v_pos: Vec3,
-    pub v_nor: Vec3,
-    pub v_bin: Vec3,
-    pub v_tan: Vec3,
-    pub v_tex1: Vec2,
-    pub v_tex2: Vec2,
-    pub v_grp: UVec3,
+    pub v_pos: Vec3,  // Координаты вершины
+    pub v_nor: Vec3,  // Нормаль вершины
+    pub v_bin: Vec3,  // Касательная 1
+    pub v_tan: Vec3,  // Касательная 2
+    pub v_tex1: Vec2, // Текстурные координаты 1 слой
+    pub v_tex2: Vec2, // Текстурные координаты 2 слой
+    pub v_grp: UVec3, // Группы першины
 }
 
 impl Vertex {
@@ -43,6 +41,7 @@ impl Vertex {
     }
 }
 
+/// Представление вершины для vulkano
 #[derive(Copy, Clone, Default)]
 pub struct VkVertex {
     pub v_pos: [f32; 3],
@@ -79,7 +78,10 @@ vulkano::impl_vertex!(VkVertex,
     v_tex2,
     v_grp);
 
+/// Псевдоним для вершинного буфера
 type VertexBufferRef = Arc<CpuAccessibleBuffer<[VkVertex]>>;
+
+/// Псевдоним для индексного буфера
 type IndexBufferRef = Arc<CpuAccessibleBuffer<[u32]>>;
 
 #[allow(dead_code)]
@@ -260,13 +262,15 @@ impl MeshBuilder
 
     pub fn push_teapot(&mut self) -> &mut Self
     {
+        let rot = nalgebra::Rotation3::<f32>::from_euler_angles(0.0, 0.0, std::f32::consts::PI);
+        let mat = rot.matrix();
         let self_ind_count = self._indices.len();
         for i in 0..VERTICES.len() {
             let pos = Vec3::new(VERTICES[i].position.0 / 100.0, VERTICES[i].position.1 / 100.0, VERTICES[i].position.2 / 100.0);
             let nor = Vec3::new(NORMALS[i].normal.0, NORMALS[i].normal.1, NORMALS[i].normal.2);
             let vert = Vertex{
-                v_pos: pos,
-                v_nor: nor,
+                v_pos: mat * pos,
+                v_nor: mat * nor,
                 v_tan: Vec3::new(0.0, 0.0, 0.0),
                 v_bin: Vec3::new(0.0, 0.0, 0.0),
                 v_tex1: Vec2::new(0.0, 0.0),
@@ -297,10 +301,6 @@ impl MeshBuilder
 
     pub fn build(&mut self, device: Arc<Device>) -> Result<MeshRef, String>
     {
-        
-        //self._vertex_buffer = Some(ImmutableBuffer::from_iter(self._vertices.clone(), BufferUsage::all(), queue.clone()).unwrap().0);
-        //self._index_buffer  = Some(ImmutableBuffer::from_iter(self._indices.clone(), BufferUsage::all(), queue.clone()).unwrap().0);
-    
         self._vertex_buffer = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._vertices.clone()).unwrap());
         self._index_buffer  = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._indices.clone()).unwrap());
 

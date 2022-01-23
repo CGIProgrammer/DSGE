@@ -16,20 +16,19 @@ struct Attachment
     default_color : FramebufferAttachmentDefaultValue
 }
 
+/// Буфер кадра
 pub struct Framebuffer
 {
-    _viewport: Viewport,
-    _dimensions: [u16; 2],
-    _color_attachments: Vec<Attachment>,
-    _depth_attachment: Option<Attachment>,
-    _vk_fb: Option<Arc<VkFramebuffer>>,
+    _viewport: Viewport,                    // Окно вида
+    _dimensions: [u16; 2],                  // Разрешение
+    _color_attachments: Vec<Attachment>,    // "Разъёмы" для вывода данных
+    _depth_attachment: Option<Attachment>,  // "Разъём" для буфера глубины
+    _vk_fb: Option<Arc<VkFramebuffer>>,     // Буфер кадра vulkano
 }
 
-// Буфер кадра
-/*
- * Может использоваться и как буфер кадра "по умолчанию", так и
- * для рендеринга в текстуру
- */
+/// Буфер кадра
+/// Может использоваться и как буфер кадра "по умолчанию", так и
+/// для рендеринга в текстуру
 #[allow(dead_code)]
 impl Framebuffer
 {
@@ -48,7 +47,7 @@ impl Framebuffer
         })
     }
 
-    // Присоединение "цветного" изображения к выходу фреймбуфера
+    /// Присоединение "цветного" изображения к выходу фреймбуфера
     pub fn add_color_attachment(&mut self, att: TextureRef, default_val : FramebufferAttachmentDefaultValue) -> Result<(), String>
     {
         if self._color_attachments.len() < 15 {
@@ -60,7 +59,7 @@ impl Framebuffer
         }
     }
 
-    // Присоединение изображения в качестве буфера глубины
+    /// Присоединение изображения в качестве буфера глубины
     pub fn set_depth_attachment(&mut self, depth: TextureRef, default_val : FramebufferAttachmentDefaultValue)
     {
         let attachment = Attachment {
@@ -71,20 +70,26 @@ impl Framebuffer
         self._vk_fb = None;
     }
 
-    // Очистить список изображений
+    /// Очистить список изображений
     pub fn reset_attachments(&mut self)
     {
         self._color_attachments.clear();
         self._vk_fb = None;
     }
 
-    // Получение структуры буфера кадра vulkano
+    /// Получение структуры буфера кадра vulkano
     pub fn vk_fb(&self) -> &Arc<VkFramebuffer>
     {
         self._vk_fb.as_ref().unwrap()
     }
 
-    // Инициализировать буфер кадра для render pass'а
+    /// Установка окна вида
+    pub fn view_port(&mut self, width: u16, height: u16)
+    {
+        self._dimensions = [width, height];
+    }
+
+    /// Инициализировать буфер кадра для render pass'а
     pub fn make_vk_fb(&mut self, render_pass : Arc<VkRenderPass>)
     {
         let mut vk_fb_builder = VkFramebuffer::with_intersecting_dimensions(render_pass.clone());
@@ -115,7 +120,7 @@ impl <P: CommandPoolBuilderAlloc>FramebufferBinder for AutoCommandBufferBuilder<
         let mut clear_values = Vec::new();
         let mut fb = framebuffer.take_mut();
         if fb._vk_fb.is_none() {
-            println!("Создание буфера кадра");
+            //println!("Создание буфера кадра");
             fb.make_vk_fb(render_pass.clone());
         }
         let rp_desc = render_pass.desc();

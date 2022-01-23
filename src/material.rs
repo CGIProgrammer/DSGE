@@ -1,3 +1,8 @@
+/// `Material` - надстройка над шейдерной программой
+/// Текущая реализация перенесена из OpenGL версии без изменений
+/// Пока не работает и не используется
+/// TODO: заставить работать и адаптировать под vulkano
+
 use vulkano::device::Device;
 use std::sync::Arc;
 
@@ -281,13 +286,7 @@ impl MaterialShaderSet
     {
         let mut shader = Shader::builder(ShaderType::Vertex, device.clone());
         shader
-            .vertex_attribute("pos", AttribType::FVec3)
-            .vertex_attribute("nor", AttribType::FVec3)
-            .vertex_attribute("bin", AttribType::FVec3)
-            .vertex_attribute("tang", AttribType::FVec3)
-            .vertex_attribute("uv1", AttribType::FVec2)
-            .vertex_attribute("uv2", AttribType::FVec2)
-            .vertex_attribute("groups", AttribType::IVec3)
+            .default_vertex_attributes()
             .output("position", AttribType::FVec4)
             .output("position_prev", AttribType::FVec4)
             .output("view_vector", AttribType::FVec3)
