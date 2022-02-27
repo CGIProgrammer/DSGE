@@ -50,6 +50,7 @@ pub struct Application {
     renderer: renderer::Renderer,
     event_pump: EventLoop<()>,
     object : RcBox<MeshObject>,
+    monkey : RcBox<MeshObject>,
     counter: f32
 }
 
@@ -78,6 +79,9 @@ impl Application {
         let mut mesh = Mesh::builder("default teapot");
         mesh.push_teapot();
         let mesh = mesh.build_mutex(renderer.device().clone()).unwrap();
+        let mut monkey = Mesh::builder("monkey");
+        monkey.push_from_file("data/mesh/monkey.mesh");
+        let monkey = monkey.build_mutex(renderer.device().clone()).unwrap();
         
         let mut material = material::MaterialBuilder::start(renderer.device().clone());
         material
@@ -94,7 +98,8 @@ impl Application {
         Ok(Self {
             renderer: renderer,
             event_pump: event_loop,
-            object: RcBox::construct(MeshObject::new(mesh, material)),
+            object: RcBox::construct(MeshObject::new(mesh, material.clone())),
+            monkey: RcBox::construct(MeshObject::new(monkey, material)),
             counter: 0.0
         })
     }
@@ -122,7 +127,7 @@ impl Application {
                     let transform = types::Mat4::new(
                         1.0, 0.0, 0.0,  0.0,
                         0.0, 1.0, 0.0,  0.0,
-                        0.0, 0.0, 1.0, -2.0,
+                        0.0, 0.0, 1.0, -3.0,
                         0.0, 0.0, 0.0,  1.0,
                     ) * types::Mat4::new(
                          self.counter.cos(), 0.0, self.counter.sin(), 0.0,
@@ -131,16 +136,45 @@ impl Application {
                          0.0, 0.0, 0.0, 1.0,
                     );
                     let mut obj = self.object.take_mut();
+                    let mut monkey = self.monkey.take_mut();
                     let mut obj_transform = obj.transform_mut();
+                    let mut mon_transform = monkey.transform_mut();
                     
+                    let tr1 = types::Mat4::new(
+                        1.0, 0.0, 0.0,  1.0,
+                        0.0, 1.0, 0.0,  0.0,
+                        0.0, 0.0, 1.0,  0.0,
+                        0.0, 0.0, 0.0,  1.0,
+                    ) * transform;
+                    let tr2 = types::Mat4::new(
+                        1.0, 0.0, 0.0, -1.0,
+                        0.0, 1.0, 0.0,  0.0,
+                        0.0, 0.0, 1.0,  0.0,
+                        0.0, 0.0, 0.0,  1.0,
+                    ) * transform * 
+                    types::Mat4::new(
+                        0.5, 0.0, 0.0,  0.0,
+                        0.0, 0.5, 0.0,  0.0,
+                        0.0, 0.0, 0.5,  0.0,
+                        0.0, 0.0, 0.0,  1.0,
+                    );
                     obj_transform.global_for_render_prev = obj_transform.global_for_render;
-                    obj_transform.global_for_render = transform;
-                    obj_transform.global = transform;
+                    obj_transform.global_for_render = tr1;
+                    obj_transform.global = tr1;
+
+                    mon_transform.global_for_render_prev = mon_transform.global_for_render;
+                    mon_transform.global_for_render = tr2;
+                    mon_transform.global = tr2;
+
+                    drop(mon_transform);
+                    drop(monkey);
                     drop(obj_transform);
                     drop(obj);
+
                     self.renderer.update_timer(&tu);
                     self.renderer.begin_geametry_pass();
                     self.renderer.draw(self.object.clone());
+                    self.renderer.draw(self.monkey.clone());
                     self.renderer.end_frame();
                 },
                 _ => { }
