@@ -1,5 +1,8 @@
 /target
 /shader_cache/*
+/data/mesh/*
+/data/*.blend*
+/.vscode
 *.dds
 *.ktx
 *.bmp
