@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-vulkano = "0.27.1"
-vulkano-win = "0.27.1"
-vulkano-shaders = "0.27.1"
-winit = "0.25"
+vulkano = "0.28.0"
+vulkano-win = "0.28.0"
+vulkano-shaders = "0.28.0"
+winit = "0.26.1"
 nalgebra = "0.28.0"
 spirv-compiler = "0.2.0"
 image = "0.23.14"
@@ -20,7 +20,7 @@ opt-level = 3 # +
 
 [profile.release]
 opt-level = 3
-#opt-level = "3"
+#opt-level = "z"
 lto = true
 codegen-units = 1
 panic = 'abort'

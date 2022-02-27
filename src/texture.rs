@@ -19,6 +19,7 @@ use vulkano::device::{Queue, Device};
 use vulkano::image::{
     ImmutableImage,
     AttachmentImage,
+    StorageImage,
     MipmapsCount,
     view::{
         ImageView,
@@ -29,7 +30,7 @@ pub use vulkano::image::ImageDimensions as TextureDimensions;
 pub use vulkano::sampler::{
     Sampler as TextureSampler,
     Filter as TextureFilter,
-    MipmapMode,
+    SamplerMipmapMode as MipmapMode,
     SamplerAddressMode as TextureRepeatMode,
 };
 use vulkano::sync::GpuFuture;
@@ -138,36 +139,52 @@ impl Texture
         &self.name
     }
 
+    /// Создаёт линейный массив пикселей, обёрнутый в мьютекс
+    pub fn new_empty_1d_mutex(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(Self::new_empty_1d(name, length, pix_fmt, device)?))
+    }
+
     /// Создаёт линейный массив пикселей заданной длины
-    pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
     {
         let dims = TextureDimensions::Dim1d{width: length as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
-        texture_builder
-            .name(name)
-            .build_mutable(device, pix_fmt, dims)
+        texture_builder.name(name);
+        texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
+    /// Создаёт плоское 2D изображение, обёрнутое в мьютекс
+    pub fn new_empty_2d_mutex(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(Self::new_empty_2d(name, width, height, pix_fmt, device)?))
+    }
+    
     /// Создаёт плоское 2D изображение заданой ширины и высоты
-    pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
     {
         let dims = TextureDimensions::Dim2d{width: width as u32, height: height as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
-        texture_builder
-            .name(name)
-            .build_mutable(device, pix_fmt, dims)
+        texture_builder.name(name);
+        texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
-    /// Создаёт воксельный 3D массив, заданный длиной, шириной и высотой
-    pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    /// Создаёт воксельный 3D массив, обёрнутый в мьютекс
+    pub fn new_empty_3d_mutex(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(Self::new_empty_3d(name, width, height, layers, pix_fmt, device)?))
+    }
+
+    /// Создаёт воксельный 3D массив, заданный шириной, высотой и глубиной
+    pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
     {
         let dims = TextureDimensions::Dim3d{width: width as u32, height: height as u32, depth: layers as u32};
         let mut texture_builder = Texture::builder();
-        texture_builder
-            .name(name)
-            .build_mutable(device, pix_fmt, dims)
+        texture_builder.name(name);
+        texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
+    /// Получает формат пикселя текстуры
     pub fn pix_fmt(&self) -> &TexturePixelFormat
     {
         &self._pix_fmt
@@ -179,7 +196,16 @@ impl Texture
     pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let img_dims = img.image().dimensions();
-        let sampler = TextureSampler::simple_repeat_linear_no_mipmap(device.clone());
+        let sampler_builder = TextureSampler::start(device.clone());
+        let sampler = sampler_builder
+            .address_mode_u(TextureRepeatMode::ClampToEdge)
+            .address_mode_v(TextureRepeatMode::ClampToEdge)
+            .address_mode_w(TextureRepeatMode::ClampToEdge)
+            .mipmap_mode(MipmapMode::Nearest)
+            .anisotropy(None)
+            .min_filter(TextureFilter::Nearest)
+            .mag_filter(TextureFilter::Nearest).build().unwrap();
+
         let pix_fmt = TexturePixelFormat::from_vk_format(img.image().format())?;
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
         //TextureDimensions{width: img_dims[0], }
@@ -193,8 +219,8 @@ impl Texture
 
             _pix_fmt : pix_fmt,
 
-            min_filter : TextureFilter::Linear,
-            mag_filter : TextureFilter::Linear,
+            min_filter : TextureFilter::Nearest,
+            mag_filter : TextureFilter::Nearest,
             mip_mode : MipmapMode::Nearest,
             u_repeat : TextureRepeatMode::Repeat,
             v_repeat : TextureRepeatMode::Repeat,
@@ -206,9 +232,14 @@ impl Texture
         }))
     }
 
+    pub fn from_file_mutex<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(Self::from_file(queue, path)?))
+    }
+
     /// Загрузка изображения-текстуры из файла.
     /// Поддерживаются форматы dds, ktx и все форматы, поддерживаемые crate'ом image
-    pub fn from_file<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<TextureRef, String>
+    pub fn from_file<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<Texture, String>
     {
         let extension = path.as_ref().extension();
         let mut texture_builder = Texture::builder();
@@ -369,19 +400,71 @@ impl Texture
     /// Обновление сэмплера текстуры
     pub fn update_sampler(&mut self)
     {
-        self._vk_sampler = TextureSampler::new(
-            self._vk_device.clone(),
-            self.mag_filter,
-            self.min_filter,
-            self.mip_mode,
-            self.u_repeat,
-            self.v_repeat,
-            self.w_repeat,
-            self.mip_lod_bias,
-            self.max_anisotropy,
-            self.min_lod,
-            self.max_lod,
+        let mut builder = TextureSampler::start(self._vk_device.clone());
+        builder = builder
+            .address_mode_u(self.u_repeat)
+            .address_mode_v(self.v_repeat)
+            .address_mode_w(self.w_repeat)
+            .mag_filter(self.mag_filter)
+            .min_filter(self.min_filter)
+            .mipmap_mode(self.mip_mode)
+            .mip_lod_bias(self.mip_lod_bias)
+            .anisotropy(Some(self.max_anisotropy))
+            .lod(self.min_lod..=self.max_lod);
+        self._vk_sampler = builder.build().unwrap();
+    }
+
+    pub fn clear_color(&mut self, queue: Arc<Queue>)
+    {
+        let device = queue.device().clone();
+        let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
+            device.clone(),
+            queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
+        match self._pix_fmt.components() {
+            1 => {
+                let val = if self._pix_fmt.is_depth() { 1.0 } else { 0.0 };
+                command_buffer_builder.clear_color_image(self._vk_image_view.image(), val.into()).unwrap();
+            },
+            2 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 2].into()).unwrap(); },
+            3 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 3].into()).unwrap(); },
+            4 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 4].into()).unwrap(); },
+            _ => ()
+        };
+        let command_buffer = command_buffer_builder.build().unwrap();
+        let future = command_buffer.execute(queue).unwrap();
+        drop(future);
+    }
+
+    pub fn copy_from(&self, texture: &Texture, queue: Arc<Queue>)
+    {
+        let device = queue.device().clone();
+        let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
+            device.clone(),
+            queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
+        ).unwrap();
+
+        command_buffer_builder.blit_image(
+            texture._vk_image_view.image(),
+            [0, 0, 0], [texture.width() as i32, texture.height() as i32, texture.depth() as i32],
+            0, 0,
+            self._vk_image_view.image(),
+            [0, 0, 0], [self.width() as i32, self.height() as i32, self.depth() as i32],
+            0, 0,
+            self._vk_image_dims.array_layers().min(texture._vk_image_dims.array_layers()),
+            TextureFilter::Nearest
+        ).unwrap();
+        let command_buffer = command_buffer_builder.build().unwrap();
+        let future = command_buffer.execute(queue);
+
+        match future {
+            Ok(_) => (),
+            Err(e) => {
+                panic!("Не удалось скопировать текстуру: {:?}", e);
+            }
+        };
     }
 }
 
@@ -461,34 +544,50 @@ impl TextureBuilder
         self
     }
 
-    /// Строит изменяемое изображение
-    pub fn build_mutable(&mut self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
+    pub fn build_mutable_mutex(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
     {
-        let texture = AttachmentImage::sampled_input_attachment(
+        Ok(RcBox::construct(self.build_mutable(device, pix_fmt, dimensions)?))
+    }
+
+    /// Строит изменяемое изображение
+    pub fn build_mutable(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<Texture, String>
+    {
+        let texture = AttachmentImage::with_usage(
             device.clone(),
             [dimensions.width(), dimensions.height()],
-            pix_fmt.vk_format()
+            pix_fmt.vk_format(),
+            ImageUsage {
+                transfer_source: true,
+                transfer_destination: true,
+                sampled: true,
+                storage: false,
+                color_attachment: true,
+                depth_stencil_attachment: true,
+                transient_attachment: false,
+                input_attachment: false,
+            }
         ).unwrap();
-        
-        Ok(RcBox::construct(Texture {
+
+        let mut sampler_builder = TextureSampler::start(device.clone());
+        sampler_builder = sampler_builder
+            .address_mode_u(self.u_repeat)
+            .address_mode_v(self.v_repeat)
+            .address_mode_w(self.w_repeat)
+            .mag_filter(self.mag_filter)
+            .min_filter(self.min_filter)
+            .mipmap_mode(self.mip_mode)
+            .mip_lod_bias(self.mip_lod_bias)
+            .anisotropy(Some(self.max_anisotropy))
+            .lod(self.min_lod..=self.max_lod);
+
+        //img.
+        Ok(Texture {
             name: self.name.to_string(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: device.clone(),
             _pix_fmt: pix_fmt,
-            _vk_sampler: TextureSampler::new(
-                device.clone(),
-                self.mag_filter,
-                self.min_filter,
-                self.mip_mode,
-                self.u_repeat,
-                self.v_repeat,
-                self.w_repeat,
-                self.mip_lod_bias,
-                self.max_anisotropy,
-                self.min_lod,
-                self.max_lod,
-            ).unwrap(),
+            _vk_sampler: sampler_builder.build().unwrap(),
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -499,11 +598,16 @@ impl TextureBuilder
             max_anisotropy : self.max_anisotropy,
             min_lod : self.min_lod,
             max_lod : self.max_lod,
-        }))
+        })
+    }
+    
+    pub fn build_immutable_compressed_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(self.build_immutable_compressed(reader, queue)?))
     }
 
     /// Строит неизменяемое сжатое изображение
-    pub fn build_immutable_compressed<Rdr : Read + Seek + BufRead>(&mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn build_immutable_compressed<Rdr : Read + Seek + BufRead>(mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<Texture, String>
     {
         let device = queue.device();
         let header : Box<dyn CompressedFormat>;
@@ -549,26 +653,26 @@ impl TextureBuilder
             self.mip_mode = MipmapMode::Nearest;
         }
 
+        let mut sampler_builder = TextureSampler::start(device.clone());
+        sampler_builder = sampler_builder
+            .address_mode_u(self.u_repeat)
+            .address_mode_v(self.v_repeat)
+            .address_mode_w(self.w_repeat)
+            .mag_filter(self.mag_filter)
+            .min_filter(self.min_filter)
+            .mipmap_mode(self.mip_mode)
+            .mip_lod_bias(self.mip_lod_bias)
+            .anisotropy(Some(self.max_anisotropy))
+            .lod(self.min_lod..=self.max_lod);
+
         tex_future.flush().unwrap();
-        Ok(RcBox::construct(Texture {
+        Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: device.clone(),
             _pix_fmt: header.pixel_format(),
-            _vk_sampler: TextureSampler::new(
-                device.clone(),
-                self.mag_filter,
-                self.min_filter,
-                self.mip_mode,
-                self.u_repeat,
-                self.v_repeat,
-                self.w_repeat,
-                self.mip_lod_bias,
-                self.max_anisotropy,
-                self.min_lod,
-                self.max_lod,
-            ).unwrap(),
+            _vk_sampler: sampler_builder.build().unwrap(),
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -579,11 +683,16 @@ impl TextureBuilder
             max_anisotropy : self.max_anisotropy,
             min_lod : self.min_lod,
             max_lod : self.max_lod,
-        }))
+        })
+    }
+    
+    pub fn build_immutable_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    {
+        Ok(RcBox::construct(self.build_immutable(reader, queue)?))
     }
 
     /// Строит неизменяемое несжатое изображение
-    pub fn build_immutable<Rdr : Read + Seek + BufRead>(&mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    pub fn build_immutable<Rdr : Read + Seek + BufRead>(mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<Texture, String>
     {
         let pix_fmt = TexturePixelFormat::from_vk_format(Format::R8G8B8A8_SRGB)?;
         let img_rdr = ImageReader::new(reader).with_guessed_format();
@@ -612,26 +721,26 @@ impl TextureBuilder
             MipmapMode::Nearest => 0.0
         };
 
+        let mut sampler_builder = TextureSampler::start(queue.device().clone());
+        sampler_builder = sampler_builder
+            .address_mode_u(self.u_repeat)
+            .address_mode_v(self.v_repeat)
+            .address_mode_w(self.w_repeat)
+            .mag_filter(self.mag_filter)
+            .min_filter(self.min_filter)
+            .mipmap_mode(self.mip_mode)
+            .mip_lod_bias(self.mip_lod_bias)
+            .anisotropy(Some(self.max_anisotropy))
+            .lod(self.min_lod..=self.max_lod);
+
         tex_future.flush().unwrap();
-        Ok(RcBox::construct(Texture {
+        Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new(texture).unwrap(),
             _vk_device: queue.device().clone(),
             _pix_fmt: pix_fmt,
-            _vk_sampler: TextureSampler::new(
-                queue.device().clone(),
-                self.mag_filter,
-                self.min_filter,
-                self.mip_mode,
-                self.u_repeat,
-                self.v_repeat,
-                self.w_repeat,
-                self.mip_lod_bias,
-                self.max_anisotropy,
-                self.min_lod,
-                self.max_lod,
-            ).unwrap(),
+            _vk_sampler: sampler_builder.build().unwrap(),
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -642,7 +751,7 @@ impl TextureBuilder
             max_anisotropy : self.max_anisotropy,
             min_lod : self.min_lod,
             max_lod : self.max_lod,
-        }))
+        })
     }
 
     /// Функция, аналогичная фуикции immutable_image структуры ImmutableImage из vulkano.

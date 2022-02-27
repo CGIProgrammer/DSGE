@@ -1,38 +1,12 @@
-use crate::mesh::MeshRef;
-use crate::material::{MaterialRef};
-use crate::game_object::GameObjectRef;
-use super::Component;
+use super::camera::CameraUniformData;
+use std::sync::Arc;
 
-#[allow(dead_code)]
-pub struct VisualComponent
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::render_pass::RenderPass;
+
+/// # Абстрактное визуальное представление
+/// Придаёт внешний вид объекту `GameObject`.
+pub trait AbstractVisual
 {
-    mesh : MeshRef,
-    material : MaterialRef,
-    owner : Option<GameObjectRef>
-}
-
-#[allow(dead_code)]
-impl VisualComponent
-{
-    pub fn new(mesh: MeshRef, material: MaterialRef) -> Self
-    {
-        Self {
-            mesh : mesh,
-            material : material,
-            owner : None
-        }
-    }
-}
-
-impl Component for VisualComponent
-{
-    fn set_owner(&mut self, go : GameObjectRef)
-    {
-        self.owner = Some(go);
-    }
-
-    fn as_visual(&self) -> Option<&Self>
-    {
-        Some(self)
-    }
+    fn draw(&self, _acbb : &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>, camera: &CameraUniformData, render_pass: Arc<RenderPass>, subpass_id: u32) -> Result<(), String>;
 }

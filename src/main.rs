@@ -2,6 +2,7 @@ extern crate winit;
 extern crate vulkano;
 
 mod teapot;
+mod time;
 
 use std::sync::Arc;
 
@@ -26,9 +27,10 @@ mod game_object;
 mod renderer;
 mod components;
 
-use shader::*;
 use mesh::*;
 use texture::*;
+use game_object::*;
+use types::Vec4;
 
 trait Radian
 {
@@ -43,16 +45,14 @@ impl Radian for f32
     }
 }
 
+/// Базовый пример приложения
 pub struct Application {
     renderer: renderer::Renderer,
     event_pump: EventLoop<()>,
-    texture: TextureRef,
-    shader: ShaderProgramRef,
-    mesh: MeshRef,
+    object : RcBox<MeshObject>,
     counter: f32
 }
 
-/// Базовый пример
 impl Application {
     pub fn new(title: &str, width: u16, height: u16, fullscreen: bool, _vsync: bool) -> Result<Self, String>
     {
@@ -68,74 +68,41 @@ impl Application {
             .build_vk_surface(&event_loop, vk_instance.clone())
             .unwrap();
 
-        let renderer = renderer::Renderer::from_winit(vk_instance, surface, _vsync);
-        let texture = Texture::from_file(renderer.queue().clone(), "image_img.png").unwrap();
-        texture.take_mut().set_anisotropy(16.0);
-        texture.take_mut().set_mipmap(MipmapMode::Linear);
-        texture.take_mut().set_mag_filter(TextureFilter::Linear);
-        texture.take_mut().update_sampler();
+        let mut renderer = renderer::Renderer::from_winit(vk_instance, surface, _vsync);
+        let mut texture = Texture::from_file(renderer.queue().clone(), "image_img.png").unwrap();
+        texture.set_anisotropy(16.0);
+        texture.set_mipmap(MipmapMode::Linear);
+        texture.set_mag_filter(TextureFilter::Linear);
+        texture.update_sampler();
 
-        let mut v_shd = shader::Shader::builder(shader::ShaderType::Vertex, renderer.device().clone());
-        v_shd
-            .default_vertex_attributes()
-            .output("col", shader::AttribType::FVec3)
-            .output("nor", shader::AttribType::FVec3)
-            .output("tex_map", shader::AttribType::FVec2)
-            .uniform::<game_object::GOTransfotmUniform>("object", 0)
-            .uniform::<components::camera::CameraUniform>("camera", 0)
-            //.uniform(&ObjectTransform::default(), "transform_prev", 1)
-            .code("
-                void main() {
-                    col = v_nor;
-                    vec4 pos = camera.projection * object.transform * vec4(v_pos, 1.0);
-                    nor = (object.transform * vec4(v_nor, 0.0)).xyz;
-                    tex_map = v_pos.xy*0.5+0.5;
-                    gl_Position = pos;
-                }"
-            ).build().unwrap();
-
-        let mut f_shd = shader::Shader::builder(shader::ShaderType::Fragment, renderer.device().clone());
-            f_shd
-            .input("col", shader::AttribType::FVec3)
-            .input("nor", shader::AttribType::FVec3)
-            .input("tex_map", shader::AttribType::FVec2)
-            .output("gAlbedo", shader::AttribType::FVec3)
-            .output("gNormals", shader::AttribType::FVec3)
-            .output("gMasks", shader::AttribType::FVec3)
-            .output("gVectors", shader::AttribType::FVec4)
-            .uniform_sampler2d("tex", 1, false)
-            .code("
-                void main() {
-                    gAlbedo = texture(tex, tex_map.xy).rgb;
-                    gNormals = normalize(nor)*0.5+0.5;
-                    //f_color = vec4(1.0,1.0,1.0, 1.0);
-                }"
-            ).build().unwrap();
-
-        let mut pip_builder = shader::ShaderProgram::builder();
-        let graph_pip = pip_builder
-            .vertex(&v_shd)
-            .fragment(&f_shd)
-            .build(renderer.device().clone()).unwrap();
-            
-        let mesh = Mesh::builder("default teapot")
-            .push_teapot()
-            .build(renderer.device().clone()).unwrap();
+        let mut mesh = Mesh::builder("default teapot");
+        mesh.push_teapot();
+        let mesh = mesh.build_mutex(renderer.device().clone()).unwrap();
         
+        let mut material = material::MaterialBuilder::start(renderer.device().clone());
+        material
+            .define("diffuse_map", "")
+            //.add_texture("fDiffuseMap", texture.clone())
+            .add_numeric_parameter("diffuse", [1.0, 1.0, 1.0, 1.0].into())
+            .add_numeric_parameter("roughness", 1.0.into())
+            .add_numeric_parameter("glow", 1.0.into())
+            .add_numeric_parameter("metallic", 0.0.into());
+        let material = material.build_mutex(renderer.device().clone());
+
+        renderer.set_camera(RcBox::construct(CameraObject::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0)));
+
         Ok(Self {
             renderer: renderer,
             event_pump: event_loop,
-            shader: graph_pip,
-            mesh: mesh,
-            texture: texture,
+            object: RcBox::construct(MeshObject::new(mesh, material)),
             counter: 0.0
         })
     }
 
     pub fn event_loop(mut self) -> Arc<EventLoop<()>>
     {
+        let mut timer = time::Timer::new();
         self.event_pump.run(move |event: Event<()>, _wtar: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow| {
-            
             match event {
                 Event::WindowEvent {
                     event: WindowEvent::CloseRequested,
@@ -150,6 +117,8 @@ impl Application {
                     self.renderer.update_swapchain()
                 },
                 Event::RedrawEventsCleared => {
+                    let tu = timer.next_frame();
+                    self.counter = tu.uptime;
                     let transform = types::Mat4::new(
                         1.0, 0.0, 0.0,  0.0,
                         0.0, 1.0, 0.0,  0.0,
@@ -161,10 +130,18 @@ impl Application {
                         -self.counter.sin(), 0.0, self.counter.cos(), 0.0,
                          0.0, 0.0, 0.0, 1.0,
                     );
+                    let mut obj = self.object.take_mut();
+                    let mut obj_transform = obj.transform_mut();
+                    
+                    obj_transform.global_for_render_prev = obj_transform.global_for_render;
+                    obj_transform.global_for_render = transform;
+                    obj_transform.global = transform;
+                    drop(obj_transform);
+                    drop(obj);
+                    self.renderer.update_timer(&tu);
                     self.renderer.begin_geametry_pass();
-                    self.renderer.draw(self.mesh.clone(), self.texture.clone(), self.shader.clone(), transform);
+                    self.renderer.draw(self.object.clone());
                     self.renderer.end_frame();
-                    self.counter += 0.1;
                 },
                 _ => { }
             }
@@ -173,8 +150,6 @@ impl Application {
 }
 
 fn main() {
-    let mut app = Application::new("DSGE VK", 800, 600, false, true).unwrap();
-    app.renderer.update_swapchain();
+    let app = Application::new("DSGE VK", 800, 600, false, false).unwrap();
     app.event_loop();
-    println!("Выход");
 }

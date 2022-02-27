@@ -1,6 +1,8 @@
 #[allow(dead_code)]
 
 use vulkano::format::Format;
+use crate::glenums::AttribType;
+
 pub type GLenum = u32;
 pub const GL_COMPRESSED_RGB8_ETC2 : GLenum = 0x9274;
 pub const GL_COMPRESSED_RGBA8_ETC2_EAC : GLenum = 0x9278;
@@ -125,6 +127,39 @@ impl TexturePixelFormat
     {
         PIXEL_FORMAT_TABLE[*self as usize].1
     }
+
+	pub fn is_depth(&self) -> bool
+	{
+		match self {
+			Self::Depth16u | Self::Depth24u | Self::Depth32f => true,
+			_ => false
+		}
+	}
+
+	pub fn components(&self) -> i32
+	{
+		match self {
+			Self::Gray8i   | Self::Gray8u   | Self::Gray16i  | Self::Gray16u   | Self::Gray16f  | Self::Gray32i | Self::Gray32u | Self::Gray32f | Self::Gray64f |
+			Self::Depth16u | Self::Depth24u | Self::Depth32f | Self::S3tcDXT1a | Self::EacR11 => 1,
+			Self::RG8i     | Self::RG8u     | Self::RG16i    | Self::RG16u     | Self::RG16f    | Self::RG32i   | Self::RG32u   | Self::RG32f   | Self::RG64f   |
+			Self::EacRG11 => 2,
+			Self::RGB8i    | Self::RGB8u    | Self::RGB16i   | Self::RGB16u    | Self::RGB16f   | Self::RGB32i  | Self::RGB32u  | Self::RGB32f  | Self::RGB64f  |
+			Self::BGR8u    | Self::BGR8i    | Self::SRGB8i   | Self::SBGR8     | Self::S3tcDXT1 | Self::S3tcDXT3 | Self::S3tcDXT5| Self::Etc2RGB => 3,
+			Self::RGBA8i   | Self::RGBA8u   | Self::RGBA16i  | Self::RGBA16u   | Self::RGBA16f  | Self::RGBA32i | Self::RGBA32u | Self::RGBA32f | Self::RGBA64f |
+			Self::BGRA8u   | Self::BGRA8i   | Self::SRGBA8i  | Self::SBGRA8    | Self::Etc2RGBA => 4
+		}
+	}
+
+	pub fn shader_output_type(&self) -> AttribType
+	{
+		match self.components() {
+			1 => AttribType::Float,
+			2 => AttribType::FVec2,
+			3 => AttribType::FVec3,
+			4 => AttribType::FVec4,
+			_ => panic!("Невозможная ошибка: формат пикселя предусматривает более 4 компонент!")
+		}
+	}
 }
 
 /// Таблица форматов

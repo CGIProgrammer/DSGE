@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
 use vulkano::device::Device;
-use vulkano::command_buffer::{AutoCommandBufferBuilder};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
 pub use crate::references::*;
@@ -260,11 +260,36 @@ impl MeshBuilder
         self
     }
 
+    /// Добавить чайник из Юты
     pub fn push_teapot(&mut self) -> &mut Self
     {
         let rot = nalgebra::Rotation3::<f32>::from_euler_angles(0.0, 0.0, std::f32::consts::PI);
         let mat = rot.matrix();
         let self_ind_count = self._indices.len();
+        let mut max_x = -9999.0;
+        let mut max_y = -9999.0;
+        let mut min_x = 9999.0;
+        let mut min_y = 9999.0;
+        for vert in &VERTICES {
+            if vert.position.0 > max_x {
+                max_x = vert.position.0;
+            }
+            if vert.position.1 > max_y {
+                max_y = vert.position.1;
+            }
+            if vert.position.0 < min_x {
+                min_x = vert.position.0;
+            }
+            if vert.position.1 < min_y {
+                min_y = vert.position.1;
+            }
+        }
+        min_x /= 100.0;
+        min_y /= 100.0;
+        max_x /= 100.0;
+        max_y /= 100.0;
+        println!("min {}, {}", min_x, min_y);
+        println!("max {}, {}", max_x, max_y);
         for i in 0..VERTICES.len() {
             let pos = Vec3::new(VERTICES[i].position.0 / 100.0, VERTICES[i].position.1 / 100.0, VERTICES[i].position.2 / 100.0);
             let nor = Vec3::new(NORMALS[i].normal.0, NORMALS[i].normal.1, NORMALS[i].normal.2);
@@ -273,7 +298,7 @@ impl MeshBuilder
                 v_nor: mat * nor,
                 v_tan: Vec3::new(0.0, 0.0, 0.0),
                 v_bin: Vec3::new(0.0, 0.0, 0.0),
-                v_tex1: Vec2::new(0.0, 0.0),
+                v_tex1: Vec2::new((pos.x-min_x) / (max_x - min_x), 1.0 - (pos.y-min_y) / (max_y - min_y)),
                 v_tex2: Vec2::new(0.0, 0.0),
                 v_grp: UVec3::new(0, 0, 0),
             };
@@ -285,6 +310,7 @@ impl MeshBuilder
         self
     }
 
+    /// Добавить плоскость
     pub fn push_screen_plane(&mut self) -> &mut Self
     {
         self.push_triangle_coords(
@@ -299,7 +325,12 @@ impl MeshBuilder
             )
     }
 
-    pub fn build(&mut self, device: Arc<Device>) -> Result<MeshRef, String>
+    pub fn build_mutex(self, device: Arc<Device>) -> Result<MeshRef, String>
+    {
+        Ok(MeshRef::construct(self.build(device)?))
+    }
+
+    pub fn build(mut self, device: Arc<Device>) -> Result<Mesh, String>
     {
         self._vertex_buffer = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._vertices.clone()).unwrap());
         self._index_buffer  = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._indices.clone()).unwrap());
@@ -315,7 +346,7 @@ impl MeshBuilder
             uv_count: 1,
             bbox: BoundingBox::default()
         };
-        Ok(MeshRef::construct(mesh))
+        Ok(mesh)
     }
 }
 
@@ -356,7 +387,7 @@ impl Mesh {
                 &Vec3::new( 1.0,  1.0, 0.0),
                 &Vec3::new( 1.0, -1.0, 0.0)
             );
-        plane.build(device)
+        plane.build_mutex(device)
     }
 
     pub fn make_cube(name : &str, device: Arc<Device>) -> Result<MeshRef, String>
@@ -397,8 +428,8 @@ impl Mesh {
             &Vec3::new(-1.0,  1.0,  1.0),
             &Vec3::new(-1.0, -1.0,  1.0),
             &Vec3::new(-1.0, -1.0, -1.0),
-        )
-        .build(device)
+        );
+        cube.build_mutex(device)
     }
 
     pub fn vertex_buffer(&self) -> Option<VertexBufferRef>
@@ -414,19 +445,39 @@ impl Mesh {
 
 pub trait MeshBinder
 {
-    fn bind_mesh(&mut self, mesh: &MeshRef) -> &mut Self;
+    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
 }
 
-impl <L, P>MeshBinder for AutoCommandBufferBuilder<L, P>
+use vulkano::command_buffer::validity::*;
+use vulkano::command_buffer::DrawIndexedError;
+
+impl MeshBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
 {
-    fn bind_mesh(&mut self, mesh: &MeshRef) -> &mut Self
+    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
     {
-        let vbo = mesh.take().vertex_buffer().unwrap();
-        let ibo = mesh.take().index_buffer().unwrap();
-        self
+        let vbo = mesh.vertex_buffer().unwrap();
+        let ibo = mesh.index_buffer().unwrap();
+        let result = self
             .bind_vertex_buffers(0, vbo.clone())
             .bind_index_buffer(ibo.clone())
-            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0)
-            .unwrap()
+            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+
+        match result {
+            Ok(slf) => Ok(slf),
+            Err(derr) => 
+                match derr {
+                    DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
+                    match err {
+                        CheckDescriptorSetsValidityError::InvalidDescriptorResource {
+                            set_num,
+                            binding_num,
+                            index,
+                            ..
+                        } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
+                        _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
+                    },
+                    _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
+                }
+        }
     }
 }

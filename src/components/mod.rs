@@ -4,10 +4,12 @@
 pub mod camera;
 pub mod visual;
 
-use crate::game_object::GameObjectRef;
+pub use crate::game_object::GameObject;
+pub use visual::AbstractVisual;
+pub use camera::AbstractCamera;
 
-pub trait Component
-{
-    fn set_owner(&mut self, owner : GameObjectRef);
-    fn as_visual(&self) -> Option<&visual::VisualComponent>;
-}
+/// Абстрактная камера
+pub trait AbstractCameraObject : GameObject + AbstractCamera {}
+
+/// Абстрактный отображаемый объект
+pub trait AbstractVisualObject : GameObject + AbstractVisual {}

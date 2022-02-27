@@ -1,4 +1,5 @@
 /target
+/shader_cache/*
 *.dds
 *.ktx
 *.bmp
