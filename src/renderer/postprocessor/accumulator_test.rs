@@ -1,52 +1,49 @@
-use super::RenderPostprocessingGraph;
+use super::Postprocessor;
 use super::super::super::shader::*;
 use super::{RenderResolution, StageIndex};
 use crate::texture::TexturePixelFormat;
+use crate::time::UniformTime;
 
-impl RenderPostprocessingGraph
+impl Postprocessor
 {
-    /// Размытие в движении, основанное на накоптельном буфере
-    pub fn acc_mblur(&mut self, width: u16, height: u16) -> StageIndex
+    pub fn acc_mblur_new(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
     {
-        let acc_mblur_prog = self.make_acc_mblur_shader();
-        self.add_stage(
-            &acc_mblur_prog,
-            vec![
-                (true,  TexturePixelFormat::RGBA16f),   // сокет для накопительного буфера
-                (false, TexturePixelFormat::SBGRA8)     // сокет для swapchain изображения
-            ],
-            width, height
-        )
-    }
-
-    fn make_acc_mblur_shader(&self) -> ShaderProgramRef
-    {
-        let mut v_shader = self.vertex_plane_shader();
-        let mut f_shader = Shader::builder(ShaderType::Fragment, self._device.clone());
-        f_shader
-            .input("position", AttribType::FVec2)
-            .input("fragCoordWp", AttribType::FVec2)
-            .input("fragCoord", AttribType::FVec2)
-            .output("accumulator_out", AttribType::FVec4)
-            .output("swapchain_out", AttribType::FVec4)
-            .uniform_sampler2d("image", 1, false)
-            .uniform_sampler2d("accumulator", 2, false)
-            .uniform::<RenderResolution>("iResolution", 0)
+        let mut stage_builder = Self::stage_builder(self._device.clone());
+        stage_builder
+            .dimenstions(width, height)
+            .input("image")
+            .input("vectors")
+            .input("background")
+            .input("accumulator")
+            .output("accumulator_out", TexturePixelFormat::RGBA16f, true)
+            .output("swapchain_out", sc_format, false)
             .code("
             void main()
             {
-                accumulator_out = mix(texture(accumulator, fragCoordWp), texture(image, fragCoordWp), 0.1);
-                accumulator_out.a = 1.0;
-                swapchain_out = accumulator_out;
-            }");
+                vec2 delta = texture(vectors, fragCoordWp).xy;
+                float scale = 0.25;
+                vec2 teapot_uv = fragCoordWp / scale;
+                vec2 teapot_past_uv = (fragCoordWp - delta*scale);
 
-        v_shader.build().unwrap();
-        f_shader.build().unwrap();
+                vec4 original = texture(image, teapot_uv);
+                vec4 past = texture(accumulator, teapot_past_uv);
+                accumulator_out = mix(past, original, clamp(0.1 + past.a, 0.0, 1.0));
+
+                if (timer.frame==0 || any(isnan(accumulator_out))) {
+                    accumulator_out = vec4(0.0);
+                }
+                accumulator_out.a = 1.0;
+                swapchain_out.rgb = mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
+                swapchain_out.a = 1.0;
+            }");
         
-        let mut shader_builder = ShaderProgram::builder();
-        shader_builder
-            .vertex(&v_shader)
-            .fragment(&f_shader);
-        shader_builder.build(self._device.clone()).unwrap()
+        let result = stage_builder.build(self);
+        match result {
+            Ok(stage) => {
+                self.link_stages(stage, 0, stage, format!("accumulator"));
+            },
+            _ => ()
+        }
+        result
     }
 }

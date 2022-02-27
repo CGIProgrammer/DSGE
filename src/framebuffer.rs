@@ -90,7 +90,7 @@ impl Framebuffer
     }
 
     /// Инициализировать буфер кадра для render pass'а
-    pub fn make_vk_fb(&mut self, render_pass : Arc<VkRenderPass>)
+    pub fn make_vk_fb(&mut self, render_pass : Arc<VkRenderPass>) -> Result<(), String>
     {
         let mut vk_fb_builder = VkFramebuffer::with_intersecting_dimensions(render_pass.clone());
         for attachment in &self._color_attachments {
@@ -100,28 +100,43 @@ impl Framebuffer
         {
             vk_fb_builder = vk_fb_builder.add(self._depth_attachment.as_ref().unwrap().storage.take().image_view().clone()).unwrap();
         }
-        self._vk_fb = Some(vk_fb_builder.build().unwrap());
+        let vk_fb = vk_fb_builder.build();
+        match vk_fb
+        {
+            Ok(fb) => {
+                self._vk_fb = Some(fb);
+                Ok(())
+            },
+            Err(e) => 
+            match e {
+                vulkano::render_pass::FramebufferCreationError::AttachmentsCountMismatch{expected, obtained} => {
+                    Err(format!("Не соответствие количества целей рендеринга. Ожидается {}, но получено {}", expected, obtained))
+                },
+                _ => {
+                    vk_fb.unwrap();
+                    Ok(())
+                }
+            }
+        }
     }
 }
 
 use vulkano::command_buffer::{AutoCommandBufferBuilder, SubpassContents, PrimaryAutoCommandBuffer};
 use vulkano::render_pass::{RenderPass};
-use vulkano::command_buffer::pool::CommandPoolBuilderAlloc;
 
 pub trait FramebufferBinder
 {
-    fn bind_framebuffer(&mut self, framebuffer: FramebufferRef, render_pass: Arc<RenderPass>) -> Result<&mut Self, vulkano::command_buffer::BeginRenderPassError>;
+    fn bind_framebuffer(&mut self, framebuffer: &mut Framebuffer, render_pass: Arc<RenderPass>) -> Result<&mut Self, String>;
 }
 
-impl <P: CommandPoolBuilderAlloc>FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer<P::Alloc>, P>
+impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
 {
-    fn bind_framebuffer(&mut self, framebuffer: FramebufferRef, render_pass: Arc<RenderPass>) -> Result<&mut Self, vulkano::command_buffer::BeginRenderPassError>
+    fn bind_framebuffer(&mut self, fb: &mut Framebuffer, render_pass: Arc<RenderPass>) -> Result<&mut Self, String>
     {
         let mut clear_values = Vec::new();
-        let mut fb = framebuffer.take_mut();
         if fb._vk_fb.is_none() {
             //println!("Создание буфера кадра");
-            fb.make_vk_fb(render_pass.clone());
+            fb.make_vk_fb(render_pass.clone())?;
         }
         let rp_desc = render_pass.desc();
         for (i, Attachment {storage:_, default_color}) in fb._color_attachments.iter().enumerate()

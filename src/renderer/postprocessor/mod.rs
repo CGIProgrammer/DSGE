@@ -4,18 +4,22 @@ use crate::references::*;
 use crate::framebuffer::*;
 use crate::shader::*;
 use crate::texture::*;
+use crate::types::*;
+use crate::time::UniformTime;
 use std::collections::HashMap;
 
 use std::sync::Arc;
 use vulkano::device::{Queue, Device};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
-use vulkano::render_pass::{RenderPassDesc, SubpassDesc, RenderPass, AttachmentDesc, Subpass};
+use vulkano::render_pass::{RenderPassDesc, SubpassDesc, RenderPass, AttachmentDesc};
+use vulkano::image::{ImageLayout, SampleCount};
 
 type StageIndex = u16;
-type StageInputIndex = u32;
+type StageInputIndex = String;
 type StageOutputIndex = u64;
 
 mod accumulator_test;
+mod rolling_hills;
 
 /// Выход ноды постобработки.
 /// Задаётся:
@@ -54,7 +58,7 @@ struct RenderStage
     _id: StageIndex,
     _program: ShaderProgramRef,
     _resolution: (u16, u16),
-    _outputs: Vec<(Option<TextureRef>, TexturePixelFormat)>,
+    _output_accum: Vec<(Option<TextureRef>, TexturePixelFormat)>,
     _executed: bool,
     _render_pass: Arc<RenderPass>
 }
@@ -82,8 +86,8 @@ impl RenderStage
     /// Проверяет назначен ли выходу ноды накопительный буфер
     fn is_output_acc(&self, output: StageOutputIndex) -> bool
     {
-        if (output as usize) < (self._outputs.len() as usize) {
-            unsafe { self._outputs.get_unchecked(output as usize).0.is_some() }
+        if (output as usize) < (self._output_accum.len() as usize) {
+            unsafe { self._output_accum.get_unchecked(output as usize).0.is_some() }
         } else {
             false
         }
@@ -92,17 +96,150 @@ impl RenderStage
     /// Возвращает накопительный буфер
     fn get_accumulator_buffer(&self, output: StageOutputIndex) -> TextureRef
     {
-        self._outputs.get(output as usize).unwrap().0.as_ref().unwrap().clone()
+        self._output_accum.get(output as usize).unwrap().0.as_ref().unwrap().clone()
         //self._accumulators.get(&output).unwrap().clone()
     }
 
     /// Меняет накопительный буфер на `new_buff` и возвращает предыдущий
     fn swap_accumulator_buffer(&mut self, output: StageOutputIndex, new_buff: &TextureRef) -> TextureRef
     {
-        let output = self._outputs.get_mut(output as usize).unwrap();
+        let output = self._output_accum.get_mut(output as usize).unwrap();
         let texture = output.0.clone().unwrap();
         output.0 = Some(new_buff.clone());
         texture
+    }
+
+    /*pub fn uniform<T>(&mut self, data: &T)
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+    {
+        self._program.take_mut().uniform(data, 0);
+    }*/
+}
+
+pub struct RenderStageBuilder
+{
+    _dimenstions : (u16, u16),
+    _fragment_shader : Shader,
+    _output_accum: Vec<(TexturePixelFormat, bool)>,
+    _inputs : u8
+}
+
+impl RenderStageBuilder
+{
+    pub fn dimenstions(&mut self, width: u16, height: u16) -> &mut Self
+    {
+        self._dimenstions = (width, height);
+        self
+    }
+
+    pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str) -> &mut Self
+    {
+        self._fragment_shader.uniform_autoincrement::<T>(name, 0, 0);
+        self
+    }
+
+    pub fn input(&mut self, name: &str) -> &mut Self
+    {
+        self._inputs += 1;
+        self._fragment_shader.uniform_sampler2d_autoincrement(name, self._inputs as usize, false);
+        self
+    }
+
+    pub fn output(&mut self, name: &str, pix_fmt: TexturePixelFormat, accumulator: bool) -> &mut Self
+    {
+        self._fragment_shader.output(name, AttribType::FVec4);
+        self._output_accum.push((pix_fmt, accumulator));
+        self
+    }
+
+    pub fn code(&mut self, code: &str) -> &mut Self
+    {
+        self._fragment_shader.code(code);
+        self
+    }
+
+    pub fn build(mut self, pp_graph: &mut Postprocessor) -> Result<StageIndex, String>
+    {
+        let device = pp_graph._device.clone();
+        let queue = pp_graph._queue.clone();
+        let mut program = ShaderProgram::builder();
+        let v_shader = pp_graph.vertex_plane_shader()?;
+        let f_shader = self._fragment_shader.build()?;
+        program
+            .vertex(&v_shader).unwrap()
+            .fragment(f_shader).unwrap();
+
+        let program = program.build_mutex(device.clone())?;
+
+        let outputs = self._output_accum.iter().map(
+            |(pix_fmt, accum)| {
+                let acc = 
+                if *accum {
+                    //println!("Создание накопительного буфера {}x{}", self._dimenstions.0, self._dimenstions.1);
+                    let mut buffer = Texture::new_empty_2d(
+                        format!("stage_{}_{:?}_accumulator", pp_graph._render_stage_id_counter, pix_fmt).as_str(),
+                        self._dimenstions.0, self._dimenstions.1, *pix_fmt, device.clone()).unwrap();
+                    buffer.clear_color(queue.clone());
+                    buffer.set_vertical_address(TextureRepeatMode::ClampToEdge);
+                    buffer.set_horizontal_address(TextureRepeatMode::ClampToEdge);
+                    buffer.update_sampler();
+                    Some(RcBox::construct(buffer))
+                } else {
+                    None
+                };
+                (acc, *pix_fmt)
+            }
+        ).collect();
+
+        let attachments = self._output_accum.iter().map(
+            |(pix_fmt, _)| {
+                AttachmentDesc {
+                    format: pix_fmt.vk_format(),
+                    samples: SampleCount::Sample1,
+                    load: vulkano::render_pass::LoadOp::Clear,
+                    store: vulkano::render_pass::StoreOp::Store,
+                    stencil_load: vulkano::render_pass::LoadOp::Clear,
+                    stencil_store: vulkano::render_pass::StoreOp::Store,
+                    initial_layout: ImageLayout::ColorAttachmentOptimal,
+                    final_layout: ImageLayout::ColorAttachmentOptimal,
+                }
+            }
+        ).collect();
+
+        let n = self._output_accum.len();
+        let subpass_attachments = (0..n).map(|i|
+            {
+                (i, ImageLayout::ColorAttachmentOptimal)
+            }
+        ).collect();
+
+        let render_pass_desc = RenderPassDesc::new(
+            attachments,
+            vec![SubpassDesc {
+                color_attachments: subpass_attachments,
+                depth_stencil: None,
+                input_attachments: vec![],
+                resolve_attachments: vec![],
+                preserve_attachments: vec![],
+            }],
+            vec![]
+        );
+
+        //println!("{}", program.take().fragment_shader_source());
+
+        let stage = RenderStage {
+            _id: pp_graph._render_stage_id_counter,
+            _program: program,
+            _resolution: self._dimenstions,
+            _output_accum: outputs,
+            _render_pass: RenderPass::new(device.clone(), render_pass_desc).unwrap(),
+            _executed: false
+        };
+
+        let result = pp_graph._render_stage_id_counter;
+        pp_graph._stages.insert(result, stage);
+        pp_graph._render_stage_id_counter += 1;
+        Ok(result)
     }
 }
 
@@ -114,30 +251,54 @@ impl RenderStage
 /// Память под буферы выделяется автоматически по мере необходимости.
 /// Для перед вызовом функции выполнения, следует назначить входные
 /// и выходные изображения.
-pub struct RenderPostprocessingGraph
+pub struct Postprocessor
 {
-    _render_stage_id_counter: StageIndex,       // Счётчик ID
-    _stages: HashMap<StageIndex, RenderStage>,  // Ноды
-    _links: Vec<RenderStageLink>,               // Связи
-    _buffers: Vec<TextureRef>,                  // Буферы для нод
-    _busy_buffers: HashMap<RenderStageLink, TextureRef>,    // Занятые буферы
-    _inputs: HashMap<RenderStageInputSocket, TextureRef>,   // Входящие текстуры
-    _outputs: HashMap<StageInputIndex, TextureRef>,         // Текстуры на выходе
-    _framebuffer : FramebufferRef,              // Буфер кадра
-    _screen_plane : MeshRef,                    // Плоскость для вывода изображений
+    /// Счётчик ID
+    _render_stage_id_counter: StageIndex,
+    /// Ноды
+    _stages: HashMap<StageIndex, RenderStage>,
+    /// Связи
+    _links: Vec<RenderStageLink>,
+    /// Буферы для нод
+    _buffers: Vec<TextureRef>,
+    /// Занятые буферы
+    _busy_buffers: HashMap<RenderStageLink, TextureRef>,
+    /// Входящие текстуры
+    _image_inputs: HashMap<RenderStageInputSocket, TextureRef>,
+    // Входящие значения (uniform-переменные)
+    //_uniform_inputs: String,
+    /// Текстуры на выходе
+    _outputs: HashMap<StageInputIndex, TextureRef>,
+    /// Буфер кадра
+    _framebuffer : FramebufferRef,
+    /// Плоскость для вывода изображений
+    _screen_plane : MeshRef,
+
+    pub timer : UniformTime,
     _device : Arc<Device>,
     _queue : Arc<Queue>
 }
 
-use vulkano::image::{ImageLayout, SampleCount};
+#[allow(dead_code)]
+#[derive(Clone)]
+pub enum NumericInput
+{
+    Scalar(f32),
+    Vec2(Vec2),
+    Vec3(Vec3),
+    Vec4(Vec4),
+    Mat2(Mat2),
+    Mat3(Mat3),
+    Mat4(Mat4),
+}
 
-impl RenderPostprocessingGraph
+impl Postprocessor
 {
     pub fn new(queue: Arc<Queue>, width: u16, height: u16) -> Self
     {
         let device = queue.device();
         
-        Self {
+        Postprocessor {
             _render_stage_id_counter: 1,
             _stages: HashMap::new(),
             _links: Vec::new(),
@@ -145,10 +306,69 @@ impl RenderPostprocessingGraph
             _busy_buffers: HashMap::new(),
             _framebuffer: Framebuffer::new(width, height),
             _screen_plane: Mesh::make_screen_plane(device.clone()).unwrap(),
-            _inputs: HashMap::new(),
+            _image_inputs: HashMap::new(),
+            //_uniform_inputs: String::new(),
+            timer: Default::default(),
             _outputs: HashMap::new(),
             _device: device.clone(),
             _queue: queue.clone(),
+        }
+    }
+
+    pub fn uniform_to_all<T>(&mut self, name: &String, data: &T)
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+    {
+        for (_, rs) in &self._stages {
+            rs._program.take_mut().uniform_by_name(data, name);//.unwrap();
+        }
+    }
+
+    pub fn uniform_to_stage<T>(&mut self, stage_id: StageIndex, name: &String, data: &T)
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+    {
+        match self._stages.get(&stage_id) {
+            Some(stage) => drop(stage._program.take_mut().uniform_by_name(data, name)),
+            None => ()
+        };
+    }
+
+    pub fn resize_stage(&mut self, stage_id: StageIndex, width: u16, height: u16)
+    {
+        match self._stages.get_mut(&stage_id) {
+            Some(stage) => {
+                stage._resolution = (width, height);
+                let mut accs = Vec::new();
+                for (buff, pix_fmt) in &mut stage._output_accum {
+                    let buff = match buff {
+                        Some(texture) => {
+                            Some(Texture::new_empty_2d_mutex(texture.take().name(), width, height, *pix_fmt, self._device.clone()).unwrap())
+                        },
+                        None => None
+                    };
+                    accs.push((buff, *pix_fmt));
+                }
+                stage._output_accum = accs;
+            },
+            None => ()
+        };
+    }
+
+    pub fn stage_builder(device: Arc<Device>) -> RenderStageBuilder
+    {
+        let mut builder = Shader::builder(ShaderType::Fragment, device);
+        builder
+            .define("iResolution", "resolution.dimensions")
+            .input("position", AttribType::FVec2)
+            .input("fragCoordWp", AttribType::FVec2)
+            .input("fragCoord", AttribType::FVec2)
+            .uniform_autoincrement::<RenderResolution>("resolution", 0, 0)
+            .uniform_autoincrement::<UniformTime>("timer", 0, 0);
+
+        RenderStageBuilder {
+            _dimenstions: (256, 256),
+            _fragment_shader: builder,
+            _inputs: 0,
+            _output_accum: Vec::new()
         }
     }
 
@@ -160,14 +380,14 @@ impl RenderPostprocessingGraph
         self._busy_buffers.clear();
         self._links.clear();
         self._buffers.clear();
-        self._inputs.clear();
+        self._image_inputs.clear();
         self._outputs.clear();
     }
 
     /// Подать текстуру на вход узла постобработчика
     pub fn set_input(&mut self, stage: StageIndex, input: StageInputIndex, tex: &TextureRef)
     {
-        self._inputs.insert(RenderStageInputSocket {render_stage_id: stage, input: input}, tex.clone());
+        self._image_inputs.insert(RenderStageInputSocket {render_stage_id: stage, input: input}, tex.clone());
     }
 
     /// Получение текстуры-выхода
@@ -190,72 +410,6 @@ impl RenderPostprocessingGraph
     pub fn set_output(&mut self, name: StageInputIndex, texture: TextureRef)
     {
         self._outputs.insert(name, texture);
-    }
-
-    /// Добавление узла постобработки
-    pub fn add_stage(&mut self, program: &ShaderProgramRef, outputs_decriptors: Vec<(bool, TexturePixelFormat)>, width: u16, height: u16) -> StageIndex
-    {
-        let n = outputs_decriptors.len();
-        let device = program.take().device().clone();
-        let outputs = outputs_decriptors.iter().map(
-            |(accum, pix_fmt)| {
-                let acc = 
-                if *accum {
-                    Some(Texture::new_empty_2d(
-                        format!("stage_{}_{:?}_accumulator", self._render_stage_id_counter, pix_fmt).as_str(),
-                        width, height, *pix_fmt, device.clone()).unwrap())
-                } else {
-                    None
-                };
-                (acc, *pix_fmt)
-            }
-        ).collect();
-
-        let attachments = outputs_decriptors.iter().map(
-            |(_, pix_fmt)| {
-                AttachmentDesc {
-                    format: pix_fmt.vk_format(),
-                    samples: SampleCount::Sample1,
-                    load: vulkano::render_pass::LoadOp::DontCare,
-                    store: vulkano::render_pass::StoreOp::Store,
-                    stencil_load: vulkano::render_pass::LoadOp::Clear,
-                    stencil_store: vulkano::render_pass::StoreOp::Store,
-                    initial_layout: ImageLayout::ColorAttachmentOptimal,
-                    final_layout: ImageLayout::ColorAttachmentOptimal,
-                }
-            }
-        ).collect();
-
-        let subpass_attachments = (0..n).map(|i|
-            {
-                (i, ImageLayout::ColorAttachmentOptimal)
-            }
-        ).collect();
-
-        let render_pass_desc = RenderPassDesc::new(
-            attachments,
-            vec![SubpassDesc {
-                color_attachments: subpass_attachments,
-                depth_stencil: None,
-                input_attachments: vec![],
-                resolve_attachments: vec![],
-                preserve_attachments: vec![],
-            }],
-            vec![]
-        );
-
-        let render_stage = RenderStage { 
-            _id: self._render_stage_id_counter,
-            _program: program.clone(),
-            _render_pass: RenderPass::new(device.clone(), render_pass_desc).unwrap(),
-            _resolution: (width, height),
-            _outputs: outputs,
-            _executed: false
-        };
-        let rsid = self._render_stage_id_counter;
-        self._stages.insert(rsid, render_stage);
-        self._render_stage_id_counter += 1;
-        rsid
     }
 
     /// Добавить связь между узлами.
@@ -299,8 +453,7 @@ impl RenderPostprocessingGraph
             }
         }
         
-        self._inputs.clear();
-        command_buffer_builder.end_render_pass().unwrap();
+        self._image_inputs.clear();
         command_buffer_builder.build().unwrap()
     }
 
@@ -336,21 +489,29 @@ impl RenderPostprocessingGraph
             let buffer_name = format!("render buffer for link from {}:{} to {}:{}",
                 link._from.render_stage_id, link._from.output,
                 link._to.render_stage_id, link._to.input);
-            println!("Создание текстуры {} {}x{}", buffer_name, resolution.0, resolution.1);
+            //println!("Создание текстуры {} {}x{}", buffer_name, resolution.0, resolution.1);
             let mut _tex = Texture::new_empty_2d(buffer_name.as_str(), resolution.0, resolution.1, pix_fmt, self._device.clone()).unwrap();
-            self._buffers.push(_tex.clone());
-            texture = Some(_tex.clone());
-            self._busy_buffers.insert(link.clone(), _tex.clone());
+            _tex.clear_color(self._queue.clone());
+            _tex.set_horizontal_address(TextureRepeatMode::ClampToEdge);
+            _tex.set_vertical_address(TextureRepeatMode::ClampToEdge);
+            _tex.update_sampler();
+
+            let tex = RcBox::construct(_tex);
+            self._buffers.push(tex.clone());
+            texture = Some(tex.clone());
+            self._busy_buffers.insert(link.clone(), tex.clone());
         }
 
         // Если выход ноды направлен на выход графа...
         if link._to.render_stage_id == 0 {
             if output_has_texture {
                 // Возвращаем изображение, закреплённое за выходом, если оно назначено
+                //println!("На выход {} назначено изображение. Берём его.", link._to.input);
                 return self._outputs.get(&link._to.input).unwrap().clone();
             }
             // Назначаем его, если оно не назначено.
-            self._outputs.insert(link._to.input, texture.clone().unwrap());
+                //println!("На выход {} не назначено изображение. Назначаем его.", link._to.input);
+                self._outputs.insert(link._to.input.clone(), texture.clone().unwrap());
         }
         texture.unwrap()
     }
@@ -384,6 +545,8 @@ impl RenderPostprocessingGraph
                 self.execute_stage(st_id, command_buffer_builder);
             }
         }
+
+        //println!("Выполнение ноды {}", id);
         
         let mut stage = self.stage_by_id(id).clone();
         let _prog = stage._program.clone();
@@ -391,20 +554,22 @@ impl RenderPostprocessingGraph
         let mut program = _prog.take_mut();
 
         let render_pass = stage._render_pass.clone();
+        program.use_subpass(render_pass.clone(), 0);
         
-        program.make_pipeline(Subpass::from(render_pass.clone(), 0).unwrap());
-        
-        program.uniform(
+        program.uniform_by_name(
             &RenderResolution{
-                width: stage._resolution.0 as f32,
+                width:  stage._resolution.0 as f32,
                 height: stage._resolution.1 as f32
-            },
-            0
-        );
-        
-        for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._inputs {
+            }, &format!("resolution")).unwrap();
+        program.uniform_by_name(&self.timer, &format!("timer")).unwrap();
+
+        for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._image_inputs {
             if render_stage_id == &id {
-                program.uniform(tex, *input as usize);
+                drop(program.uniform_by_name(tex, input));
+                /*match program.uniform_by_name(tex, input) {
+                    Ok(_) => println!("Принимается входящее изображение {} на вход", input),
+                    Err(_) => ()
+                };*/
             }
         }
 
@@ -413,16 +578,19 @@ impl RenderPostprocessingGraph
             if link._to.render_stage_id == id {
                 let from_stage = self.stage_by_id(link._from.render_stage_id);
                 if from_stage.is_output_acc(link._from.output) {
+                    //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
                     let acc = from_stage.get_accumulator_buffer(link._from.output);
-                    program.uniform(&acc, link._to.input as _);
+                    program.uniform_by_name(&acc, &link._to.input).unwrap();
                 } else {
+                    //println!("Принимается входящий буфер {} на вход", link._to.input);
                     let free_tex = self._busy_buffers.get(link).unwrap();
-                    program.uniform(free_tex, link._to.input as _);
+                    program.uniform_by_name(free_tex, &link._to.input).unwrap();
                 }
             }
             if link._from.render_stage_id == id {
                 if render_targets.contains_key(&link._from.output) { continue; };
-                let pix_fmt = stage._outputs.get(link._from.output as usize).unwrap().1;
+                //println!("Запрос буфера для записи в слот {}.", link._from.output);
+                let pix_fmt = stage._output_accum.get(link._from.output as usize).unwrap().1;
                 let _tex = self.request_texture(link, pix_fmt);
                 render_targets.insert(link._from.output, _tex.clone());
             }
@@ -432,18 +600,23 @@ impl RenderPostprocessingGraph
         let mut fb = self._framebuffer.take_mut();
         fb.reset_attachments();
         for ind in 0..render_targets.len() {
-            let tex = render_targets.get(&(ind as _)).unwrap();
-            fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
+            let tex = 
+            match render_targets.get(&(ind as _)) {
+                Some(tex) => tex,
+                None => panic!("Нода {} имеет неиспользованный выход {}.", id, ind)
+            };
+            fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
         }
         fb.view_port(stage._resolution.0, stage._resolution.1);
-        drop(fb);
-
+        let prog = &mut *_prog.take();
         command_buffer_builder
-            .bind_framebuffer(self._framebuffer.clone(), render_pass.clone()).unwrap()
-            .bind_shader_program(&_prog)
-            .bind_shader_uniforms(&_prog)
-            .bind_mesh(&self._screen_plane);
-
+            .bind_framebuffer(&mut *fb, render_pass.clone()).unwrap()
+            .bind_shader_program(prog).unwrap()
+            .bind_shader_uniforms(prog).unwrap()
+            .bind_mesh(&*self._screen_plane.take()).unwrap()
+            .end_render_pass().unwrap();
+        drop(fb);
+        drop(prog);
         for output in 0..16 {
             if stage.is_output_acc(output)
             {
@@ -463,6 +636,8 @@ impl RenderPostprocessingGraph
         
         self.replace_stage(id, &stage);
 
+        //println!("Конец выполнения ноды {}", id);
+
         for link in &links {
             if link._to.render_stage_id == id {
                 self.free_texture(link);
@@ -471,12 +646,14 @@ impl RenderPostprocessingGraph
     }
 
     /// Стандартный вершинный шейдер для фильтров постобработки
-    fn vertex_plane_shader(&self) -> Shader
+    fn vertex_plane_shader(&self) -> Result<Shader, String>
     {
         let mut shader = Shader::builder(ShaderType::Vertex, self._device.clone());
         shader
             .default_vertex_attributes()
-            .uniform::<RenderResolution>("iResolution", 0)
+            .define("iResolution", "resolution.dimensions")
+            .uniform_autoincrement::<RenderResolution>("resolution", 0, 0)
+            .uniform_autoincrement::<UniformTime>("timer", 0, 0)
             .output("position", AttribType::FVec2)
             .output("fragCoordWp", AttribType::FVec2)
             .output("fragCoord", AttribType::FVec2)
@@ -484,17 +661,16 @@ impl RenderPostprocessingGraph
 {
     position = v_pos.xy;
     fragCoordWp = v_pos.xy*0.5+0.5;
-    fragCoord.x = fragCoordWp.x*iResolution.width;
-    fragCoord.y = fragCoordWp.y*iResolution.height;
+    fragCoord = fragCoordWp*iResolution;
     gl_Position = vec4(v_pos.xy, 0.0, 1.0);
 }");
-        shader.build().unwrap();
-        shader
+        shader.build()?;
+        Ok(shader)
     }
 }
 
-
-#[derive(Clone)]
+#[allow(dead_code)]
+#[derive(Clone, Copy, Default)]
 struct RenderResolution
 {
     pub width : f32,
@@ -506,8 +682,7 @@ impl ShaderStructUniform for RenderResolution
     fn structure() -> String
     {
         "{
-            float width;
-            float height;
+            vec2 dimensions;
         }".to_string()
     }
 

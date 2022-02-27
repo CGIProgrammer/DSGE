@@ -14,6 +14,7 @@ pub enum GLSLVersion
     V430,
     V440,
     V450,
+    V460
 }
 
 impl GLSLVersion
@@ -30,6 +31,7 @@ impl GLSLVersion
             Self::V430 => "#version 430".to_string(),
             Self::V440 => "#version 440".to_string(),
             Self::V450 => "#version 450".to_string(),
+            Self::V460 => "#version 460".to_string(),
             Self::V300ES => "#version 300 es".to_string(),
             Self::V310ES => "#version 310 es".to_string(),
             Self::V320ES => "#version 320 es".to_string()

@@ -8,7 +8,7 @@ use vulkano::device::{
 };
 use vulkano::swapchain::{self, AcquireError, Swapchain, SwapchainCreationError, Surface, PresentMode};
 use vulkano::image::{view::ImageView, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
-use vulkano::render_pass::{RenderPass, RenderPassDesc, Subpass, SubpassDesc, AttachmentDesc};
+use vulkano::render_pass::{RenderPass, RenderPassDesc, SubpassDesc, AttachmentDesc};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
@@ -16,16 +16,15 @@ use winit::window::{Window};
 
 use std::sync::Arc;
 
-use crate::game_object::GOTransfotmUniform;
 use crate::texture::{Texture, TexturePixelFormat, TextureRef};
 use crate::framebuffer::{Framebuffer, FramebufferRef, FramebufferBinder};
-use crate::mesh::{MeshRef, Mesh, MeshBinder};
-use crate::shader::{ShaderProgramRef, ShaderStructUniform, ShaderProgramBinder, Shader, ShaderProgram, ShaderType};
+use crate::mesh::{MeshRef, Mesh};
+use crate::shader::ShaderStructUniform;
 use crate::references::*;
-use crate::types::Mat4;
-use crate::glenums::AttribType;
-use crate::components::camera::CameraUniform;
-use postprocessor::RenderPostprocessingGraph;
+use crate::components::AbstractVisualObject;
+use crate::game_object::*;
+use postprocessor::Postprocessor;
+use crate::time::UniformTime;
 
 impl ShaderStructUniform for i32
 {
@@ -62,29 +61,41 @@ struct GBuffer
 
 impl GBuffer
 {
-    fn new(width : u16, height : u16, device : Arc<Device>) -> Self
+    fn new(width : u16, height : u16, queue : Arc<Queue>) -> Self
     {
+        println!("Создание нового G-буфера {}x{}", width, height);
+        let device = queue.device();
+        let formats = [
+            TexturePixelFormat::RGBA8u,
+            TexturePixelFormat::RGBA8u,
+            TexturePixelFormat::RGBA8u,
+            TexturePixelFormat::RGBA16f,
+            TexturePixelFormat::Depth16u
+        ];
+
         let fb = Framebuffer::new(width, height);
         let mut _fb = fb.take_mut();
-        let albedo = Texture::new_empty_2d("gAlbedo", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
-        let normals = Texture::new_empty_2d("gNormals", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
-        let masks = Texture::new_empty_2d("gMasks", width, height, TexturePixelFormat::RGBA8i, device.clone()).unwrap();
-        let vectors = Texture::new_empty_2d("gVectors", width, height, TexturePixelFormat::RGBA16f, device.clone()).unwrap();
-        let depth = Texture::new_empty_2d("gDepth", width, height, TexturePixelFormat::Depth16u, device.clone()).unwrap();
-        _fb.add_color_attachment(albedo.clone(), [0.5, 0.5, 0.5].into()).unwrap();
-        _fb.add_color_attachment(normals.clone(), [0.0, 0.0, 0.0].into()).unwrap();
-        _fb.add_color_attachment(masks.clone(), [0.0, 0.0, 0.0].into()).unwrap();
+        let albedo = Texture::new_empty_2d_mutex("gAlbedo", width, height, formats[0], device.clone()).unwrap();
+        let normals = Texture::new_empty_2d_mutex("gNormals", width, height, formats[1], device.clone()).unwrap();
+        let masks = Texture::new_empty_2d_mutex("gMasks", width, height, formats[2], device.clone()).unwrap();
+        let vectors = Texture::new_empty_2d_mutex("gVectors", width, height, formats[3], device.clone()).unwrap();
+        let depth = Texture::new_empty_2d_mutex("gDepth", width, height, formats[4], device.clone()).unwrap();
+
+        albedo.take().clear_color(queue.clone());
+        albedo.take().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
+        albedo.take().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
+        albedo.take().update_sampler();
+        normals.take().clear_color(queue.clone());
+        masks.take().clear_color(queue.clone());
+        vectors.take().clear_color(queue.clone());
+
+        _fb.add_color_attachment(albedo.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
+        _fb.add_color_attachment(normals.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
+        _fb.add_color_attachment(masks.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
         _fb.add_color_attachment(vectors.clone(), [0.0, 0.0, 0.0, 0.0].into()).unwrap();
         _fb.set_depth_attachment(depth.clone(), 1.0.into());
         drop(_fb);
 
-        let formats = [
-            TexturePixelFormat::RGBA8i,
-            TexturePixelFormat::RGBA8i,
-            TexturePixelFormat::RGBA8i,
-            TexturePixelFormat::RGBA16f,
-            TexturePixelFormat::Depth16u
-        ];
         let mut attachments = Vec::new();
         for fmt in formats {
             let img_layout = match fmt {
@@ -149,17 +160,26 @@ pub struct Renderer
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
 
-    _draw_list : Vec<(MeshRef, TextureRef, ShaderProgramRef, Mat4)>,
+    _draw_list : Vec<RcBox<dyn AbstractVisualObject>>,
     
     _framebuffers : Vec<FramebufferRef>,
     _screen_plane : MeshRef,
-    _screen_plane_shader : ShaderProgramRef,
+    //_screen_plane_shader : ShaderProgramRef,
     _gbuffer : GBuffer,
     _postprocess_pass : Arc<RenderPass>,
     _aspect : f32,
-    _camera : CameraUniform,
+    _camera : Option<RcBox<CameraObject>>,
 
-    _postprocessor : RenderPostprocessingGraph,
+    _postprocessor : Postprocessor,
+    _timer : UniformTime
+}
+
+impl Renderer
+{
+    pub fn postprocessor(&mut self) -> &mut Postprocessor
+    {
+        &mut self._postprocessor
+    }
 }
 
 #[allow(dead_code)]
@@ -186,11 +206,11 @@ impl Renderer
             })
             .min_by_key(|(p, _)| {
                 match p.properties().device_type {
-                    PhysicalDeviceType::DiscreteGpu => 5,
-                    PhysicalDeviceType::IntegratedGpu => 1,
-                    PhysicalDeviceType::VirtualGpu => 2,
-                    PhysicalDeviceType::Cpu => 3,
-                    PhysicalDeviceType::Other => 4,
+                    PhysicalDeviceType::DiscreteGpu => 1,
+                    PhysicalDeviceType::IntegratedGpu => 0,
+                    PhysicalDeviceType::VirtualGpu => 3,
+                    PhysicalDeviceType::Cpu => 4,
+                    PhysicalDeviceType::Other => 5,
                 }
             })
             .unwrap();
@@ -237,10 +257,10 @@ impl Renderer
             AttachmentDesc {
                 format: swapchain.format(),
                 samples: SampleCount::Sample1,
-                load: vulkano::render_pass::LoadOp::DontCare,
+                load: vulkano::render_pass::LoadOp::Clear,
                 store: vulkano::render_pass::StoreOp::Store,
-                stencil_load: vulkano::render_pass::LoadOp::Clear,
-                stencil_store: vulkano::render_pass::StoreOp::Store,
+                stencil_load: vulkano::render_pass::LoadOp::DontCare,
+                stencil_store: vulkano::render_pass::StoreOp::DontCare,
                 initial_layout: ImageLayout::ColorAttachmentOptimal,
                 final_layout: ImageLayout::ColorAttachmentOptimal,
             },
@@ -248,7 +268,7 @@ impl Renderer
                 format: TexturePixelFormat::Depth16u.vk_format(),
                 samples: SampleCount::Sample1,
                 load: vulkano::render_pass::LoadOp::Clear,
-                store: vulkano::render_pass::StoreOp::DontCare,
+                store: vulkano::render_pass::StoreOp::Store,
                 stencil_load: vulkano::render_pass::LoadOp::Clear,
                 stencil_store: vulkano::render_pass::StoreOp::Store,
                 initial_layout: ImageLayout::DepthStencilAttachmentOptimal,
@@ -264,8 +284,8 @@ impl Renderer
             vec![]
         );
         let final_render_pass = RenderPass::new(device.clone(), final_renderpass).unwrap();
-        
-        let mut result = Renderer {
+
+        let result = Renderer {
             _vk_surface : win,
             _swapchain : swapchain,
             _aspect : dimensions[0] as f32 / dimensions[1] as f32,
@@ -276,28 +296,32 @@ impl Renderer
             _sc_images : images,
             _framebuffers : Vec::new(),
             _screen_plane : Mesh::make_screen_plane(device.clone()).unwrap(),
-            _screen_plane_shader : Self::make_screen_plane_shader(device.clone()),
-            _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, device.clone()),
+            _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, queue.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
-            _camera : CameraUniform::identity(dimensions[0] as f32 / dimensions[1] as f32, 80.0, 0.1, 100.0),
+            _camera : None,
             _sc_textures : Vec::new(),
-            _postprocessor : RenderPostprocessingGraph::new(queue.clone(), dimensions[0] as u16, dimensions[1] as u16)
+            _postprocessor : Postprocessor::new(queue.clone(), dimensions[0] as u16, dimensions[1] as u16),
+            _timer : Default::default()
         };
-        result.resize(dimensions[0] as u16, dimensions[1] as u16);
         result
     }
 
-    pub fn resize(&mut self, width: u16, height: u16)
+    fn resize(&mut self, width: u16, height: u16)
     {
-        self._gbuffer = GBuffer::new(width, height, self._device.clone());
+        self._gbuffer = GBuffer::new(width, height, self._queue.clone());
+        //self.update_swapchain();
         /* Создание узлов и связей графа постобработки */
         /* На данный момент это размытие в движении */
         self._postprocessor.reset();
-        let acc = self._postprocessor.acc_mblur(width, height);  // Создание ноды размытия в движении
-        self._postprocessor.link_stages(acc, 0, acc, 2);  // Соединение накопительного выхода со входом ноды
-        self._postprocessor.link_stages(acc, 1, 0, 0);    // Соединение ноды с выходом.
+        let rh = self._postprocessor.rolling_hills(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();
+        let acc = self._postprocessor.acc_mblur_new(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
+        self._postprocessor.link_stages(rh, 0, acc, format!("background"));
+        self._postprocessor.link_stages(acc, 1, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
+        let mut camera = self._camera.as_ref().unwrap().lock().unwrap();
+        camera.set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        
     }
 
     pub fn width(&self) -> u16
@@ -308,6 +332,13 @@ impl Renderer
     pub fn height(&self) -> u16
     {
         self._vk_surface.window().inner_size().height as u16
+    }
+
+    pub fn update_timer(&mut self, timer: &UniformTime)
+    {
+        //self._timer = timer.clone();
+        self._postprocessor.timer = timer.clone();
+        self._postprocessor.uniform_to_all(&format!("timer"), timer);
     }
 
     /// Обновление swapchain изображений
@@ -322,7 +353,7 @@ impl Renderer
                 Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
             };
         self._aspect = dimensions[0] as f32 / dimensions[1] as f32;
-        let db = Texture::new_empty_2d("depth", dimensions[0] as u16, dimensions[1] as u16, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
+        let db = Texture::new_empty_2d_mutex("depth", dimensions[0] as u16, dimensions[1] as u16, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
         
         self._swapchain = new_swapchain;
         let dimensions = new_images[0].dimensions().width_height();
@@ -332,6 +363,9 @@ impl Renderer
         for image in new_images
         {
             let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._device.clone()).unwrap();
+            cb.take_mut().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
+            cb.take_mut().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
+            cb.take_mut().update_sampler();
             let fb = Framebuffer::new(dimensions[0] as u16, dimensions[1] as u16);
             fb.take_mut().add_color_attachment(cb.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
             fb.take_mut().set_depth_attachment(db.clone(), 1.0.into());
@@ -348,9 +382,9 @@ impl Renderer
     }
 
     /// Передаёт объект для растеризации
-    pub fn draw(&mut self, mesh : MeshRef, tex : TextureRef, shader : ShaderProgramRef, transform : Mat4)
+    pub fn draw(&mut self, obj: RcBox<dyn AbstractVisualObject>)
     {
-        self._draw_list.push((mesh, tex, shader, transform));
+        self._draw_list.push(obj);
     }
 
     /// Фомирует буфер команд GPU
@@ -362,61 +396,18 @@ impl Renderer
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
         let gbuffer_rp = &self._gbuffer._geometry_pass;
-        let gbuffer_fb = &self._gbuffer._frame_buffer;
-        let geom_pass = Subpass::from(gbuffer_rp.clone(), 0).unwrap();
-
+        let gbuffer_fb = &mut *self._gbuffer._frame_buffer.take_mut();
+        
         command_buffer_builder
-            .bind_framebuffer(gbuffer_fb.clone(), gbuffer_rp.clone()).unwrap();
-
-        let mut shid = -1;
-        for (mesh, texture, shader, transform) in &self._draw_list
+            .bind_framebuffer(gbuffer_fb, gbuffer_rp.clone()).unwrap();
+        
+        let camera_data = self._camera.as_ref().unwrap().lock().unwrap().uniform_data();
+        for _obj in &self._draw_list
         {
-            if shader.box_id() != shid {
-                shid = shader.box_id();
-                shader.take_mut().make_pipeline(geom_pass.clone());
-                command_buffer_builder
-                    .bind_shader_program(shader);
-            }
-            let tr = GOTransfotmUniform {
-                transform : transform.clone(),
-                transform_prev : transform.clone()
-            };
-
-            let mut shd = shader.take_mut();
-            shd.uniform(&tr, 0);
-            shd.uniform(&self._camera, 0);
-            shd.uniform(texture, 1);
-            drop(shd);
-            command_buffer_builder.bind_shader_uniforms(shader);
-            
-            command_buffer_builder.bind_mesh(mesh);
+            let obj = _obj.lock().unwrap();
+            obj.draw(&mut command_buffer_builder, &camera_data, gbuffer_rp.clone(), 0).unwrap();
         }
 
-        command_buffer_builder.end_render_pass().unwrap();
-        command_buffer_builder.build().unwrap()
-    }
-
-    /// Тестовая функция постобработки. Просто пропускает изображение через шейдер.
-    fn postprocess_pass(&self, sci_index : usize) -> PrimaryAutoCommandBuffer
-    {
-        let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
-            self._device.clone(),
-            self._queue.family(),
-            CommandBufferUsage::OneTimeSubmit,
-        ).unwrap();
-        let subpass = vulkano::render_pass::Subpass::from(self._postprocess_pass.clone(), 0).unwrap();
-        
-        let mut shd = self._screen_plane_shader.take_mut();
-        shd.make_pipeline(subpass);
-        shd.uniform(&self._gbuffer._albedo, 1);
-        drop(shd);
-
-        command_buffer_builder
-            .bind_framebuffer(self._framebuffers[sci_index].clone(), self._postprocess_pass.clone()).unwrap()
-            .bind_shader_program(&self._screen_plane_shader)
-            .bind_shader_uniforms(&self._screen_plane_shader)
-            .bind_mesh(&self._screen_plane);
-        
         command_buffer_builder.end_render_pass().unwrap();
         command_buffer_builder.build().unwrap()
     }
@@ -428,6 +419,7 @@ impl Renderer
         if self._need_to_update_sc {
             self.update_swapchain();
             self._need_to_update_sc = false;
+            return;
         }
         let (image_num, suboptimal, acquire_future) =
         match swapchain::acquire_next_image(self._swapchain.clone(), None) {
@@ -444,13 +436,18 @@ impl Renderer
             self._need_to_update_sc = true;
         }
         
-        self._postprocessor.set_input(1, 1, &self._gbuffer._albedo);
-        self._postprocessor.set_output(0, self._sc_textures[image_num].clone());
+        // Передача входов в постобработку
+        self._postprocessor.uniform_to_all(&format!("image"), &self._gbuffer._albedo);
+        self._postprocessor.uniform_to_all(&format!("vectors"), &self._gbuffer._vectors);
 
-        let pp_command_buffer = self._postprocessor.execute_graph();
+        // Подключение swapchain-изображения в качестве выхода
+        self._postprocessor.set_output(format!("swapchain_out"), self._sc_textures[image_num].clone());
+        
+        // Построение прохода геометрии
         let gp_command_buffer = self.build_geametry_pass();
+        // Построение прохода постобработки
+        let pp_command_buffer = self._postprocessor.execute_graph();
 
-        //let mut f2 : Option<vulkano::command_buffer::CommandBufferExecFuture<_, _>>;
         let future = self._frame_finish_event
             .take().unwrap()
             .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
@@ -472,6 +469,7 @@ impl Renderer
                 self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
             }
         };
+        
     }
 
     pub fn queue(&self) -> &Arc<Queue>
@@ -484,36 +482,8 @@ impl Renderer
         &self._device
     }
 
-    /// Создаёт шейдер для тестовой потобработки.
-    fn make_screen_plane_shader(device: Arc<Device>) -> ShaderProgramRef
+    pub fn set_camera(&mut self, camera: RcBox<CameraObject>)
     {
-        let mut v_builder = Shader::builder(ShaderType::Vertex, device.clone());
-        let mut f_builder = Shader::builder(ShaderType::Fragment, device.clone());
-        v_builder
-            .default_vertex_attributes()
-            .output("coords", AttribType::FVec2)
-            .code("
-                void main() {
-                    coords = v_pos.xy*0.5+0.5;
-                    gl_Position = vec4(v_pos, 1.0);
-                }
-            ");
-        f_builder
-            .input("coords", AttribType::FVec2)
-            .uniform_sampler2d("img", 1, false)
-            //.uniform_sampler2d("prev", 1, false)
-            .output("fragColor", AttribType::FVec4)
-            .code("
-                void main() {
-                    //vec4 a = texture(prev, coords);
-                    vec4 b = texture(img, coords);
-                    fragColor = b; //mix(a, b, 0.1);
-                }
-            ")
-        ;
-        let mut sh_builder = ShaderProgram::builder();
-        sh_builder.vertex(&v_builder.build().unwrap());
-        sh_builder.fragment(&f_builder.build().unwrap());
-        sh_builder.build(device.clone()).unwrap()
+        self._camera = Some(camera);
     }
 }
