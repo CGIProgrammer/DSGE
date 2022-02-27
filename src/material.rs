@@ -365,10 +365,10 @@ struct MaterialShaderSet
 static DEFAULT_PBR : &str = "void principled() {
     //float duv = length(abs(dFdx(texture_uv)) + abs(dFdx(texture_uv))) * 10.0;
     
-    #ifndef fDiffuseMap
-    mDiffuse.rgb = material.diffuse.rgb;
-    #else
+    #ifdef diffuse_map
     mDiffuse = texture(fDiffuseMap, texture_uv);
+    #else
+    mDiffuse.rgb = material.diffuse.rgb;
     #endif
 
     #ifdef normal_map

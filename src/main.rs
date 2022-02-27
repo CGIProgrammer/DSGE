@@ -82,7 +82,7 @@ impl Application {
         let mut material = material::MaterialBuilder::start(renderer.device().clone());
         material
             .define("diffuse_map", "")
-            //.add_texture("fDiffuseMap", texture.clone())
+            .add_texture("fDiffuseMap", RcBox::construct(texture))
             .add_numeric_parameter("diffuse", [1.0, 1.0, 1.0, 1.0].into())
             .add_numeric_parameter("roughness", 1.0.into())
             .add_numeric_parameter("glow", 1.0.into())

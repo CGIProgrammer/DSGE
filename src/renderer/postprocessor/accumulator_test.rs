@@ -27,7 +27,7 @@ impl Postprocessor
 
                 vec4 original = texture(image, teapot_uv);
                 vec4 past = texture(accumulator, teapot_past_uv);
-                accumulator_out = mix(past, original, clamp(0.1 + past.a, 0.0, 1.0));
+                accumulator_out = mix(past, original, 0.1);
 
                 if (timer.frame==0 || any(isnan(accumulator_out))) {
                     accumulator_out = vec4(0.0);
