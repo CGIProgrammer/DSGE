@@ -1,9 +1,8 @@
 use super::Postprocessor;
-use super::super::super::shader::*;
-use super::{RenderResolution, StageIndex};
-use crate::texture::TexturePixelFormat;
-use crate::time::{Timer, UniformTime};
+use super::{StageIndex};
+use crate::texture::{TexturePixelFormat, TextureFilter};
 
+#[allow(dead_code)]
 impl Postprocessor
 {
 	pub fn rolling_hills(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
@@ -13,7 +12,7 @@ impl Postprocessor
 			.dimenstions(width, height)
 			//.input("image")
 			//.input("accumulator")
-            .output("swapchain_out", sc_format, false)
+            .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
 			.code("
 #define THRESHOLD .003
 #define MOD2 vec2(3.07965, 7.4235)

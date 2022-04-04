@@ -8,7 +8,12 @@ use vulkano::descriptor_set::PersistentDescriptorSet;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::buffer::{CpuBufferPool, CpuAccessibleBuffer, BufferUsage};
+use vulkano::pipeline::PipelineBindPoint;
+
 use crate::references::*;
+use crate::texture::{TextureType, TextureTypeGlsl};
 use crate::vulkano::pipeline::Pipeline as VkPipeline;
 use vulkano::device::Device;
 
@@ -29,18 +34,25 @@ pub trait ShaderStructUniform
     fn texture(&self) -> Option<&crate::texture::TextureRef>; // Позволяет получить текстуру, если структура является таковой
 }
 
+struct ShaderSourceUniform
+{
+    name: String,
+    type_name: String,
+    set: usize,
+    binding: usize,
+}
+
 /// Структура для построения GLSL шейдера и компиляции его в SPIR-V
 pub struct Shader
 {
-    glsl_version: GLSLVersion,
-    sh_type: ShaderType,
-    device: Arc<vulkano::device::Device>,
-    module: Option<Arc<vulkano::shader::ShaderModule>>,
-    source: String,
-    inputs    : HashMap<String, AttribType>,
-    outputs   : HashMap<String, AttribType>,
-    uniforms_types  : HashMap<String, String>,
-    uniforms_locations : HashMap<String, (usize, usize)>,
+    glsl_version : GLSLVersion,
+    sh_type      : ShaderType,
+    device       : Arc<vulkano::device::Device>,
+    module       : Option<Arc<vulkano::shader::ShaderModule>>,
+    source       : String,
+    inputs       : HashMap<String, AttribType>,
+    outputs      : HashMap<String, AttribType>,
+    uniforms     : HashMap<String, ShaderSourceUniform>,
 }
 
 impl std::fmt::Debug for Shader
@@ -82,14 +94,13 @@ impl Shader
         
         Self {
             glsl_version : gl_version,
-            sh_type : shader_type,
-            module : None,
-            device : device,
-            source : source,
-            inputs : HashMap::new(),
-            outputs : HashMap::new(),
-            uniforms_types : HashMap::new(),
-            uniforms_locations : HashMap::new()
+            sh_type  : shader_type,
+            module   : None,
+            device   : device,
+            source   : source,
+            inputs   : HashMap::new(),
+            outputs  : HashMap::new(),
+            uniforms : HashMap::new(),
         }
     }
 
@@ -106,113 +117,117 @@ impl Shader
             .input("v_grp", AttribType::UVec3)
     }
 
-    /*/// Объявляет буфер-хранилище
-    pub fn storage_buffer<T: ShaderStructUniform>(&mut self, name: &str, set: usize) -> &mut Self
-    {
-        let mut uniforms_in_set = match self.uniforms.get(&set) { Some(uc) => uc.clone(), None => 0 };
-        self.source += format!("layout (std140, set = {}, binding = {}) readonly buffer {} {} {};\n", set, uniforms_in_set, T::glsl_type_name(), T::structure(), name).as_str();
-        uniforms_in_set += 1;
-        self.uniforms.insert(set, uniforms_in_set);
-        self
-    }*/
-
     fn last_set_index(&self, set: usize) -> usize
     {
-        match self.uniforms_locations.values().filter(|val| {val.0 == set}).max_by_key(|val1| { val1.1 })
+        match self.uniforms.values().filter(|val| {val.set == set}).max_by_key(|val1| { val1.binding })
         {
-            Some((_, binding)) => *binding+1,
+            Some(ShaderSourceUniform{binding,..}) => *binding+1,
             None => 0
         }
     }
 
-    /// Объявление uniform-структуры
-    pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str, set: usize, binding : usize, array_size: usize) -> &mut Self
+    /// Объявляет буфер-хранилище
+    pub fn storage_buffer<T: ShaderStructUniform>(&mut self, name: &str, set: usize, binding : usize) -> Result<&mut Self, String>
     {
-        if array_size>0 {
-            self.source += format!("layout (std140, set = {}, binding = {}) uniform {} {} {}[{}];\n", set, binding, T::glsl_type_name(), T::structure(), name, array_size).as_str();
-        } else {
-            self.source += format!("layout (std140, set = {}, binding = {}) uniform {} {} {};\n", set, binding, T::glsl_type_name(), T::structure(), name).as_str();
+        let name = name.to_string();
+        if self.uniforms.contains_key(&name) {
+            return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
         }
-        self.uniforms_types.insert(name.to_string(), T::glsl_type_name());
-        self.uniforms_locations.insert(name.to_string(), (set, binding));
-        self
+        let uniform_source = ShaderSourceUniform{
+            name: name.clone(),
+            type_name: T::glsl_type_name(),
+            set: set,
+            binding: binding
+        };
+        match self.uniforms.get(&uniform_source.name)
+        {
+            Some(ShaderSourceUniform{type_name,..}) => return Err(format!("Переменная с именем {} уже есть в этом шейдере.", type_name)),
+            None => ()
+        };
+        self.source += format!("layout (std140, set = {}, binding = {}) readonly buffer {} {} {};\n", set, binding, uniform_source.type_name, T::structure(), name).as_str();
+        self.uniforms.insert(uniform_source.name.clone(), uniform_source);
+        Ok(self)
+    }
+
+    pub fn storage_buffer_autoincrement<T: ShaderStructUniform>(&mut self, name: &str, set: usize) -> Result<&mut Self, String>
+    {
+        let binding = self.last_set_index(set);
+        self.storage_buffer::<T>(name, set, binding)
+    }
+
+    /// Объявление uniform-структуры
+    pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str, set: usize, binding : usize) -> Result<&mut Self, String>
+    {
+        let name = name.to_string();
+        if self.uniforms.contains_key(&name) {
+            return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
+        }
+        let uniform_source = ShaderSourceUniform{
+            name: name.clone(),
+            type_name: T::glsl_type_name(),
+            set: set,
+            binding: binding
+        };
+        self.source += format!("layout (std140, set = {}, binding = {}) uniform {} {} {};\n", set, binding, uniform_source.type_name, T::structure(), name).as_str();
+        self.uniforms.insert(name.clone(), uniform_source);
+        Ok(self)
     }
 
     /// Объявление uniform-структуры с автоопределением расположения
-    pub fn uniform_autoincrement<T: ShaderStructUniform>(&mut self, name: &str, set: usize, array_size: usize) -> &mut Self
+    pub fn uniform_autoincrement<T: ShaderStructUniform>(&mut self, name: &str, set: usize) -> Result<&mut Self, String>
     {
         let binding = self.last_set_index(set);
-        self.uniform::<T>(name, set, binding, array_size)
+        self.uniform::<T>(name, set, binding)
     }
 
     /// Объявление uniform-структуры с явной передачей кода структуры
-    pub fn uniform_structure(&mut self, name: &str, _type: &str, structure: &str, set: usize, binding: usize) -> &mut Self
+    pub fn uniform_structure(&mut self, name: &str, _type: &str, structure: &str, set: usize, binding: usize) -> Result<&mut Self, String>
     {
+        let name = name.to_string();
+        if self.uniforms.contains_key(&name) {
+            return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
+        }
+        let uniform_source = ShaderSourceUniform{
+            name: name.clone(),
+            type_name: _type.to_string(),
+            set: set,
+            binding: binding
+        };
         self.source += format!("layout (std140, set = {}, binding = {}) uniform {} {} {};\n", set, binding, _type, structure, name).as_str();
-        self.uniforms_types.insert(name.to_string(), _type.to_string());
-        self.uniforms_locations.insert(name.to_string(), (set, binding));
-        self
+        self.uniforms.insert(name.to_string(), uniform_source);
+        Ok(self)
     }
 
     /// Объявление uniform-структуры с явной передачей кода структуры и автоопределением расположения
-    pub fn uniform_structure_autoincrement(&mut self, name: &str, _type: &str, structure: &str, set: usize) -> &mut Self
+    pub fn uniform_structure_autoincrement(&mut self, name: &str, _type: &str, structure: &str, set: usize) -> Result<&mut Self, String>
     {
         let binding = self.last_set_index(set);
         self.uniform_structure(name, _type, structure, set, binding)
     }
 
-    /// Объявление одномерного сэмплера (текстуры)
-    /// - `name` - название внутри шейдера
-    /// - `set` - номер множества uniform-переменных
-    /// - `array` - объявить как массив
-    pub fn uniform_sampler1d(&mut self, name: &str, set: usize, binding: usize, array : bool) -> &mut Self
+    pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureType) -> Result<&mut Self, String>
     {
-        let utype = format!( "sampler1D{}", if array {"Array"} else {""} );
+        let name = name.to_string();
+        if self.uniforms.contains_key(&name) {
+            return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
+        }
+        
+        let utype = dims.glsl_sampler_name().to_string();
+        let uniform_source = ShaderSourceUniform{
+            name: name.clone(),
+            type_name: utype.clone(),
+            set: set,
+            binding: binding
+        };
         self.source += format!("layout (set = {}, binding = {}) uniform {} {};\n", set, binding, utype, name).as_str();
-        self.uniforms_locations.insert(name.to_string(), (set, binding));
-        self.uniforms_types.insert(name.to_string(), utype);
-        self
-    }
-    pub fn uniform_sampler1d_autoincrement(&mut self, name: &str, set: usize, array : bool) -> &mut Self
-    {
-        let binding = self.last_set_index(set);
-        self.uniform_sampler1d(name, set, binding, array)
+        self.uniforms.insert(name, uniform_source);
+        Ok(self)
     }
 
-    /// Объявление двухмерного сэмплера
-    /// - `name` - название внутри шейдера
-    /// - `set` - номер множества uniform-переменных
-    /// - `array` - объявить как массив
-    pub fn uniform_sampler2d(&mut self, name: &str, set: usize, binding: usize, array : bool) -> &mut Self
-    {
-        let utype = format!( "sampler2D{}", if array {"Array"} else {""} );
-        self.source += format!("layout (set = {}, binding = {}) uniform {} {};\n", set, binding, utype, name).as_str();
-        self.uniforms_locations.insert(name.to_string(), (set, binding));
-        self.uniforms_types.insert(name.to_string(), utype);
-        self
-    }
-    pub fn uniform_sampler2d_autoincrement(&mut self, name: &str, set: usize, array : bool) -> &mut Self
+    pub fn uniform_sampler_autoincrement(&mut self, name: &str, set: usize, dims: TextureType) -> Result<&mut Self, String>
     {
         let binding = self.last_set_index(set);
-        self.uniform_sampler2d(name, set, binding, array)
-    }
-
-    /// Объявление трёхмерного сэмплера
-    /// - `name` - название внутри шейдера
-    /// - `set` - номер множества uniform-переменных
-    /// 
-    /// Не может быть массивом
-    pub fn uniform_sampler3d(&mut self, name: &str, set: usize, binding: usize) -> &mut Self
-    {
-        self.source += format!("layout (set = {}, binding = {}) uniform sampler3D {};\n", set, binding, name).as_str();
-        self.uniforms_locations.insert(name.to_string(), (set, binding));
-        self.uniforms_types.insert(name.to_string(), "sampler3D".to_string());
-        self
-    }
-    pub fn uniform_sampler3d_autoincrement(&mut self, name: &str, set: usize) -> &mut Self
-    {
-        let binding = self.last_set_index(set);
-        self.uniform_sampler3d(name, set, binding)
+        self.uniform_sampler(name, set, binding, dims)
     }
 
     /// Объявляет выход шейдера
@@ -361,8 +376,14 @@ impl ShaderProgramBuilder
     /// Фрагментный шейдер
     pub fn fragment(&mut self, shader: &Shader) -> Result<&mut Self, String>
     {
-        let loc_compat = Self::check_uniforms_compatibility(&self.uniforms_locations, &shader.uniforms_locations);
-        let type_compat = Self::check_uniforms_compatibility(&self.uniforms_types, &shader.uniforms_types);
+        let mut uniforms_locations = HashMap::new();
+        let mut uniforms_types = HashMap::new();
+        for (uname, ShaderSourceUniform{set, binding, type_name, ..}) in &shader.uniforms {
+            uniforms_locations.insert(uname.clone(), (*set, *binding));
+            uniforms_types.insert(uname.clone(), type_name.clone());
+        }
+        let loc_compat = Self::check_uniforms_compatibility(&self.uniforms_locations, &uniforms_locations);
+        let type_compat = Self::check_uniforms_compatibility(&self.uniforms_types, &uniforms_types);
         
         if !loc_compat {
             return Err(format!("Фрагментный шейдер использует те же имена uniform-переменных с разным расположением."));
@@ -375,10 +396,10 @@ impl ShaderProgramBuilder
         self.fragment_shader_source = shader.source.clone();
         self.fragment_shader = shader.module.clone();
         self.fragment_outputs = shader.outputs.clone();
-        for (name, location) in &shader.uniforms_locations {
+        for (name, location) in &uniforms_locations {
             self.uniforms_locations.insert(name.clone(), *location);
         }
-        for (name, _type) in &shader.uniforms_types {
+        for (name, _type) in &uniforms_types {
             self.uniforms_types.insert(name.clone(), _type.clone());
         }
         Ok(self)
@@ -387,8 +408,15 @@ impl ShaderProgramBuilder
     /// Вершинный шейдер
     pub fn vertex(&mut self, shader: &Shader) -> Result<&mut Self, String>
     {
-        let loc_compat = Self::check_uniforms_compatibility(&self.uniforms_locations, &shader.uniforms_locations);
-        let type_compat = Self::check_uniforms_compatibility(&self.uniforms_types, &shader.uniforms_types);
+        let mut uniforms_locations = HashMap::new();
+        let mut uniforms_types = HashMap::new();
+        for (uname, ShaderSourceUniform{set, binding, type_name, ..}) in &shader.uniforms {
+            uniforms_locations.insert(uname.clone(), (*set, *binding));
+            uniforms_types.insert(uname.clone(), type_name.clone());
+        }
+
+        let loc_compat = Self::check_uniforms_compatibility(&self.uniforms_locations, &uniforms_locations);
+        let type_compat = Self::check_uniforms_compatibility(&self.uniforms_types, &uniforms_types);
         
         if !loc_compat {
             return Err(format!("Вершинный шейдер использует существующие имена uniform-переменных с разными расположениями."));
@@ -400,10 +428,10 @@ impl ShaderProgramBuilder
         self.hash ^= shader.hash();
         self.vertex_shader_source = shader.source.clone();
         self.vertex_shader = shader.module.clone();
-        for (name, location) in &shader.uniforms_locations {
+        for (name, location) in &uniforms_locations {
             self.uniforms_locations.insert(name.clone(), *location);
         }
-        for (name, _type) in &shader.uniforms_types {
+        for (name, _type) in &uniforms_types {
             self.uniforms_types.insert(name.clone(), _type.clone());
         }
         Ok(self)
@@ -412,13 +440,27 @@ impl ShaderProgramBuilder
     /// Пара тесселяционных шейдеров
     pub fn tesselation(&'static mut self, eval: &Shader, control: &Shader) -> Result<&mut Self, String>
     {
+        let mut eval_uniforms_locations = HashMap::new();
+        let mut eval_uniforms_types = HashMap::new();
+        let mut control_uniforms_locations = HashMap::new();
+        let mut control_uniforms_types = HashMap::new();
+
+        for (uname, ShaderSourceUniform{set, binding, type_name, ..}) in &eval.uniforms {
+            eval_uniforms_locations.insert(uname.clone(), (*set, *binding));
+            eval_uniforms_types.insert(uname.clone(), type_name.clone());
+        }
+        for (uname, ShaderSourceUniform{set, binding, type_name, ..}) in &control.uniforms {
+            control_uniforms_locations.insert(uname.clone(), (*set, *binding));
+            control_uniforms_types.insert(uname.clone(), type_name.clone());
+        }
+
         let loc_compat =
-            Self::check_uniforms_compatibility(&self.uniforms_locations, &eval.uniforms_locations) && 
-            Self::check_uniforms_compatibility(&self.uniforms_locations, &control.uniforms_locations);
+            Self::check_uniforms_compatibility(&self.uniforms_locations, &eval_uniforms_locations) && 
+            Self::check_uniforms_compatibility(&self.uniforms_locations, &control_uniforms_locations);
 
         let type_compat =
-            Self::check_uniforms_compatibility(&self.uniforms_types, &eval.uniforms_types) &&
-            Self::check_uniforms_compatibility(&self.uniforms_types, &control.uniforms_types);
+            Self::check_uniforms_compatibility(&self.uniforms_types, &eval_uniforms_types) &&
+            Self::check_uniforms_compatibility(&self.uniforms_types, &control_uniforms_types);
         
         if !loc_compat {
             return Err(format!("Шейдеры тесселяции использует одни и те же имена uniform-переменных с разными расположениями."));
@@ -435,16 +477,16 @@ impl ShaderProgramBuilder
         self.tess_controll = control.module.clone();
         self.tess_eval = eval.module.clone();
 
-        for (name, location) in &eval.uniforms_locations {
+        for (name, location) in &eval_uniforms_locations {
             self.uniforms_locations.insert(name.clone(), *location);
         }
-        for (name, location) in &control.uniforms_locations {
+        for (name, location) in &control_uniforms_locations {
             self.uniforms_locations.insert(name.clone(), *location);
         }
-        for (name, _type) in &eval.uniforms_types {
+        for (name, _type) in &eval_uniforms_types {
             self.uniforms_types.insert(name.clone(), _type.clone());
         }
-        for (name, _type) in &control.uniforms_types {
+        for (name, _type) in &control_uniforms_types {
             self.uniforms_types.insert(name.clone(), _type.clone());
         }
 
@@ -697,14 +739,14 @@ impl ShaderProgram
         Ok(())
     }
     
-    /*pub fn storage_buffer<T>(&mut self, obj: &'static T, set_num: usize, binding_num: usize)
+    pub fn storage_buffer<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
         where T: std::marker::Send + std::marker::Sync + Copy + 'static
     {
         if self.uniforms_sets.contains_key(&set_num) {
             return;
         }
-        let desc_set_layout = self.pipeline.as_ref().unwrap().layout().descriptor_set_layouts().get(set_num).unwrap();
-        let uniform_buffer = CpuAccessibleBuffer::from_data(self.device.clone(), BufferUsage::all(), false, obj).unwrap();
+        let uniform_buffer = CpuAccessibleBuffer::from_data(self.device.clone(), BufferUsage::storage_buffer(), false, obj).unwrap();
+        let ub = WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer);
 
         match self.write_set_descriptors.get_mut(&set_num)
         {
@@ -714,19 +756,31 @@ impl ShaderProgram
                         set_buffer.push(WriteDescriptorSet::none(binding as u32));
                     }
                 }
-                set_buffer.insert(binding_num, uniform_buffer);
+                set_buffer.insert(binding_num, ub);
             },
             None => {
                 let mut uniform_set = vec![];
                 for binding in 0..binding_num {
                     uniform_set.push(WriteDescriptorSet::none(binding as u32));
                 }
-                uniform_set.insert(binding_num, uniform_buffer);
+                uniform_set.insert(binding_num, ub);
                 self.write_set_descriptors.insert(set_num, uniform_set);
             }
         };
-    }*/
+    }
     
+    pub fn storage_buffer_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
+        where T: std::marker::Send + std::marker::Sync + Copy + 'static
+    {
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => val,
+            None => return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name))
+        };
+        self.storage_buffer(obj, set_num, binding_num);
+        Ok(())
+    }
+
     /// Перестраивает `Pipeline` для использования с заданным `Subpass`'ом.
     /// Необходимо вызывать каждый раз при использовании нового `Subpass`'а перед вызовами `uniform` и `uniform_structure`.
     /// 
@@ -769,23 +823,18 @@ impl ShaderProgram
         self.pipeline = Some(pipeline.build(self.device.clone()).unwrap());
     }
 
-    /*
     /// Собирает дескрипторы наборов uniform-переменных (`PersistentDescriptorSet`).
     /// Полезно для формирования неизменяемого списка текстур материала
     pub fn build_uniform_sets(&mut self)
     {
-        let mut sets = Vec::new();
         let layouts = self.pipeline.as_ref().unwrap().layout().descriptor_set_layouts();
-        for (set_num, _) in &self.write_set_descriptors {
-            sets.push(set_num.clone());
-        }
-        for set_num in sets {
-            //println!("building set {}", set_num);
+        while self.write_set_descriptors.len() > 0 {
+            let set_num = *self.write_set_descriptors.keys().nth(0).unwrap();
             let set_desc = self.write_set_descriptors.remove(&set_num).unwrap();
             let pers_decc_set = PersistentDescriptorSet::new(layouts.get(set_num).unwrap().clone(), set_desc).unwrap();
             self.uniforms_sets.insert(set_num, pers_decc_set);
         }
-    }*/
+    }
 
     /// Возвращает имена выходов фрагментного фейдера
     #[allow(dead_code)]
@@ -794,10 +843,6 @@ impl ShaderProgram
         &self.fragment_outputs
     }
 }
-
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
-use vulkano::buffer::CpuBufferPool;
-use vulkano::pipeline::PipelineBindPoint;
 
 /// trait для удобной передачи шейдеров и uniform-переменные в `AutoCommandBufferBuilder`
 pub trait ShaderProgramBinder
@@ -821,8 +866,8 @@ impl ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
 
     fn bind_shader_uniforms(&mut self, shader: &mut ShaderProgram) -> Result<&mut Self, String>
     {
-        let layouts = shader.pipeline.as_ref().unwrap().layout().descriptor_set_layouts();
-        
+        let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
+        let layouts = pipeline_layout.descriptor_set_layouts();
         while shader.write_set_descriptors.len() > 0 {
             let set_num = *shader.write_set_descriptors.keys().last().unwrap();
             let descriptor_writes = shader.write_set_descriptors.remove(&set_num).unwrap();
@@ -832,15 +877,15 @@ impl ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
                 Some(layout) => layout,
                 None => return Err(format!("В шейдере есть неиспользуемые uniform-переменные. Набор {} не используется нигде.", set_num))
             };
-            /*let mut desc_writes = vec![];
-            for (_, dw) in descriptor_writes {
-                desc_writes.push(dw);
-            };*/
+            
             let set = PersistentDescriptorSet::new(layout.clone(), descriptor_writes);
             match set {
-                Ok(set) => self.bind_descriptor_sets(PipelineBindPoint::Graphics, shader.pipeline.as_ref().unwrap().layout().clone(), set_num as u32, set),
+                Ok(set) => self.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), set_num as u32, set),
                 Err(e) => return Err(format!("Не удалось сформировать набор uniform-переменных {:?}", e))
             };
+        }
+        for (set_num, desc_set) in &shader.uniforms_sets {
+            self.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), *set_num as u32, desc_set.clone());
         }
         Ok(self)
     }

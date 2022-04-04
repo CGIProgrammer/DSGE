@@ -16,7 +16,7 @@ use winit::window::{Window};
 
 use std::sync::Arc;
 
-use crate::texture::{Texture, TexturePixelFormat, TextureRef};
+use crate::texture::{Texture, TexturePixelFormat, TextureDimensions, TextureRef};
 use crate::framebuffer::{Framebuffer, FramebufferRef, FramebufferBinder};
 use crate::mesh::{MeshRef, Mesh};
 use crate::shader::ShaderStructUniform;
@@ -75,11 +75,16 @@ impl GBuffer
 
         let fb = Framebuffer::new(width, height);
         let mut _fb = fb.take_mut();
-        let albedo = Texture::new_empty_2d_mutex("gAlbedo", width, height, formats[0], device.clone()).unwrap();
-        let normals = Texture::new_empty_2d_mutex("gNormals", width, height, formats[1], device.clone()).unwrap();
-        let masks = Texture::new_empty_2d_mutex("gMasks", width, height, formats[2], device.clone()).unwrap();
-        let vectors = Texture::new_empty_2d_mutex("gVectors", width, height, formats[3], device.clone()).unwrap();
-        let depth = Texture::new_empty_2d_mutex("gDepth", width, height, formats[4], device.clone()).unwrap();
+        let dims = TextureDimensions::Dim2d{
+            width: width as _,
+            height: height as _,
+            array_layers: 1
+        };
+        let albedo = Texture::new_empty_mutex("gAlbedo", dims, formats[0], device.clone()).unwrap();
+        let normals = Texture::new_empty_mutex("gNormals", dims, formats[1], device.clone()).unwrap();
+        let masks = Texture::new_empty_mutex("gMasks", dims, formats[2], device.clone()).unwrap();
+        let vectors = Texture::new_empty_mutex("gVectors", dims, formats[3], device.clone()).unwrap();
+        let depth = Texture::new_empty_mutex("gDepth", dims, formats[4], device.clone()).unwrap();
 
         albedo.take().clear_color(queue.clone());
         albedo.take().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
@@ -174,6 +179,7 @@ pub struct Renderer
     _timer : UniformTime
 }
 
+#[allow(dead_code)]
 impl Renderer
 {
     pub fn postprocessor(&mut self) -> &mut Postprocessor
@@ -311,13 +317,12 @@ impl Renderer
     fn resize(&mut self, width: u16, height: u16)
     {
         self._gbuffer = GBuffer::new(width, height, self._queue.clone());
-        //self.update_swapchain();
         /* Создание узлов и связей графа постобработки */
         /* На данный момент это размытие в движении */
         self._postprocessor.reset();
-        let rh = self._postprocessor.rolling_hills(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();
+        //let rh = self._postprocessor.rolling_hills(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();
         let acc = self._postprocessor.acc_mblur_new(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
-        self._postprocessor.link_stages(rh, 0, acc, format!("background"));
+        //self._postprocessor.link_stages(rh, 0, acc, format!("background"));
         self._postprocessor.link_stages(acc, 1, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
         let mut camera = self._camera.as_ref().unwrap().lock().unwrap();
         camera.set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
@@ -353,7 +358,12 @@ impl Renderer
                 Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
             };
         self._aspect = dimensions[0] as f32 / dimensions[1] as f32;
-        let db = Texture::new_empty_2d_mutex("depth", dimensions[0] as u16, dimensions[1] as u16, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
+        let dims = TextureDimensions::Dim2d{
+            width: dimensions[0] as u32,
+            height: dimensions[1] as u32,
+            array_layers: 0
+        };
+        let db = Texture::new_empty_mutex("depth", dims, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
         
         self._swapchain = new_swapchain;
         let dimensions = new_images[0].dimensions().width_height();

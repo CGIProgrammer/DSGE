@@ -19,14 +19,16 @@ use vulkano::device::{Queue, Device};
 use vulkano::image::{
     ImmutableImage,
     AttachmentImage,
-    StorageImage,
     MipmapsCount,
     view::{
         ImageView,
         ImageViewAbstract
     }
 };
+
 pub use vulkano::image::ImageDimensions as TextureDimensions;
+pub use vulkano::image::view::ImageViewType as TextureType;
+
 pub use vulkano::sampler::{
     Sampler as TextureSampler,
     Filter as TextureFilter,
@@ -73,7 +75,15 @@ pub struct Texture
     min_lod: f32,
     max_lod: f32,
 }
-
+/*
+impl std::hash::Hash for Texture
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self._vk_image_view.hash(state);
+    }
+}
+*/
 impl ShaderStructUniform for TextureRef
 {
     fn glsl_type_name() -> String
@@ -139,55 +149,29 @@ impl Texture
         &self.name
     }
 
-    /// Создаёт линейный массив пикселей, обёрнутый в мьютекс
-    pub fn new_empty_1d_mutex(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    pub fn ty(&self) -> TextureType
     {
-        Ok(RcBox::construct(Self::new_empty_1d(name, length, pix_fmt, device)?))
+        self._vk_image_view.ty()
     }
 
-    /// Создаёт линейный массив пикселей заданной длины
-    pub fn new_empty_1d(name: &str, length: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
+    /// Создаёт пустое изображение, которое можно использовать для записи
+    pub fn new_empty(name: &str, dims: TextureDimensions, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
     {
-        let dims = TextureDimensions::Dim1d{width: length as u32, array_layers: 1};
         let mut texture_builder = Texture::builder();
         texture_builder.name(name);
         texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
-    /// Создаёт плоское 2D изображение, обёрнутое в мьютекс
-    pub fn new_empty_2d_mutex(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
+    /// Тоже что и new_empty, только Texture оборачивается в мьютекс
+    pub fn new_empty_mutex(name: &str, dims: TextureDimensions, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
-        Ok(RcBox::construct(Self::new_empty_2d(name, width, height, pix_fmt, device)?))
-    }
-    
-    /// Создаёт плоское 2D изображение заданой ширины и высоты
-    pub fn new_empty_2d(name: &str, width: u16, height: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
-    {
-        let dims = TextureDimensions::Dim2d{width: width as u32, height: height as u32, array_layers: 1};
-        let mut texture_builder = Texture::builder();
-        texture_builder.name(name);
-        texture_builder.build_mutable(device, pix_fmt, dims)
-    }
-
-    /// Создаёт воксельный 3D массив, обёрнутый в мьютекс
-    pub fn new_empty_3d_mutex(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
-    {
-        Ok(RcBox::construct(Self::new_empty_3d(name, width, height, layers, pix_fmt, device)?))
-    }
-
-    /// Создаёт воксельный 3D массив, заданный шириной, высотой и глубиной
-    pub fn new_empty_3d(name: &str, width: u16, height: u16, layers: u16, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
-    {
-        let dims = TextureDimensions::Dim3d{width: width as u32, height: height as u32, depth: layers as u32};
-        let mut texture_builder = Texture::builder();
-        texture_builder.name(name);
-        texture_builder.build_mutable(device, pix_fmt, dims)
+        Ok(RcBox::construct(Self::new_empty(name, dims, pix_fmt, device)?))
     }
 
     /// Получает формат пикселя текстуры
-    pub fn pix_fmt(&self) -> &TexturePixelFormat
+    pub fn pix_fmt(&self) -> TexturePixelFormat
     {
-        &self._pix_fmt
+        self._pix_fmt
     }
 
     /// Создаёт `TextureRef` на основе `ImageViewAbstract`.
@@ -212,7 +196,7 @@ impl Texture
         Ok(RcBox::construct(Self{
             name : "".to_string(),
 
-            _vk_image_dims : img_dims,
+            _vk_image_dims : img_dims.into(),
             _vk_image_view : img,
             _vk_sampler : sampler,
             _vk_device : device.clone(),
@@ -395,6 +379,11 @@ impl Texture
             TextureDimensions::Dim2d{..} => 1,
             TextureDimensions::Dim3d{width:_, height:_, depth} => depth,
         }
+    }
+
+    pub fn dims(&self) -> TextureDimensions
+    {
+        self._vk_image_dims
     }
 
     /// Обновление сэмплера текстуры
@@ -937,5 +926,27 @@ impl CompressedFormat for KTXHeader {
             _ => 0
         };
         u64s * 8
+    }
+}
+
+pub trait TextureTypeGlsl
+{
+    fn glsl_sampler_name(&self) -> &'static str;
+}
+
+impl TextureTypeGlsl for TextureType
+{
+    fn glsl_sampler_name(&self) -> &'static str
+    {
+        match self
+        {
+            TextureType::Dim1d => "sampler1D",
+            TextureType::Dim1dArray => "sampler1DArray",
+            TextureType::Dim2d => "sampler2D",
+            TextureType::Dim2dArray => "sampler2DArray",
+            TextureType::Cube => "samplerCube",
+            TextureType::Dim3d => "sampler3D",
+            TextureType::CubeArray => "samplerCubeArray",
+        }
     }
 }

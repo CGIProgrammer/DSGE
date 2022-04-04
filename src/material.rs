@@ -150,8 +150,8 @@ impl MaterialBuilder
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET, 0)
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET, 0);
+            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET).unwrap()
+            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET).unwrap();
         
         // Шейдер для скелетной деформации
         // TODO сделать нормальную реализацию. Сейчас это просто копия базового вершинного шейдера материала
@@ -162,8 +162,8 @@ impl MaterialBuilder
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET, 0)
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET, 0);
+            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET).unwrap()
+            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET).unwrap();
 
         builder.fragment_base
             .input("position_prev", AttribType::FVec4)
@@ -202,8 +202,9 @@ impl MaterialBuilder
     /// Добавить текстуру
     pub fn add_texture(&mut self, name: &str, texture: TextureRef) -> &mut Self
     {
-        self.fragment_base.uniform_sampler2d_autoincrement(name, SHADER_TEXTURE_SET, false);
-        self.fragment_shadowmap.uniform_sampler2d_autoincrement(name, SHADER_TEXTURE_SET, false);
+        let ty = texture.take().ty();
+        self.fragment_base.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
+        self.fragment_shadowmap.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
         self.texture_slots.insert(name.to_string(), texture);
         self
     }
@@ -241,6 +242,7 @@ impl MaterialBuilder
             .code(self.defines.as_str())
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
+            .unwrap()
             .code(MESH_DEFAULT_TEMPLATE)
             .build().unwrap();
         
@@ -249,6 +251,7 @@ impl MaterialBuilder
             .code(self.defines.as_str())
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
+            .unwrap()
             .code(MESH_DEFAULT_TEMPLATE)
             .build().unwrap();
 
@@ -257,6 +260,7 @@ impl MaterialBuilder
             .code(self.defines.as_str())
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}\n", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
+            .unwrap()
             .code(self.pbr_code.as_str())
             .code(format!("void main() {{\n{}\n}}\n", PBR_FULL_TEMPLATE).as_str())
             .build().unwrap();
@@ -266,6 +270,7 @@ impl MaterialBuilder
             .code(self.defines.as_str())
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
+            .unwrap()
             .code(self.pbr_code.as_str())
             .code(format!("void main() {{\n{}\n}}\n", PBR_SHADOWMAP_TEMPLATE).as_str())
             .build().unwrap();
@@ -328,7 +333,7 @@ impl Material
     {
         let shader = &mut self.shader_set.base;
         shader.use_subpass(render_pass, subpass_id);
-        //if !shader.is_set_initialized(SHADER_TEXTURE_SET) {
+        if !shader.is_set_initialized(SHADER_TEXTURE_SET) {
             let mut numeric_data = Vec::<f32>::with_capacity(self.numeric_slots.len());
             for num_slot in &self.numeric_slots {
                 let (val, size) = match num_slot {
@@ -346,8 +351,8 @@ impl Material
                 shader.uniform_by_name(tex, name).unwrap();
             }
             shader.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
-            //shader.build_uniform_sets();
-        //}
+            shader.build_uniform_sets();
+        }
         shader.clear_uniform_set(SHADER_VARIABLES_SET);
         shader
     }

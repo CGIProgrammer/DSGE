@@ -29,7 +29,9 @@ mod rolling_hills;
 struct RenderStageOutputSocket
 {
     render_stage_id: StageIndex,
-    output: StageOutputIndex
+    output: StageOutputIndex,
+    //filtering: TextureFilter,
+    //pix_fmt: TexturePixelFormat
 }
 
 /// Вход ноды постобработки.
@@ -51,14 +53,74 @@ struct RenderStageLink
     _to: RenderStageInputSocket
 }
 
+#[derive(Clone)]
+enum RenderStageOutput
+{
+    Generic {
+        pix_fmt: TexturePixelFormat,
+        filtering: TextureFilter
+    },
+    Accumulator {
+        buffer: TextureRef,
+        pix_fmt: TexturePixelFormat,
+        filtering: TextureFilter
+    }
+}
+
+impl RenderStageOutput
+{
+    #[inline]
+    pub fn buffer(&self) -> Option<TextureRef>
+    {
+        match self {
+            Self::Accumulator{buffer,..} => Some(buffer.clone()),
+            _ => None
+        }
+    }
+
+    #[inline]
+    pub fn new_accumulator(texture: TextureRef) -> Self
+    {
+        let tex = texture.take();
+        let pix_fmt = tex.pix_fmt();
+        let filtering = tex.mag_filter();
+        drop(tex);
+        Self::Accumulator {
+            buffer: texture.clone(),
+            pix_fmt: pix_fmt,
+            filtering: filtering,
+        }
+    }
+
+    #[inline]
+    pub fn pix_fmt(&self) -> TexturePixelFormat
+    {
+        match self
+        {
+            Self::Generic {pix_fmt,..} => *pix_fmt,
+            Self::Accumulator {pix_fmt,..} => *pix_fmt,
+        }
+    }
+
+    #[inline]
+    pub fn filtering(&self) -> TextureFilter
+    {
+        match self
+        {
+            Self::Generic {filtering,..} => *filtering,
+            Self::Accumulator {filtering,..} => *filtering,
+        }
+    }
+}
+
 /// Нода (она же стадия) постобработки
 #[derive(Clone)]
 struct RenderStage
 {
     _id: StageIndex,
     _program: ShaderProgramRef,
-    _resolution: (u16, u16),
-    _output_accum: Vec<(Option<TextureRef>, TexturePixelFormat)>,
+    _resolution: TextureDimensions,
+    _outputs: Vec<RenderStageOutput>,
     _executed: bool,
     _render_pass: Arc<RenderPass>
 }
@@ -86,8 +148,13 @@ impl RenderStage
     /// Проверяет назначен ли выходу ноды накопительный буфер
     fn is_output_acc(&self, output: StageOutputIndex) -> bool
     {
-        if (output as usize) < (self._output_accum.len() as usize) {
-            unsafe { self._output_accum.get_unchecked(output as usize).0.is_some() }
+        if (output as usize) < (self._outputs.len() as usize) {
+            //self._outputs.get_unchecked(output as usize).0.is_some() }
+            let output = unsafe { self._outputs.get_unchecked(output as usize) };
+            match output {
+                RenderStageOutput::Accumulator {..} => true,
+                RenderStageOutput::Generic {..} => false,
+            }
         } else {
             false
         }
@@ -96,16 +163,16 @@ impl RenderStage
     /// Возвращает накопительный буфер
     fn get_accumulator_buffer(&self, output: StageOutputIndex) -> TextureRef
     {
-        self._output_accum.get(output as usize).unwrap().0.as_ref().unwrap().clone()
+        self._outputs.get(output as usize).unwrap().buffer().unwrap().clone()
         //self._accumulators.get(&output).unwrap().clone()
     }
 
     /// Меняет накопительный буфер на `new_buff` и возвращает предыдущий
     fn swap_accumulator_buffer(&mut self, output: StageOutputIndex, new_buff: &TextureRef) -> TextureRef
     {
-        let output = self._output_accum.get_mut(output as usize).unwrap();
-        let texture = output.0.clone().unwrap();
-        output.0 = Some(new_buff.clone());
+        let rs_output = self._outputs.remove(output as usize);
+        let texture = rs_output.buffer().clone().unwrap();
+        self._outputs.insert(output as usize, RenderStageOutput::new_accumulator(new_buff.clone()));
         texture
     }
 
@@ -118,37 +185,38 @@ impl RenderStage
 
 pub struct RenderStageBuilder
 {
-    _dimenstions : (u16, u16),
+    _dimenstions : TextureDimensions,
     _fragment_shader : Shader,
-    _output_accum: Vec<(TexturePixelFormat, bool)>,
+    _output_accum: Vec<(TexturePixelFormat, bool, TextureFilter)>,
     _inputs : u8
 }
 
+#[allow(dead_code)]
 impl RenderStageBuilder
 {
     pub fn dimenstions(&mut self, width: u16, height: u16) -> &mut Self
     {
-        self._dimenstions = (width, height);
+        self._dimenstions = TextureDimensions::Dim2d{width: width as _, height: height as _, array_layers: 1};
         self
     }
 
     pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str) -> &mut Self
     {
-        self._fragment_shader.uniform_autoincrement::<T>(name, 0, 0);
+        self._fragment_shader.uniform_autoincrement::<T>(name, 0).unwrap();
         self
     }
 
     pub fn input(&mut self, name: &str) -> &mut Self
     {
         self._inputs += 1;
-        self._fragment_shader.uniform_sampler2d_autoincrement(name, self._inputs as usize, false);
+        self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureType::Dim2d).unwrap();
         self
     }
 
-    pub fn output(&mut self, name: &str, pix_fmt: TexturePixelFormat, accumulator: bool) -> &mut Self
+    pub fn output(&mut self, name: &str, pix_fmt: TexturePixelFormat, filtering: TextureFilter, accumulator: bool) -> &mut Self
     {
         self._fragment_shader.output(name, AttribType::FVec4);
-        self._output_accum.push((pix_fmt, accumulator));
+        self._output_accum.push((pix_fmt, accumulator, filtering));
         self
     }
 
@@ -172,27 +240,36 @@ impl RenderStageBuilder
         let program = program.build_mutex(device.clone())?;
 
         let outputs = self._output_accum.iter().map(
-            |(pix_fmt, accum)| {
+            |(pix_fmt, accum, filter)| {
                 let acc = 
                 if *accum {
                     //println!("Создание накопительного буфера {}x{}", self._dimenstions.0, self._dimenstions.1);
-                    let mut buffer = Texture::new_empty_2d(
+                    let mut buffer = Texture::new_empty(
                         format!("stage_{}_{:?}_accumulator", pp_graph._render_stage_id_counter, pix_fmt).as_str(),
-                        self._dimenstions.0, self._dimenstions.1, *pix_fmt, device.clone()).unwrap();
+                        self._dimenstions, *pix_fmt, device.clone()).unwrap();
                     buffer.clear_color(queue.clone());
                     buffer.set_vertical_address(TextureRepeatMode::ClampToEdge);
                     buffer.set_horizontal_address(TextureRepeatMode::ClampToEdge);
                     buffer.update_sampler();
-                    Some(RcBox::construct(buffer))
+                    let buffer = RcBox::construct(buffer);
+
+                    RenderStageOutput::Accumulator {
+                        pix_fmt: *pix_fmt,
+                        buffer: buffer,
+                        filtering: *filter
+                    }
                 } else {
-                    None
+                    RenderStageOutput::Generic {
+                        pix_fmt: *pix_fmt,
+                        filtering: *filter
+                    }
                 };
-                (acc, *pix_fmt)
+                acc
             }
         ).collect();
 
         let attachments = self._output_accum.iter().map(
-            |(pix_fmt, _)| {
+            |(pix_fmt, _, _)| {
                 AttachmentDesc {
                     format: pix_fmt.vk_format(),
                     samples: SampleCount::Sample1,
@@ -231,7 +308,7 @@ impl RenderStageBuilder
             _id: pp_graph._render_stage_id_counter,
             _program: program,
             _resolution: self._dimenstions,
-            _output_accum: outputs,
+            _outputs: outputs,
             _render_pass: RenderPass::new(device.clone(), render_pass_desc).unwrap(),
             _executed: false
         };
@@ -292,6 +369,7 @@ pub enum NumericInput
     Mat4(Mat4),
 }
 
+#[allow(dead_code)]
 impl Postprocessor
 {
     pub fn new(queue: Arc<Queue>, width: u16, height: u16) -> Self
@@ -319,7 +397,7 @@ impl Postprocessor
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
     {
         for (_, rs) in &self._stages {
-            rs._program.take_mut().uniform_by_name(data, name);//.unwrap();
+            drop(rs._program.take_mut().uniform_by_name(data, name));
         }
     }
 
@@ -336,18 +414,26 @@ impl Postprocessor
     {
         match self._stages.get_mut(&stage_id) {
             Some(stage) => {
-                stage._resolution = (width, height);
+                stage._resolution = TextureDimensions::Dim2d{width: width as _, height: height as _, array_layers: 1};
                 let mut accs = Vec::new();
-                for (buff, pix_fmt) in &mut stage._output_accum {
-                    let buff = match buff {
-                        Some(texture) => {
-                            Some(Texture::new_empty_2d_mutex(texture.take().name(), width, height, *pix_fmt, self._device.clone()).unwrap())
+                for output in &mut stage._outputs {
+                    let buff = match output {
+                        RenderStageOutput::Accumulator{buffer, pix_fmt, filtering} => 
+                        {
+                            RenderStageOutput::Accumulator{
+                                buffer: Texture::new_empty_mutex(buffer.take().name(), stage._resolution, *pix_fmt, self._device.clone()).unwrap(),
+                                pix_fmt: *pix_fmt,
+                                filtering: *filtering
+                            }
                         },
-                        None => None
+                        RenderStageOutput::Generic{..} => 
+                        {
+                            output.clone()
+                        }
                     };
-                    accs.push((buff, *pix_fmt));
+                    accs.push(buff);
                 }
-                stage._output_accum = accs;
+                stage._outputs = accs;
             },
             None => ()
         };
@@ -361,11 +447,11 @@ impl Postprocessor
             .input("position", AttribType::FVec2)
             .input("fragCoordWp", AttribType::FVec2)
             .input("fragCoord", AttribType::FVec2)
-            .uniform_autoincrement::<RenderResolution>("resolution", 0, 0)
-            .uniform_autoincrement::<UniformTime>("timer", 0, 0);
+            .uniform_autoincrement::<RenderResolution>("resolution", 0).unwrap()
+            .storage_buffer_autoincrement::<UniformTime>("timer", 0).unwrap();
 
         RenderStageBuilder {
-            _dimenstions: (256, 256),
+            _dimenstions: TextureDimensions::Dim2d{ width: 256, height: 256, array_layers: 1 },
             _fragment_shader: builder,
             _inputs: 0,
             _output_accum: Vec::new()
@@ -458,7 +544,7 @@ impl Postprocessor
     }
 
     /// Запрос свободного изображения
-    fn request_texture(&mut self, link: &RenderStageLink, pix_fmt: TexturePixelFormat) -> TextureRef
+    fn request_texture(&mut self, link: &RenderStageLink, pix_fmt: TexturePixelFormat, filtering: TextureFilter) -> TextureRef
     {
         let resolution = self._stages.get(&link._from.render_stage_id).unwrap()._resolution;
         let mut texture: Option<TextureRef> = None;
@@ -471,10 +557,12 @@ impl Postprocessor
                     busy = true;
                 };
             });
+            let buff = tex.take();
             if !busy &&
-                tex.take().width() == resolution.0 as u32 &&
-                tex.take().height() == resolution.1 as u32 &&
-                pix_fmt == *tex.take().pix_fmt()
+                buff.width() == resolution.width() as u32 &&
+                buff.height() == resolution.height() as u32 &&
+                buff.pix_fmt() == pix_fmt && 
+                buff.mag_filter() == filtering
             {
                 self._busy_buffers.insert(link.clone(), tex.clone());
                 texture = Some(tex.clone());
@@ -490,10 +578,12 @@ impl Postprocessor
                 link._from.render_stage_id, link._from.output,
                 link._to.render_stage_id, link._to.input);
             //println!("Создание текстуры {} {}x{}", buffer_name, resolution.0, resolution.1);
-            let mut _tex = Texture::new_empty_2d(buffer_name.as_str(), resolution.0, resolution.1, pix_fmt, self._device.clone()).unwrap();
+            let mut _tex = Texture::new_empty(buffer_name.as_str(), resolution, pix_fmt, self._device.clone()).unwrap();
             _tex.clear_color(self._queue.clone());
             _tex.set_horizontal_address(TextureRepeatMode::ClampToEdge);
             _tex.set_vertical_address(TextureRepeatMode::ClampToEdge);
+            _tex.set_mag_filter(filtering);
+            _tex.set_min_filter(filtering);
             _tex.update_sampler();
 
             let tex = RcBox::construct(_tex);
@@ -558,10 +648,10 @@ impl Postprocessor
         
         program.uniform_by_name(
             &RenderResolution{
-                width:  stage._resolution.0 as f32,
-                height: stage._resolution.1 as f32
+                width:  stage._resolution.width() as f32,
+                height: stage._resolution.height() as f32
             }, &format!("resolution")).unwrap();
-        program.uniform_by_name(&self.timer, &format!("timer")).unwrap();
+        program.storage_buffer_by_name(self.timer, &format!("timer")).unwrap();
 
         for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._image_inputs {
             if render_stage_id == &id {
@@ -590,8 +680,9 @@ impl Postprocessor
             if link._from.render_stage_id == id {
                 if render_targets.contains_key(&link._from.output) { continue; };
                 //println!("Запрос буфера для записи в слот {}.", link._from.output);
-                let pix_fmt = stage._output_accum.get(link._from.output as usize).unwrap().1;
-                let _tex = self.request_texture(link, pix_fmt);
+                let output = stage._outputs.get(link._from.output as usize).unwrap();
+                let _tex = self.request_texture(link, output.pix_fmt(), output.filtering());
+                let __tex = _tex.take_mut();
                 render_targets.insert(link._from.output, _tex.clone());
             }
         }
@@ -607,7 +698,7 @@ impl Postprocessor
             };
             fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
         }
-        fb.view_port(stage._resolution.0, stage._resolution.1);
+        fb.view_port(stage._resolution.width() as _, stage._resolution.height() as _);
         let prog = &mut *_prog.take();
         command_buffer_builder
             .bind_framebuffer(&mut *fb, render_pass.clone()).unwrap()
@@ -652,8 +743,8 @@ impl Postprocessor
         shader
             .default_vertex_attributes()
             .define("iResolution", "resolution.dimensions")
-            .uniform_autoincrement::<RenderResolution>("resolution", 0, 0)
-            .uniform_autoincrement::<UniformTime>("timer", 0, 0)
+            .uniform_autoincrement::<RenderResolution>("resolution", 0).unwrap()
+            .uniform_autoincrement::<UniformTime>("timer", 0).unwrap()
             .output("position", AttribType::FVec2)
             .output("fragCoordWp", AttribType::FVec2)
             .output("fragCoord", AttribType::FVec2)

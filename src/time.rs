@@ -1,6 +1,6 @@
 use crate::shader::ShaderStructUniform;
 use crate::texture::TextureRef;
-use std::time::{SystemTime, Duration};
+use std::time::{SystemTime, /*Duration*/};
 
 pub struct Timer
 {
@@ -9,7 +9,7 @@ pub struct Timer
     frame: u32
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Copy)]
 pub struct UniformTime
 {
     pub uptime: f32,
