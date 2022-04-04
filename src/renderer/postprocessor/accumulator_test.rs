@@ -1,8 +1,6 @@
 use super::Postprocessor;
-use super::super::super::shader::*;
-use super::{RenderResolution, StageIndex};
-use crate::texture::TexturePixelFormat;
-use crate::time::UniformTime;
+use super::{StageIndex};
+use crate::texture::{TexturePixelFormat, TextureFilter};
 
 impl Postprocessor
 {
@@ -13,15 +11,14 @@ impl Postprocessor
             .dimenstions(width, height)
             .input("image")
             .input("vectors")
-            .input("background")
             .input("accumulator")
-            .output("accumulator_out", TexturePixelFormat::RGBA16f, true)
-            .output("swapchain_out", sc_format, false)
+            .output("accumulator_out", TexturePixelFormat::RGBA16f, TextureFilter::Linear, true)
+            .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
             .code("
             void main()
             {
                 vec2 delta = texture(vectors, fragCoordWp).xy;
-                float scale = 0.25;
+                float scale = 1.0;
                 vec2 teapot_uv = fragCoordWp / scale;
                 vec2 teapot_past_uv = (fragCoordWp - delta*scale);
 
@@ -33,7 +30,7 @@ impl Postprocessor
                     accumulator_out = vec4(0.0);
                 }
                 accumulator_out.a = 1.0;
-                swapchain_out.rgb = mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
+                swapchain_out.rgb = accumulator_out.rgb; //mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
                 swapchain_out.a = 1.0;
             }");
         

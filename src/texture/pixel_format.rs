@@ -15,7 +15,7 @@ pub const GL_COMPRESSED_RGBA_S3TC_DXT5_EXT : GLenum =  0x83F3;
 
 /// Форматы текстур
 #[allow(dead_code)]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum TexturePixelFormat
 {
 	// Однокомпонентные форматы

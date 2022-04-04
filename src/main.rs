@@ -30,7 +30,6 @@ mod components;
 use mesh::*;
 use texture::*;
 use game_object::*;
-use types::Vec4;
 
 trait Radian
 {
@@ -184,6 +183,6 @@ impl Application {
 }
 
 fn main() {
-    let app = Application::new("DSGE VK", 800, 600, false, false).unwrap();
+    let app = Application::new("DSGE VK", 800, 600, false, true).unwrap();
     app.event_loop();
 }
