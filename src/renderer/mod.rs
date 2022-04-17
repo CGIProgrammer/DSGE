@@ -1,27 +1,26 @@
 pub mod postprocessor;
 use vulkano::device::{
-    Device, DeviceExtensions, Features, Queue,
+    Device, DeviceExtensions, Features, Queue, DeviceCreateInfo, QueueCreateInfo,
     physical::{
         PhysicalDevice,
         PhysicalDeviceType
     }
 };
-use vulkano::swapchain::{self, AcquireError, Swapchain, SwapchainCreationError, Surface, PresentMode};
-use vulkano::image::{view::ImageView, ImageAccess, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
-use vulkano::render_pass::{RenderPass, RenderPassDesc, SubpassDesc, AttachmentDesc};
+use vulkano::swapchain::{self, AcquireError, Swapchain, Surface, PresentMode, SwapchainCreateInfo};
+use vulkano::image::{view::ImageView, SwapchainImage, ImageUsage, ImageLayout, SampleCount};
+use vulkano::render_pass::{RenderPass, RenderPassCreateInfo, SubpassDescription, AttachmentDescription, AttachmentReference};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use winit::window::{Window};
 
-use std::sync::Arc;
+use std::sync::{Arc, LockResult};
 
 use crate::texture::{Texture, TexturePixelFormat, TextureDimensions, TextureRef};
 use crate::framebuffer::{Framebuffer, FramebufferRef, FramebufferBinder};
 use crate::mesh::{MeshRef, Mesh};
 use crate::shader::ShaderStructUniform;
 use crate::references::*;
-use crate::components::AbstractVisualObject;
 use crate::game_object::*;
 use postprocessor::Postprocessor;
 use crate::time::UniformTime;
@@ -109,34 +108,33 @@ impl GBuffer
                 TexturePixelFormat::Depth32f => ImageLayout::DepthStencilAttachmentOptimal,
                 _ => ImageLayout::ColorAttachmentOptimal
             };
-            let att = AttachmentDesc {
-                format: fmt.vk_format(),
+            let att = AttachmentDescription {
+                format: Some(fmt.vk_format()),
                 samples: SampleCount::Sample1,
-                load: vulkano::render_pass::LoadOp::Clear,
-                store: vulkano::render_pass::StoreOp::Store,
-                stencil_load: vulkano::render_pass::LoadOp::Clear,
-                stencil_store: vulkano::render_pass::StoreOp::Store,
+                load_op: vulkano::render_pass::LoadOp::Clear,
+                store_op: vulkano::render_pass::StoreOp::Store,
+                stencil_load_op: vulkano::render_pass::LoadOp::Clear,
+                stencil_store_op: vulkano::render_pass::StoreOp::Store,
                 initial_layout: img_layout,
                 final_layout: img_layout,
+                ..Default::default()
             };
             attachments.push(att);
         }
-        let desc = RenderPassDesc::new(
-            attachments,
-            vec![SubpassDesc {
+        let desc = RenderPassCreateInfo {
+            attachments: attachments,
+            subpasses: vec![SubpassDescription {
                 color_attachments: vec![
-                    (0, ImageLayout::ColorAttachmentOptimal),
-                    (1, ImageLayout::ColorAttachmentOptimal),
-                    (2, ImageLayout::ColorAttachmentOptimal),
-                    (3, ImageLayout::ColorAttachmentOptimal)
+                    Some(AttachmentReference{attachment: 0, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()}),
+                    Some(AttachmentReference{attachment: 1, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()}),
+                    Some(AttachmentReference{attachment: 2, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()}),
+                    Some(AttachmentReference{attachment: 3, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()})
                 ],
-                depth_stencil: Some((4, ImageLayout::DepthStencilAttachmentOptimal)),
-                input_attachments: vec![],
-                resolve_attachments: vec![],
-                preserve_attachments: vec![],
+                depth_stencil_attachment: Some(AttachmentReference{attachment: 4, layout: ImageLayout::DepthStencilAttachmentOptimal, ..Default::default()}),
+                ..Default::default()
             }],
-            vec![]
-        );
+            ..Default::default()
+        };
 
         Self {
             _device : device.clone(),
@@ -165,7 +163,7 @@ pub struct Renderer
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
 
-    _draw_list : Vec<RcBox<dyn AbstractVisualObject>>,
+    _draw_list : Vec<RcBox<dyn GameObject>>,
     
     _framebuffers : Vec<FramebufferRef>,
     _screen_plane : MeshRef,
@@ -173,7 +171,7 @@ pub struct Renderer
     _gbuffer : GBuffer,
     _postprocess_pass : Arc<RenderPass>,
     _aspect : f32,
-    _camera : Option<RcBox<CameraObject>>,
+    _camera : Option<RcBox<dyn GameObject>>,
 
     _postprocessor : Postprocessor,
     _timer : UniformTime
@@ -193,10 +191,11 @@ impl Renderer
 {
     pub fn from_winit(vk_instance : Arc<Instance>, win: Arc<Surface<Window>>, vsync: bool) -> Self
     {
-        let dimensions = win.window().inner_size().into();
+        let dimensions: [f32; 2] = win.window().inner_size().into();
         println!("{:?}", dimensions);
         let device_extensions = DeviceExtensions {
             khr_swapchain: true,
+            //ext_extended_dynamic_state: true,
             ..DeviceExtensions::none()
         };
         let (physical_device, queue_family) = PhysicalDevice::enumerate(&vk_instance)
@@ -206,7 +205,7 @@ impl Renderer
             .filter_map(|p| {
                 p.queue_families()
                     .find(|&q| {
-                        q.supports_graphics() && win.is_supported(q).unwrap_or(false)
+                        q.supports_graphics() && q.supports_surface(&win).unwrap_or(false)
                     })
                     .map(|q| (p, q))
             })
@@ -222,16 +221,18 @@ impl Renderer
             .unwrap();
         let features = Features {
             sampler_anisotropy: true,
+            //extended_dynamic_state: true,
             .. Features::none()
         };
-        let (device, mut queues) = Device::new(
-            physical_device,
-            &features,
-            &physical_device
+        let dev_info = DeviceCreateInfo {
+            enabled_features: features,
+            queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
+            enabled_extensions: physical_device
                 .required_extensions()
                 .union(&device_extensions),
-            [(queue_family, 0.5)].iter().cloned(),
-        ).unwrap();
+            ..Default::default()
+        };
+        let (device, mut queues) = Device::new(physical_device, dev_info).unwrap();
         
         println!(
             "Используется устройство: {} (type: {:?})",
@@ -241,54 +242,57 @@ impl Renderer
 
         let queue = queues.next().unwrap();
         let (swapchain, images) : (Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>) = {
-            let caps = win.capabilities(physical_device).unwrap();
+            let caps = physical_device.surface_capabilities(&win, Default::default()).unwrap();
             let composite_alpha = caps.supported_composite_alpha.iter().next().unwrap();
     
-            let format = caps.supported_formats[0].0;
+            let format = Some(
+                physical_device
+                    .surface_formats(&win, Default::default())
+                    .unwrap()[0]
+                    .0,
+            );
             
-            Swapchain::start(device.clone(), win.clone())
-                .num_images(caps.min_image_count)
-                .format(format)
-                .dimensions(dimensions)
-                .usage(ImageUsage::color_attachment())
-                .present_mode(if vsync { PresentMode::Fifo } else { PresentMode::Immediate } )
-                .sharing_mode(&queue)
-                .composite_alpha(composite_alpha)
-                .build()
-                .unwrap()
+            Swapchain::new(device.clone(), win.clone(), SwapchainCreateInfo{
+                min_image_count: caps.min_image_count,
+                image_format: format,
+                image_extent: win.window().inner_size().into(),
+                image_usage: ImageUsage::color_attachment(),
+                composite_alpha: composite_alpha,
+                present_mode: if vsync { PresentMode::Fifo } else { PresentMode::Immediate },
+                ..Default::default()
+            }).unwrap()
         };
 
-        let final_renderpass = RenderPassDesc::new(
-            vec![
-            AttachmentDesc {
-                format: swapchain.format(),
+        let final_renderpass = RenderPassCreateInfo{
+            attachments: vec![
+            AttachmentDescription {
+                format: Some(swapchain.image_format()),
                 samples: SampleCount::Sample1,
-                load: vulkano::render_pass::LoadOp::Clear,
-                store: vulkano::render_pass::StoreOp::Store,
-                stencil_load: vulkano::render_pass::LoadOp::DontCare,
-                stencil_store: vulkano::render_pass::StoreOp::DontCare,
-                initial_layout: ImageLayout::ColorAttachmentOptimal,
+                load_op: vulkano::render_pass::LoadOp::Clear,
+                store_op: vulkano::render_pass::StoreOp::Store,
+                stencil_load_op: vulkano::render_pass::LoadOp::DontCare,
+                stencil_store_op: vulkano::render_pass::StoreOp::DontCare,
                 final_layout: ImageLayout::ColorAttachmentOptimal,
+                ..Default::default()
             },
-            AttachmentDesc {
-                format: TexturePixelFormat::Depth16u.vk_format(),
+            AttachmentDescription {
+                format: Some(TexturePixelFormat::Depth16u.vk_format()),
                 samples: SampleCount::Sample1,
-                load: vulkano::render_pass::LoadOp::Clear,
-                store: vulkano::render_pass::StoreOp::Store,
-                stencil_load: vulkano::render_pass::LoadOp::Clear,
-                stencil_store: vulkano::render_pass::StoreOp::Store,
+                load_op: vulkano::render_pass::LoadOp::Clear,
+                store_op: vulkano::render_pass::StoreOp::Store,
+                stencil_load_op: vulkano::render_pass::LoadOp::Clear,
+                stencil_store_op: vulkano::render_pass::StoreOp::Store,
                 initial_layout: ImageLayout::DepthStencilAttachmentOptimal,
                 final_layout: ImageLayout::DepthStencilAttachmentOptimal,
+                ..Default::default()
             }],
-            vec![SubpassDesc {
-                color_attachments: vec![(0, ImageLayout::ColorAttachmentOptimal)],
-                depth_stencil: Some((1, ImageLayout::DepthStencilAttachmentOptimal)),
-                input_attachments: vec![],
-                resolve_attachments: vec![],
-                preserve_attachments: vec![],
+            subpasses: vec![SubpassDescription {
+                color_attachments: vec![Some(AttachmentReference{attachment: 0, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()})],
+                depth_stencil_attachment: Some(AttachmentReference{attachment: 1, layout: ImageLayout::DepthStencilAttachmentOptimal, ..Default::default()}),
+                ..Default::default()
             }],
-            vec![]
-        );
+            ..Default::default()
+        };
         let final_render_pass = RenderPass::new(device.clone(), final_renderpass).unwrap();
 
         let result = Renderer {
@@ -321,11 +325,11 @@ impl Renderer
         /* На данный момент это размытие в движении */
         self._postprocessor.reset();
         //let rh = self._postprocessor.rolling_hills(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();
-        let acc = self._postprocessor.acc_mblur_new(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
-        //self._postprocessor.link_stages(rh, 0, acc, format!("background"));
-        self._postprocessor.link_stages(acc, 1, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
+        //let acc = self._postprocessor.acc_mblur_new(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
+        let acc = self._postprocessor.copy_node(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
+        self._postprocessor.link_stages(acc, 0, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
         let mut camera = self._camera.as_ref().unwrap().lock().unwrap();
-        camera.set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        camera.camera_mut().unwrap().set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
         
     }
 
@@ -343,7 +347,7 @@ impl Renderer
     {
         //self._timer = timer.clone();
         self._postprocessor.timer = timer.clone();
-        self._postprocessor.uniform_to_all(&format!("timer"), timer);
+        //self._postprocessor.uniform_to_all(&format!("timer"), timer);
     }
 
     /// Обновление swapchain изображений
@@ -352,9 +356,11 @@ impl Renderer
     {
         let dimensions: [u32; 2] = self._vk_surface.window().inner_size().into();
         let (new_swapchain, new_images) =
-            match self._swapchain.recreate().dimensions(dimensions).build() {
+            match self._swapchain.recreate(SwapchainCreateInfo{
+                    image_extent: dimensions,
+                    ..self._swapchain.create_info()
+                }) {
                 Ok(r) => r,
-                Err(SwapchainCreationError::UnsupportedDimensions) => return,
                 Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
             };
         self._aspect = dimensions[0] as f32 / dimensions[1] as f32;
@@ -366,13 +372,13 @@ impl Renderer
         let db = Texture::new_empty_mutex("depth", dims, TexturePixelFormat::Depth16u, self._device.clone()).unwrap();
         
         self._swapchain = new_swapchain;
-        let dimensions = new_images[0].dimensions().width_height();
+        //let dimensions = new_images[0].dimensions().width_height();
 
         self._framebuffers.clear();
         self._sc_textures.clear();
         for image in new_images
         {
-            let cb = Texture::from_vk_image_view(ImageView::new(image.clone()).unwrap(), self._device.clone()).unwrap();
+            let cb = Texture::from_vk_image_view(ImageView::new_default(image.clone()).unwrap(), self._device.clone()).unwrap();
             cb.take_mut().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
             cb.take_mut().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
             cb.take_mut().update_sampler();
@@ -392,9 +398,17 @@ impl Renderer
     }
 
     /// Передаёт объект для растеризации
-    pub fn draw(&mut self, obj: RcBox<dyn AbstractVisualObject>)
+    pub fn draw(&mut self, obj: RcBox<dyn GameObject>)
     {
-        self._draw_list.push(obj);
+        let owner = obj.lock().unwrap();
+        let is_visual = owner.visual().is_some();
+        if is_visual {
+            self._draw_list.push(obj.clone());
+            for child in owner.children()
+            {
+                self.draw(child);
+            }
+        }
     }
 
     /// Фомирует буфер команд GPU
@@ -407,14 +421,14 @@ impl Renderer
         ).unwrap();
         let gbuffer_rp = &self._gbuffer._geometry_pass;
         let gbuffer_fb = &mut *self._gbuffer._frame_buffer.take_mut();
+        command_buffer_builder.bind_framebuffer(gbuffer_fb, gbuffer_rp.clone()).unwrap();
+        //command_buffer_builder.set_cull_mode(vulkano::pipeline::graphics::rasterization::CullMode::Front);
         
-        command_buffer_builder
-            .bind_framebuffer(gbuffer_fb, gbuffer_rp.clone()).unwrap();
-        
-        let camera_data = self._camera.as_ref().unwrap().lock().unwrap().uniform_data();
+        let camera_data = self._camera.as_ref().unwrap().lock().unwrap().camera().unwrap().uniform_data();
         for _obj in &self._draw_list
         {
-            let obj = _obj.lock().unwrap();
+            let locked = _obj.lock().unwrap();
+            let obj = locked.visual().unwrap();
             obj.draw(&mut command_buffer_builder, &camera_data, gbuffer_rp.clone(), 0).unwrap();
         }
 
@@ -447,8 +461,8 @@ impl Renderer
         }
         
         // Передача входов в постобработку
-        self._postprocessor.uniform_to_all(&format!("image"), &self._gbuffer._albedo);
-        self._postprocessor.uniform_to_all(&format!("vectors"), &self._gbuffer._vectors);
+        self._postprocessor.image_to_all(&format!("image"), &self._gbuffer._albedo);
+        //self._postprocessor.image_to_all(&format!("vectors"), &self._gbuffer._vectors);
 
         // Подключение swapchain-изображения в качестве выхода
         self._postprocessor.set_output(format!("swapchain_out"), self._sc_textures[image_num].clone());
@@ -492,8 +506,10 @@ impl Renderer
         &self._device
     }
 
-    pub fn set_camera(&mut self, camera: RcBox<CameraObject>)
+    pub fn set_camera(&mut self, camera: RcBox<dyn GameObject>)
     {
-        self._camera = Some(camera);
+        if camera.lock().unwrap().camera().is_some() {
+            self._camera = Some(camera.clone());
+        }
     }
 }

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use vulkano::render_pass::{
     Framebuffer as VkFramebuffer,
     RenderPass as VkRenderPass,
+    FramebufferCreateInfo
 };
 
 use vulkano::pipeline::{graphics::viewport::{Viewport}};
@@ -92,15 +93,17 @@ impl Framebuffer
     /// Инициализировать буфер кадра для render pass'а
     pub fn make_vk_fb(&mut self, render_pass : Arc<VkRenderPass>) -> Result<(), String>
     {
-        let mut vk_fb_builder = VkFramebuffer::with_intersecting_dimensions(render_pass.clone());
-        for attachment in &self._color_attachments {
-            vk_fb_builder = vk_fb_builder.add(attachment.storage.take().image_view().clone()).unwrap();
-        }
-        if self._depth_attachment.is_some()
+        let mut attachments = Vec::new();
+        for attachment in &self._color_attachments
         {
-            vk_fb_builder = vk_fb_builder.add(self._depth_attachment.as_ref().unwrap().storage.take().image_view().clone()).unwrap();
+            let sas = attachment.storage.take().image_view().clone();
+            attachments.push(sas);
         }
-        let vk_fb = vk_fb_builder.build();
+        if self._depth_attachment.is_some() {
+            attachments.push(self._depth_attachment.as_ref().unwrap().storage.take().image_view().clone());
+        }
+
+        let vk_fb = VkFramebuffer::new(render_pass.clone(), FramebufferCreateInfo{attachments: attachments, ..Default::default()});
         match vk_fb
         {
             Ok(fb) => {
@@ -109,8 +112,8 @@ impl Framebuffer
             },
             Err(e) => 
             match e {
-                vulkano::render_pass::FramebufferCreationError::AttachmentsCountMismatch{expected, obtained} => {
-                    Err(format!("Не соответствие количества целей рендеринга. Ожидается {}, но получено {}", expected, obtained))
+                vulkano::render_pass::FramebufferCreationError::AttachmentCountMismatch{provided, required} => {
+                    Err(format!("Не соответствие количества целей рендеринга. Ожидается {}, но получено {}", required, provided))
                 },
                 _ => {
                     vk_fb.unwrap();
@@ -138,16 +141,9 @@ impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
             //println!("Создание буфера кадра");
             fb.make_vk_fb(render_pass.clone())?;
         }
-        let rp_desc = render_pass.desc();
-        for (i, Attachment {storage:_, default_color}) in fb._color_attachments.iter().enumerate()
+        for Attachment {storage:_, default_color} in &fb._color_attachments
         {
-            let vk_att = rp_desc.attachments()[i];
-            let dc =
-            match vk_att.load {
-                vulkano::render_pass::LoadOp::Clear => default_color.clone(),
-                _ => vulkano::format::ClearValue::None
-            };
-            clear_values.push(dc);
+            clear_values.push(*default_color);
         }
         
         if fb._depth_attachment.is_some() {
@@ -158,6 +154,7 @@ impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
             SubpassContents::Inline,
             clear_values
         ).unwrap();
+        
         fb._viewport.dimensions = [fb._dimensions[0] as f32, fb._dimensions[1] as f32];
         
         Ok(self.set_viewport(0, [fb._viewport.clone()]))

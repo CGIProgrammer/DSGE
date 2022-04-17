@@ -1,11 +1,13 @@
-extern crate spirv_compiler;
+//extern crate spirv_compiler;
 
 use std::collections::{HashMap, HashSet};
+use std::process::ExitStatus;
 pub use super::glenums::{ShaderType, GLSLVersion, GLSLType, AttribType};
 use std::sync::Arc;
+use vulkano::pipeline::graphics::rasterization::{RasterizationState, CullMode};
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::descriptor_set::PersistentDescriptorSet;
-use vulkano::pipeline::GraphicsPipeline;
+use vulkano::pipeline::{GraphicsPipeline, StateMode};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -13,9 +15,10 @@ use vulkano::buffer::{CpuBufferPool, CpuAccessibleBuffer, BufferUsage};
 use vulkano::pipeline::PipelineBindPoint;
 
 use crate::references::*;
-use crate::texture::{TextureType, TextureTypeGlsl};
+use crate::texture::{TextureType, TextureTypeGlsl, TextureRef};
 use crate::vulkano::pipeline::Pipeline as VkPipeline;
 use vulkano::device::Device;
+use bytemuck::Pod;
 
 use std::path::Path;
 use std::hash::{Hash, Hasher};
@@ -71,6 +74,26 @@ impl std::fmt::Debug for Shader
          .field("inputs", &inputs_list.join(", "))
          .field("outputs", &outputs_list.join(", "))
          .finish()
+    }
+}
+
+fn convert_vec_types(mut vec8: Vec<u8>) -> Vec<u32>
+{
+    // I copy-pasted this code from StackOverflow without reading the answer 
+    // surrounding it that told me to write a comment explaining why this code 
+    // is actually safe for my own use case.
+    unsafe {
+        let ratio = std::mem::size_of::<u32>() / std::mem::size_of::<u8>();
+
+        let length = vec8.len() / ratio;
+        let capacity = vec8.capacity() / ratio;
+        let ptr = vec8.as_mut_ptr() as *mut u32;
+
+        // Don't run the destructor for vec32
+        std::mem::forget(vec8);
+
+        // Construct new Vec
+        Vec::from_raw_parts(ptr, length, capacity)
     }
 }
 
@@ -298,17 +321,75 @@ impl Shader
             println!("{} шейдер загружен из кэша", self.sh_type);
             return Ok(self);
         };
-
-        let mut compiler = spirv_compiler::CompilerBuilder::new().with_source_language(spirv_compiler::SourceLanguage::GLSL).build().unwrap();
+        //return Err(format!("Шейдер не найден в кэше. Возможность компиляции шейдеров отключена."));
+        
+        //let mut compiler = spirv_compiler::CompilerBuilder::new().with_source_language(spirv_compiler::SourceLanguage::GLSL).build().unwrap();
         let sh_type = match self.sh_type {
-            ShaderType::Vertex => spirv_compiler::ShaderKind::Vertex,
-            ShaderType::Fragment => spirv_compiler::ShaderKind::Fragment,
-            ShaderType::TesselationControl => spirv_compiler::ShaderKind::TessControl,
-            ShaderType::TesselationEval => spirv_compiler::ShaderKind::TessEvaluation,
-            ShaderType::Compute => spirv_compiler::ShaderKind::Compute,
-            ShaderType::Geometry => spirv_compiler::ShaderKind::Geometry,
+            ShaderType::Vertex => "vertex",
+            ShaderType::Fragment => "fragment",
+            ShaderType::TesselationControl => "tess_control",
+            ShaderType::TesselationEval => "tess_evaluation",
+            ShaderType::Compute => "compute",
+            ShaderType::Geometry => "geometry",
         };
-        let spirv = compiler.compile_from_string(self.source.as_str(), sh_type);
+        //println!("{}", self.source);
+        let source = self.source.as_str().as_bytes();
+        #[cfg(target_os = "windows")]
+        let glslc = ".\\vulkan_sdk\\Bin\\glslc.exe";
+        #[cfg(target_os = "linux")]
+        let glslc = "glslc";
+        let mut child_compiler = std::process::Command::new(glslc)
+            .args([
+                format!("-fshader-stage={}", sh_type).as_str(),
+                "-fauto-bind-uniforms",
+                "-fauto-map-locations",
+                "--target-env=vulkan1.2",
+                "--target-spv=spv1.5",
+                "-",
+                "-O0",
+                "-o", spv_path.to_str().unwrap()
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        let mut spirv_log = String::new();
+        {
+            let compiler_stdin = child_compiler.stdin.as_mut().unwrap();
+            compiler_stdin.write_all(source).unwrap();
+        }
+        match child_compiler.wait()
+        {
+            Ok(status) => {
+                if status.code().unwrap() != 0 {
+                    let compiler_stdout = child_compiler.stderr.as_mut().unwrap();
+                    compiler_stdout.read_to_string(&mut spirv_log).unwrap();
+                    let mut numbered_src = String::new();
+                    let mut line_num = 1;
+                    for line in self.source.split("\n") {
+                        numbered_src += format!("{}: {}\n", line_num, line).as_str();
+                        line_num += 1;
+                    }
+                    panic!("{}\nОшибка шейдера (исходник с нуменованными строками представлен выше)\n{}", numbered_src, spirv_log);
+                }
+            },
+            Err(_) => ()
+        }
+
+        if cache_path.is_dir() && spv_path.is_file() {
+            let mut file = File::open(spv_path).unwrap();
+            let mut spv = Vec::new();
+            file.read_to_end(&mut spv).unwrap();
+            unsafe {
+                self.module = Some(vulkano::shader::ShaderModule::from_bytes(self.device.clone(), spv.as_ref()).unwrap());
+            }
+            println!("{} шейдер загружен из кэша после компиляции", self.sh_type);
+            return Ok(self);
+        };
+
+        /*let spirv = compiler.compile_from_string(self.source.as_str(), sh_type);
         match spirv {
             Err(error) => {
                 let mut numbered_src = String::new();
@@ -330,7 +411,8 @@ impl Shader
                 println!("Скопилирован {} шейдер (self.module={})", self.sh_type, self.module.is_some());
                 return Ok(self);
             }
-        };
+        };*/
+        return Err(format!("Шейдер не скомпилирован"));
     }
 }
 
@@ -531,6 +613,8 @@ impl ShaderProgramBuilder
                 tess_eval_source : self.tess_eval_source,
                 compute_source : self.compute_source,
 
+                cull_faces : CullMode::None,
+
                 hash : self.hash
             }
         )
@@ -565,6 +649,8 @@ pub struct ShaderProgram
     tess_controll_source : String,
     tess_eval_source : String,
     compute_source : String,
+
+    pub cull_faces : CullMode,
 
     hash : u64,
 }
@@ -653,7 +739,7 @@ impl ShaderProgram
 
     /// Передаёт в шейдер массив данных неопределённой структуры
     pub fn uniform_structure<T>(&mut self, obj: Vec<T>, set_num: usize, binding_num: usize)
-        where T: std::marker::Send + std::marker::Sync + Clone + 'static
+        where T: std::marker::Send + std::marker::Sync + Pod + 'static
     {
         /*if self.uniforms_sets.contains_key(&set_num) {
             return;
@@ -687,21 +773,14 @@ impl ShaderProgram
     /// Передаёт uniform-переменную в шейдер
     /// Может передавать как `TextureRef`, так и структуры, для которых определён `trait ShaderStructUniform`
     pub fn uniform<T>(&mut self, obj: &T, set_num: usize, binding_num: usize)
-        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         if self.uniforms_sets.contains_key(&set_num) {
             return;
         }
-        let uniform_buffer =
-        match obj.texture() {
-            Some(sampler) => {
-                let si = sampler.take();
-                WriteDescriptorSet::image_view_sampler(binding_num as u32, si.image_view().clone(), si.sampler().clone())
-            },
-            None => {
-                let uniform_buffer = CpuBufferPool::uniform_buffer(self.device.clone());
-                WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer.next(obj.clone()).unwrap())
-            }
+        let uniform_buffer = {
+            let uniform_buffer = CpuBufferPool::uniform_buffer(self.device.clone());
+            WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer.next(obj.clone()).unwrap())
         };
         match self.write_set_descriptors.get_mut(&set_num)
         {
@@ -726,8 +805,35 @@ impl ShaderProgram
         };
     }
 
+    pub fn uniform_sampler(&mut self, texture: &TextureRef, set_num: usize, binding_num: usize)
+    {
+        let texture = texture.take_mut();
+        let wds = WriteDescriptorSet::image_view_sampler(binding_num as u32, texture.image_view().clone(), texture.sampler().clone());
+        match self.write_set_descriptors.get_mut(&set_num)
+        {
+            Some(set_buffer) => {
+                if binding_num >= set_buffer.len() {
+                    for binding in set_buffer.len()..binding_num {
+                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
+                    }
+                } else {
+                    set_buffer.remove(binding_num);
+                }
+                set_buffer.insert(binding_num, wds);
+            },
+            None => {
+                let mut uniform_set = Vec::new();
+                for binding in 0..binding_num {
+                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
+                }
+                uniform_set.push(wds);
+                self.write_set_descriptors.insert(set_num, uniform_set);
+            }
+        };
+    }
+
     pub fn uniform_by_name<T>(&mut self, obj: &T, name: &String) -> Result<(), String>
-    where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+    where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         //println!("uniform {} to {}", name, self.hash);
         let (set_num, binding_num) = *match self.uniforms_locations.get(name)
@@ -738,9 +844,28 @@ impl ShaderProgram
         self.uniform(obj, set_num, binding_num);
         Ok(())
     }
+
+    pub fn uniform_sampler_by_name(&mut self, texture: &TextureRef, name: &String) -> Result<(), String>
+    {
+        
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => {
+                //println!("uniform (set={}, binding={}) {}", val.0, val.1, name);
+                val
+            },
+            None => {
+                //println!("Uniform-переменная {} не объявлена в этом шейдере.", name);
+                return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name));
+            }
+        };
+        //println!("{}", self.fragment_shader_source());
+        self.uniform_sampler(texture, set_num, binding_num);
+        Ok(())
+    }
     
     pub fn storage_buffer<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
-        where T: std::marker::Send + std::marker::Sync + Copy + 'static
+        where T: std::marker::Send + std::marker::Sync + Pod + 'static
     {
         if self.uniforms_sets.contains_key(&set_num) {
             return;
@@ -770,7 +895,7 @@ impl ShaderProgram
     }
     
     pub fn storage_buffer_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
-        where T: std::marker::Send + std::marker::Sync + Copy + 'static
+        where T: std::marker::Send + std::marker::Sync + Pod + 'static
     {
         let (set_num, binding_num) = *match self.uniforms_locations.get(name)
         {
@@ -799,6 +924,9 @@ impl ShaderProgram
         let depth_test = subpass.has_depth();
         let mut pipeline = vulkano::pipeline::GraphicsPipeline::start()
             .vertex_input_state(BuffersDefinition::new().vertex::<super::mesh::VkVertex>());
+        
+        pipeline = pipeline.rasterization_state(RasterizationState{cull_mode: vulkano::pipeline::StateMode::Fixed(self.cull_faces), ..Default::default()});
+        
         if self.vertex_shader.is_some() {
             pipeline = pipeline.vertex_shader(self.vertex_shader.as_ref().unwrap().entry_point("main").unwrap(), ());
         }
@@ -827,7 +955,7 @@ impl ShaderProgram
     /// Полезно для формирования неизменяемого списка текстур материала
     pub fn build_uniform_sets(&mut self)
     {
-        let layouts = self.pipeline.as_ref().unwrap().layout().descriptor_set_layouts();
+        let layouts = self.pipeline.as_ref().unwrap().layout().set_layouts();
         while self.write_set_descriptors.len() > 0 {
             let set_num = *self.write_set_descriptors.keys().nth(0).unwrap();
             let set_desc = self.write_set_descriptors.remove(&set_num).unwrap();
@@ -867,7 +995,7 @@ impl ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
     fn bind_shader_uniforms(&mut self, shader: &mut ShaderProgram) -> Result<&mut Self, String>
     {
         let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
-        let layouts = pipeline_layout.descriptor_set_layouts();
+        let layouts = pipeline_layout.set_layouts();
         while shader.write_set_descriptors.len() > 0 {
             let set_num = *shader.write_set_descriptors.keys().last().unwrap();
             let descriptor_writes = shader.write_set_descriptors.remove(&set_num).unwrap();
@@ -881,7 +1009,7 @@ impl ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
             let set = PersistentDescriptorSet::new(layout.clone(), descriptor_writes);
             match set {
                 Ok(set) => self.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), set_num as u32, set),
-                Err(e) => return Err(format!("Не удалось сформировать набор uniform-переменных {:?}", e))
+                Err(e) => return Err(format!("Не удалось сформировать набор uniform-переменных №{}: {:?}", set_num, e))
             };
         }
         for (set_num, desc_set) in &shader.uniforms_sets {

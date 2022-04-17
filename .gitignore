@@ -1,8 +1,10 @@
 /target
+/vulkan_sdk
 /shader_cache/*
-/data/mesh/*
-/data/*.blend*
+/data
+!/data/exporter.blend
 /.vscode
 *.dds
 *.ktx
 *.bmp
+*.png

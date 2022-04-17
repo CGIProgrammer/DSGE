@@ -3,6 +3,7 @@ use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer
 use vulkano::render_pass::RenderPass;
 
 use super::{GOTransform, GameObject};
+use super::impl_gameobject;
 use crate::mesh::{MeshRef};
 use crate::material::{MaterialRef};
 use crate::references::*;
@@ -20,46 +21,25 @@ pub struct MeshObject
 {
     transform : GOTransform,
     mesh : MeshRef,
-    material : MaterialRef,
-    pub parent : Option<RcBox<dyn GameObject>>,
-    pub children : Vec::<RcBox<dyn GameObject>>
+    material : MaterialRef
 }
 
 impl MeshObject
 {
-    pub fn new(mesh: MeshRef, material: MaterialRef) -> Self
+    pub fn new(mesh: MeshRef, material: MaterialRef) -> RcBox<dyn GameObject>
     {
-        Self {
+        let result = Self {
             transform : GOTransform::identity(),
             mesh : mesh,
-            material : material,
-            parent : None,
-            children : Vec::new(),
-        }
+            material : material
+        };
+        let result = RcBox::construct(result);
+        result.take_mut().transform.set_owner(result.clone());
+        result
     }
 }
 
 impl AbstractVisualObject for MeshObject {}
-
-impl GameObject for MeshObject
-{
-    fn transform(&self) -> &GOTransform
-    {
-        &self.transform
-    }
-    
-    fn transform_mut(&mut self) -> &mut GOTransform
-    {
-        &mut self.transform
-    }
-
-    fn apply_transform(&mut self)
-    {
-        for child in &mut self.children {
-            child.lock().unwrap().apply_transform();
-        }
-    }
-}
 
 impl AbstractVisual for MeshObject
 {
@@ -93,4 +73,29 @@ impl AbstractVisual for MeshObject
         };
         Ok(())
     }
+}
+
+impl GameObject for MeshObject
+{
+    fn visual(&self) -> Option<&dyn super::AbstractVisualObject>
+    {
+        Some(self)
+    }
+
+    fn visual_mut(&mut self) -> Option<&mut dyn super::AbstractVisualObject>
+    {
+        Some(self)
+    }
+
+    fn camera(&self) -> Option<&dyn super::AbstractCameraObject>
+    {
+        None
+    }
+
+    fn camera_mut(&mut self) -> Option<&mut dyn super::AbstractCameraObject>
+    {
+        None
+    }
+
+    impl_gameobject!(MeshObject);
 }

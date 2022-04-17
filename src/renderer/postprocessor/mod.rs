@@ -7,11 +7,11 @@ use crate::texture::*;
 use crate::types::*;
 use crate::time::UniformTime;
 use std::collections::HashMap;
-
+use bytemuck::{Zeroable, Pod};
 use std::sync::Arc;
 use vulkano::device::{Queue, Device};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
-use vulkano::render_pass::{RenderPassDesc, SubpassDesc, RenderPass, AttachmentDesc};
+use vulkano::render_pass::{RenderPassCreateInfo, SubpassDescription, RenderPass, AttachmentDescription, AttachmentReference};
 use vulkano::image::{ImageLayout, SampleCount};
 
 type StageIndex = u16;
@@ -20,6 +20,7 @@ type StageOutputIndex = u64;
 
 mod accumulator_test;
 mod rolling_hills;
+mod copy;
 
 /// Выход ноды постобработки.
 /// Задаётся:
@@ -30,8 +31,6 @@ struct RenderStageOutputSocket
 {
     render_stage_id: StageIndex,
     output: StageOutputIndex,
-    //filtering: TextureFilter,
-    //pix_fmt: TexturePixelFormat
 }
 
 /// Вход ноды постобработки.
@@ -208,8 +207,9 @@ impl RenderStageBuilder
 
     pub fn input(&mut self, name: &str) -> &mut Self
     {
+        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, TextureType::Dim2d).unwrap();
+        //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureType::Dim2d).unwrap();
         self._inputs += 1;
-        self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureType::Dim2d).unwrap();
         self
     }
 
@@ -270,37 +270,36 @@ impl RenderStageBuilder
 
         let attachments = self._output_accum.iter().map(
             |(pix_fmt, _, _)| {
-                AttachmentDesc {
-                    format: pix_fmt.vk_format(),
+                AttachmentDescription {
+                    format: Some(pix_fmt.vk_format()),
                     samples: SampleCount::Sample1,
-                    load: vulkano::render_pass::LoadOp::Clear,
-                    store: vulkano::render_pass::StoreOp::Store,
-                    stencil_load: vulkano::render_pass::LoadOp::Clear,
-                    stencil_store: vulkano::render_pass::StoreOp::Store,
+                    load_op: vulkano::render_pass::LoadOp::Clear,
+                    store_op: vulkano::render_pass::StoreOp::Store,
+                    stencil_load_op: vulkano::render_pass::LoadOp::Clear,
+                    stencil_store_op: vulkano::render_pass::StoreOp::Store,
                     initial_layout: ImageLayout::ColorAttachmentOptimal,
                     final_layout: ImageLayout::ColorAttachmentOptimal,
+                    ..Default::default()
                 }
             }
         ).collect();
 
-        let n = self._output_accum.len();
+        let n = self._output_accum.len() as u32;
         let subpass_attachments = (0..n).map(|i|
             {
-                (i, ImageLayout::ColorAttachmentOptimal)
+                Some(AttachmentReference{attachment: i, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()})
             }
         ).collect();
 
-        let render_pass_desc = RenderPassDesc::new(
-            attachments,
-            vec![SubpassDesc {
+        let render_pass_desc = RenderPassCreateInfo{
+            attachments: attachments,
+            subpasses: vec![SubpassDescription {
                 color_attachments: subpass_attachments,
-                depth_stencil: None,
-                input_attachments: vec![],
-                resolve_attachments: vec![],
-                preserve_attachments: vec![],
+                depth_stencil_attachment: None,
+                ..Default::default()
             }],
-            vec![]
-        );
+            ..Default::default()
+        };
 
         //println!("{}", program.take().fragment_shader_source());
 
@@ -394,7 +393,7 @@ impl Postprocessor
     }
 
     pub fn uniform_to_all<T>(&mut self, name: &String, data: &T)
-        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         for (_, rs) in &self._stages {
             drop(rs._program.take_mut().uniform_by_name(data, name));
@@ -402,10 +401,25 @@ impl Postprocessor
     }
 
     pub fn uniform_to_stage<T>(&mut self, stage_id: StageIndex, name: &String, data: &T)
-        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Clone + 'static
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         match self._stages.get(&stage_id) {
             Some(stage) => drop(stage._program.take_mut().uniform_by_name(data, name)),
+            None => ()
+        };
+    }
+
+    pub fn image_to_all(&mut self, name: &String, data: &TextureRef)
+    {
+        for (_, rs) in &self._stages {
+            drop(rs._program.take_mut().uniform_sampler_by_name(data, name));
+        }
+    }
+
+    pub fn image_to_stage(&mut self, stage_id: StageIndex, name: &String, data: &TextureRef)
+    {
+        match self._stages.get(&stage_id) {
+            Some(stage) => drop(stage._program.take_mut().uniform_sampler_by_name(data, name)),
             None => ()
         };
     }
@@ -448,7 +462,7 @@ impl Postprocessor
             .input("fragCoordWp", AttribType::FVec2)
             .input("fragCoord", AttribType::FVec2)
             .uniform_autoincrement::<RenderResolution>("resolution", 0).unwrap()
-            .storage_buffer_autoincrement::<UniformTime>("timer", 0).unwrap();
+            .uniform_autoincrement::<UniformTime>("timer", 0).unwrap();
 
         RenderStageBuilder {
             _dimenstions: TextureDimensions::Dim2d{ width: 256, height: 256, array_layers: 1 },
@@ -649,17 +663,18 @@ impl Postprocessor
         program.uniform_by_name(
             &RenderResolution{
                 width:  stage._resolution.width() as f32,
-                height: stage._resolution.height() as f32
+                height: stage._resolution.height() as f32,
+                ..Default::default()
             }, &format!("resolution")).unwrap();
-        program.storage_buffer_by_name(self.timer, &format!("timer")).unwrap();
+        program.uniform_by_name(&self.timer, &format!("timer")).unwrap();
 
         for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._image_inputs {
             if render_stage_id == &id {
-                drop(program.uniform_by_name(tex, input));
-                /*match program.uniform_by_name(tex, input) {
-                    Ok(_) => println!("Принимается входящее изображение {} на вход", input),
-                    Err(_) => ()
-                };*/
+                //drop(program.uniform_sampler_by_name(tex, input));
+                match program.uniform_sampler_by_name(tex, input) {
+                    Ok(_) => ()/*println!("Принимается входящее изображение {} на вход", input)*/,
+                    Err(_) => ()/*println!("Для входящего изображения {} не назначена uniform-переменная", input)*/,
+                };
             }
         }
 
@@ -670,11 +685,11 @@ impl Postprocessor
                 if from_stage.is_output_acc(link._from.output) {
                     //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
                     let acc = from_stage.get_accumulator_buffer(link._from.output);
-                    program.uniform_by_name(&acc, &link._to.input).unwrap();
+                    program.uniform_sampler_by_name(&acc, &link._to.input).unwrap();
                 } else {
                     //println!("Принимается входящий буфер {} на вход", link._to.input);
                     let free_tex = self._busy_buffers.get(link).unwrap();
-                    program.uniform_by_name(free_tex, &link._to.input).unwrap();
+                    program.uniform_sampler_by_name(free_tex, &link._to.input).unwrap();
                 }
             }
             if link._from.render_stage_id == id {
@@ -761,11 +776,13 @@ impl Postprocessor
 }
 
 #[allow(dead_code)]
-#[derive(Clone, Copy, Default)]
+#[repr(C)]
+#[derive(Clone, Copy, Default, Zeroable, Pod)]
 struct RenderResolution
 {
     pub width : f32,
-    pub height : f32
+    pub height : f32,
+    _dummy : [f32; 14]
 }
 
 impl ShaderStructUniform for RenderResolution

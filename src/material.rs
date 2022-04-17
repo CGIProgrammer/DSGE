@@ -5,6 +5,7 @@
 
 use vulkano::device::Device;
 use vulkano::render_pass::RenderPass;
+use vulkano::pipeline::graphics::rasterization::{RasterizationState, CullMode};
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -332,6 +333,7 @@ impl Material
     pub fn base_shader(&mut self, render_pass: Arc<RenderPass>, subpass_id: u32) -> &mut ShaderProgram
     {
         let shader = &mut self.shader_set.base;
+        shader.cull_faces = CullMode::Front;
         shader.use_subpass(render_pass, subpass_id);
         if !shader.is_set_initialized(SHADER_TEXTURE_SET) {
             let mut numeric_data = Vec::<f32>::with_capacity(self.numeric_slots.len());
@@ -348,12 +350,15 @@ impl Material
                 unsafe { numeric_data.extend(std::slice::from_raw_parts(val, size)) };
             }
             for (name, tex) in &self.texture_slots {
-                shader.uniform_by_name(tex, name).unwrap();
+                shader.uniform_sampler_by_name(tex, name).unwrap();
+            }
+            while numeric_data.len()%(64/4) != 0 {
+                numeric_data.push(0.0);
             }
             shader.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
             shader.build_uniform_sets();
         }
-        shader.clear_uniform_set(SHADER_VARIABLES_SET);
+        //shader.clear_uniform_set(SHADER_VARIABLES_SET);
         shader
     }
 }

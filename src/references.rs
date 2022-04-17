@@ -49,7 +49,10 @@ impl <T>MutexLockBox<T> for MutexBox<T>
 {
     fn box_id(&self) -> i32
     {
-        self.as_ref() as *const Mutex<T> as _
+        let rf = self.as_ref();
+        let raw_rf = rf as *const Mutex<T>;
+        let raw_rf_int = raw_rf as *const i32;
+        raw_rf_int as _
     }
     
     fn construct(obj: T) -> Self
