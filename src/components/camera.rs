@@ -1,6 +1,7 @@
 use crate::types::Mat4;
 use crate::shader::ShaderStructUniform;
 use crate::texture::TextureRef;
+use bytemuck::{Pod, Zeroable};
 
 /// 
 pub trait AbstractCamera
@@ -10,16 +11,17 @@ pub trait AbstractCamera
     fn uniform_data(&self) -> CameraUniformData;
 }
 
-#[derive(Copy, Clone)]
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 /// Структура для передачи данных шейдерной программе
 pub struct CameraUniformData
 {
-    pub transform : Mat4,
-    pub transform_prev : Mat4,
-    pub transform_inverted : Mat4,
-    pub transform_prev_inverted : Mat4,
-    pub projection : Mat4,
-    pub projection_inverted : Mat4,
+    pub transform : [f32; 16],
+    pub transform_prev : [f32; 16],
+    pub transform_inverted : [f32; 16],
+    pub transform_prev_inverted : [f32; 16],
+    pub projection : [f32; 16],
+    pub projection_inverted : [f32; 16],
 }
 
 impl Default for CameraUniformData
@@ -28,12 +30,12 @@ impl Default for CameraUniformData
     {
         let proj = nalgebra::Perspective3::new(1.0, 80.0 * 3.1415926535 / 180.0, 0.1, 100.0).as_matrix().clone();
         Self {
-            transform : Mat4::identity(),
-            transform_prev : Mat4::identity(),
-            transform_inverted : Mat4::identity(),
-            transform_prev_inverted : Mat4::identity(),
-            projection : proj,
-            projection_inverted : proj.try_inverse().unwrap(),
+            transform : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_prev : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_inverted : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_prev_inverted : Mat4::identity().as_slice().try_into().unwrap(),
+            projection : proj.as_slice().try_into().unwrap(),
+            projection_inverted : proj.try_inverse().unwrap().as_slice().try_into().unwrap(),
         }
     }
 }

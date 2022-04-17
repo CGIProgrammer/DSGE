@@ -1,5 +1,6 @@
 use crate::shader::ShaderStructUniform;
 use crate::texture::TextureRef;
+use bytemuck::{Zeroable, Pod};
 use std::time::{SystemTime, /*Duration*/};
 
 pub struct Timer
@@ -9,12 +10,14 @@ pub struct Timer
     frame: u32
 }
 
-#[derive(Default, Clone, Copy)]
+#[repr(C)]
+#[derive(Default, Clone, Copy, Zeroable, Pod)]
 pub struct UniformTime
 {
     pub uptime: f32,
     pub delta: f32,
-    pub frame: u32
+    pub frame: u32,
+    _dummy: [u32; 13]
 }
 
 impl ShaderStructUniform for UniformTime
@@ -56,6 +59,7 @@ impl Timer
             frame: self.frame,
             delta: (self.last_time.elapsed().unwrap().as_micros() as f64 / 1000000.0) as _,
             uptime: (self.sys_time.elapsed().unwrap().as_micros() as f64 / 1000000.0) as _,
+            ..Default::default()
         };
         self.frame += 1;
         self.last_time = SystemTime::now();

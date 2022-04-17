@@ -1,6 +1,7 @@
 use crate::types::Mat4;
 use super::{GOTransform, GameObject};
 use crate::references::*;
+use super::impl_gameobject;
 
 pub use crate::components::{
     visual::AbstractVisual,
@@ -13,49 +14,23 @@ pub struct CameraObject
 {
     transform : GOTransform,
     projection : Mat4,
-    pub parent : Option<RcBox<dyn GameObject>>,
-    pub children : Vec::<RcBox<dyn GameObject>>
 }
 
 impl CameraObject
 {
-    pub fn new(aspect: f32, fov: f32, znear: f32, zfar: f32) -> Self
+    pub fn new(aspect: f32, fov: f32, znear: f32, zfar: f32) -> RcBox<dyn GameObject>
     {
-        Self {
+        let result = Self {
             transform : GOTransform::identity(),
             projection : nalgebra::Perspective3::new(aspect, fov, znear, zfar).as_matrix().clone(),
-            parent : None,
-            children : Vec::new(),
-        }
+        };
+        let result = RcBox::construct(result);
+        result.take_mut().transform.set_owner(result.clone());
+        result
     }
 }
 
 impl AbstractCameraObject for CameraObject {}
-
-impl GameObject for CameraObject
-{
-    fn transform(&self) -> &GOTransform
-    {
-        &self.transform
-    }
-
-    fn apply_transform(&mut self)
-    {
-        let transform = self.transform_mut().global;
-        for _child in &mut self.children {
-            let mut child = _child.lock().unwrap();
-            let mut child_transform = child.transform_mut();
-            child_transform.global = transform * child_transform.local;
-            drop(child_transform);
-            child.apply_transform();
-        }
-    }
-
-    fn transform_mut(&mut self) -> &mut GOTransform
-    {
-        &mut self.transform
-    }
-}
 
 impl AbstractCamera for CameraObject
 {
@@ -72,12 +47,36 @@ impl AbstractCamera for CameraObject
     fn uniform_data(&self) -> CameraUniformData
     {
         CameraUniformData {
-            transform : self.transform.global_for_render,
-            transform_prev : self.transform.global_for_render_prev,
-            transform_inverted : self.transform.global_for_render.try_inverse().unwrap(),
-            transform_prev_inverted : self.transform.global_for_render_prev.try_inverse().unwrap(),
-            projection : self.projection,
-            projection_inverted : self.projection.try_inverse().unwrap(),
+            transform : self.transform.global_for_render.as_slice().try_into().unwrap(),
+            transform_prev : self.transform.global_for_render_prev.as_slice().try_into().unwrap(),
+            transform_inverted : self.transform.global_for_render.try_inverse().unwrap().as_slice().try_into().unwrap(),
+            transform_prev_inverted : self.transform.global_for_render_prev.try_inverse().unwrap().as_slice().try_into().unwrap(),
+            projection : self.projection.as_slice().try_into().unwrap(),
+            projection_inverted : self.projection.try_inverse().unwrap().as_slice().try_into().unwrap(),
         }
     }
+}
+impl GameObject for CameraObject
+{
+    fn visual(&self) -> Option<&dyn super::AbstractVisualObject>
+    {
+        None
+    }
+
+    fn visual_mut(&mut self) -> Option<&mut dyn super::AbstractVisualObject>
+    {
+        None
+    }
+
+    fn camera(&self) -> Option<&dyn super::AbstractCameraObject>
+    {
+        Some(self)
+    }
+
+    fn camera_mut(&mut self) -> Option<&mut dyn super::AbstractCameraObject>
+    {
+        Some(self)
+    }
+
+    impl_gameobject!(CameraObject);
 }

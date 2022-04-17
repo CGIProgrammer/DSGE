@@ -1,6 +1,7 @@
 /// Псевдонимы для типов `nalgebra`
 
 use crate::texture::TexturePixelFormat;
+use nalgebra;
 
 pub trait NalgebraPixelType
 {

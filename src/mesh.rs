@@ -5,7 +5,7 @@ use super::utils::{read_struct};
 use std::path::Path;
 use super::types::*;
 use std::sync::Arc;
-
+use bytemuck::{Pod, Zeroable};
 use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
 use vulkano::device::Device;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
@@ -42,7 +42,8 @@ impl Vertex {
 }
 
 /// Представление вершины для vulkano
-#[derive(Copy, Clone, Default)]
+#[repr(C)]
+#[derive(Copy, Clone, Default, Pod, Zeroable)]
 pub struct VkVertex {
     pub v_pos: [f32; 3],
     pub v_nor: [f32; 3],
@@ -271,17 +272,17 @@ impl MeshBuilder
         let mut min_x = 9999.0;
         let mut min_y = 9999.0;
         for vert in &VERTICES {
-            if vert.position.0 > max_x {
-                max_x = vert.position.0;
+            if vert.position[0] > max_x {
+                max_x = vert.position[0];
             }
-            if vert.position.1 > max_y {
-                max_y = vert.position.1;
+            if vert.position[1] > max_y {
+                max_y = vert.position[1];
             }
-            if vert.position.0 < min_x {
-                min_x = vert.position.0;
+            if vert.position[0] < min_x {
+                min_x = vert.position[0];
             }
-            if vert.position.1 < min_y {
-                min_y = vert.position.1;
+            if vert.position[1] < min_y {
+                min_y = vert.position[1];
             }
         }
         min_x /= 100.0;
@@ -291,8 +292,8 @@ impl MeshBuilder
         println!("min {}, {}", min_x, min_y);
         println!("max {}, {}", max_x, max_y);
         for i in 0..VERTICES.len() {
-            let pos = Vec3::new(VERTICES[i].position.0 / 100.0, VERTICES[i].position.1 / 100.0, VERTICES[i].position.2 / 100.0);
-            let nor = Vec3::new(NORMALS[i].normal.0, NORMALS[i].normal.1, NORMALS[i].normal.2);
+            let pos = Vec3::new(VERTICES[i].position[0] / 100.0, VERTICES[i].position[1] / 100.0, VERTICES[i].position[2] / 100.0);
+            let nor = Vec3::new(NORMALS[i].normal[0], NORMALS[i].normal[1], NORMALS[i].normal[2]);
             let vert = Vertex{
                 v_pos: mat * pos,
                 v_nor: mat * nor,

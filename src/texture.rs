@@ -22,7 +22,8 @@ use vulkano::image::{
     MipmapsCount,
     view::{
         ImageView,
-        ImageViewAbstract
+        ImageViewAbstract,
+        //ImageViewCreateInfo
     }
 };
 
@@ -31,6 +32,7 @@ pub use vulkano::image::view::ImageViewType as TextureType;
 
 pub use vulkano::sampler::{
     Sampler as TextureSampler,
+    SamplerCreateInfo,
     Filter as TextureFilter,
     SamplerMipmapMode as MipmapMode,
     SamplerAddressMode as TextureRepeatMode,
@@ -71,7 +73,7 @@ pub struct Texture
     v_repeat: TextureRepeatMode,
     w_repeat: TextureRepeatMode,
     mip_lod_bias: f32,
-    max_anisotropy: f32,
+    max_anisotropy: Option<f32>,
     min_lod: f32,
     max_lod: f32,
 }
@@ -138,7 +140,7 @@ impl Texture
             v_repeat: TextureRepeatMode::MirroredRepeat,
             w_repeat: TextureRepeatMode::MirroredRepeat,
             mip_lod_bias: 0.0,
-            max_anisotropy: 1.0,
+            max_anisotropy: None,
             min_lod: 0.0,
             max_lod: 0.0
         }
@@ -151,7 +153,7 @@ impl Texture
 
     pub fn ty(&self) -> TextureType
     {
-        self._vk_image_view.ty()
+        self._vk_image_view.view_type()
     }
 
     /// Создаёт пустое изображение, которое можно использовать для записи
@@ -180,15 +182,14 @@ impl Texture
     pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let img_dims = img.image().dimensions();
-        let sampler_builder = TextureSampler::start(device.clone());
-        let sampler = sampler_builder
-            .address_mode_u(TextureRepeatMode::ClampToEdge)
-            .address_mode_v(TextureRepeatMode::ClampToEdge)
-            .address_mode_w(TextureRepeatMode::ClampToEdge)
-            .mipmap_mode(MipmapMode::Nearest)
-            .anisotropy(None)
-            .min_filter(TextureFilter::Nearest)
-            .mag_filter(TextureFilter::Nearest).build().unwrap();
+        let sampler = TextureSampler::new(device.clone(), SamplerCreateInfo {
+            address_mode : [TextureRepeatMode::ClampToEdge, TextureRepeatMode::ClampToEdge, TextureRepeatMode::ClampToEdge],
+            mipmap_mode : MipmapMode::Nearest,
+            anisotropy : None,
+            min_filter : TextureFilter::Nearest,
+            mag_filter : TextureFilter::Nearest,
+            ..Default::default()
+        }).unwrap();
 
         let pix_fmt = TexturePixelFormat::from_vk_format(img.image().format())?;
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
@@ -210,7 +211,7 @@ impl Texture
             v_repeat : TextureRepeatMode::Repeat,
             w_repeat : TextureRepeatMode::Repeat,
             mip_lod_bias : 0.0,
-            max_anisotropy : 1.0,
+            max_anisotropy : None,
             min_lod : 0.0,
             max_lod : 1.0,
         }))
@@ -243,6 +244,7 @@ impl Texture
                         texture_builder.build_immutable_compressed(&mut buf_reader, queue)
                     },
                     _ => {
+                        //panic!("Загрузка текстур форматов кроме dds и ktx отключена");
                         texture_builder.build_immutable(&mut buf_reader, queue)
                     }
                 }
@@ -290,7 +292,7 @@ impl Texture
 
     /// Задаёт степень анизотропной фльтрации.
     /// max_aniso - степень фильтрации
-    pub fn set_anisotropy(&mut self, max_aniso: f32)
+    pub fn set_anisotropy(&mut self, max_aniso: Option<f32>)
     {
         self.max_anisotropy = max_aniso;
     }
@@ -334,7 +336,7 @@ impl Texture
     }
 
     /// Степень анизотропии
-    pub fn anisotropy(&self) -> f32
+    pub fn anisotropy(&self) -> Option<f32>
     {
         self.max_anisotropy
     }
@@ -389,18 +391,16 @@ impl Texture
     /// Обновление сэмплера текстуры
     pub fn update_sampler(&mut self)
     {
-        let mut builder = TextureSampler::start(self._vk_device.clone());
-        builder = builder
-            .address_mode_u(self.u_repeat)
-            .address_mode_v(self.v_repeat)
-            .address_mode_w(self.w_repeat)
-            .mag_filter(self.mag_filter)
-            .min_filter(self.min_filter)
-            .mipmap_mode(self.mip_mode)
-            .mip_lod_bias(self.mip_lod_bias)
-            .anisotropy(Some(self.max_anisotropy))
-            .lod(self.min_lod..=self.max_lod);
-        self._vk_sampler = builder.build().unwrap();
+        self._vk_sampler = TextureSampler::new(self._vk_device.clone(), SamplerCreateInfo {
+            address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
+            mag_filter : self.mag_filter,
+            min_filter : self.min_filter,
+            mipmap_mode : self.mip_mode,
+            mip_lod_bias : self.mip_lod_bias,
+            anisotropy : self.max_anisotropy,
+            lod : self.min_lod..=self.max_lod,
+            ..Default::default()
+        }).unwrap();
     }
 
     pub fn clear_color(&mut self, queue: Arc<Queue>)
@@ -469,7 +469,7 @@ pub struct TextureBuilder
     v_repeat: TextureRepeatMode,
     w_repeat: TextureRepeatMode,
     mip_lod_bias: f32,
-    max_anisotropy: f32,
+    max_anisotropy: Option<f32>,
     min_lod: f32,
     max_lod: f32,
 }
@@ -513,7 +513,7 @@ impl TextureBuilder
     }
 
     /// Задаёт степень анизотропии
-    pub fn anisotropy(&mut self, max_aniso: f32) -> &mut Self
+    pub fn anisotropy(&mut self, max_aniso: Option<f32>) -> &mut Self
     {
         self.max_anisotropy = max_aniso;
         self
@@ -557,26 +557,25 @@ impl TextureBuilder
             }
         ).unwrap();
 
-        let mut sampler_builder = TextureSampler::start(device.clone());
-        sampler_builder = sampler_builder
-            .address_mode_u(self.u_repeat)
-            .address_mode_v(self.v_repeat)
-            .address_mode_w(self.w_repeat)
-            .mag_filter(self.mag_filter)
-            .min_filter(self.min_filter)
-            .mipmap_mode(self.mip_mode)
-            .mip_lod_bias(self.mip_lod_bias)
-            .anisotropy(Some(self.max_anisotropy))
-            .lod(self.min_lod..=self.max_lod);
+        let sampler = TextureSampler::new(device.clone(), SamplerCreateInfo {
+            address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
+            mag_filter : self.mag_filter,
+            min_filter : self.min_filter,
+            mipmap_mode : self.mip_mode,
+            mip_lod_bias : self.mip_lod_bias,
+            anisotropy : self.max_anisotropy,
+            lod : self.min_lod..=self.max_lod,
+            ..Default::default()
+        }).unwrap();
 
         //img.
         Ok(Texture {
             name: self.name.to_string(),
             _vk_image_dims: dimensions,
-            _vk_image_view: ImageView::new(texture).unwrap(),
+            _vk_image_view: ImageView::new_default(texture).unwrap(),
             _vk_device: device.clone(),
             _pix_fmt: pix_fmt,
-            _vk_sampler: sampler_builder.build().unwrap(),
+            _vk_sampler: sampler,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -629,6 +628,15 @@ impl TextureBuilder
         }
         let mut compressed_img_bytes = vec!(0u8; data_size);
         reader.read(compressed_img_bytes.as_mut_slice()).unwrap();
+        //let mip_levels = MipmapsCount::Specific(header.mip_levels());
+        /*let (texture, tex_future) = ImmutableImage::from_iter(
+            compressed_img_bytes,
+            dimensions,
+            mip_levels,
+            header.pixel_format().vk_format(),
+            queue.clone()
+        ).unwrap();*/
+
         let (texture, tex_future) = Self::custom_immutable_image(
             compressed_img_bytes.as_slice(),
             dimensions,
@@ -642,26 +650,25 @@ impl TextureBuilder
             self.mip_mode = MipmapMode::Nearest;
         }
 
-        let mut sampler_builder = TextureSampler::start(device.clone());
-        sampler_builder = sampler_builder
-            .address_mode_u(self.u_repeat)
-            .address_mode_v(self.v_repeat)
-            .address_mode_w(self.w_repeat)
-            .mag_filter(self.mag_filter)
-            .min_filter(self.min_filter)
-            .mipmap_mode(self.mip_mode)
-            .mip_lod_bias(self.mip_lod_bias)
-            .anisotropy(Some(self.max_anisotropy))
-            .lod(self.min_lod..=self.max_lod);
+        let sampler = TextureSampler::new(device.clone(), SamplerCreateInfo {
+            address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
+            mag_filter : self.mag_filter,
+            min_filter : self.min_filter,
+            mipmap_mode : self.mip_mode,
+            mip_lod_bias : self.mip_lod_bias,
+            anisotropy : self.max_anisotropy,
+            lod : self.min_lod..=self.max_lod,
+            ..Default::default()
+        }).unwrap();
 
         tex_future.flush().unwrap();
         Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
-            _vk_image_view: ImageView::new(texture).unwrap(),
+            _vk_image_view: ImageView::new_default(texture).unwrap(),
             _vk_device: device.clone(),
             _pix_fmt: header.pixel_format(),
-            _vk_sampler: sampler_builder.build().unwrap(),
+            _vk_sampler: sampler,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -710,26 +717,25 @@ impl TextureBuilder
             MipmapMode::Nearest => 0.0
         };
 
-        let mut sampler_builder = TextureSampler::start(queue.device().clone());
-        sampler_builder = sampler_builder
-            .address_mode_u(self.u_repeat)
-            .address_mode_v(self.v_repeat)
-            .address_mode_w(self.w_repeat)
-            .mag_filter(self.mag_filter)
-            .min_filter(self.min_filter)
-            .mipmap_mode(self.mip_mode)
-            .mip_lod_bias(self.mip_lod_bias)
-            .anisotropy(Some(self.max_anisotropy))
-            .lod(self.min_lod..=self.max_lod);
+        let sampler = TextureSampler::new(queue.device().clone(), SamplerCreateInfo {
+            address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
+            mag_filter : self.mag_filter,
+            min_filter : self.min_filter,
+            mipmap_mode : self.mip_mode,
+            mip_lod_bias : self.mip_lod_bias,
+            anisotropy : self.max_anisotropy,
+            lod : self.min_lod..=self.max_lod,
+            ..Default::default()
+        }).unwrap();
 
         tex_future.flush().unwrap();
         Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
-            _vk_image_view: ImageView::new(texture).unwrap(),
+            _vk_image_view: ImageView::new_default(texture).unwrap(),
             _vk_device: queue.device().clone(),
             _pix_fmt: pix_fmt,
-            _vk_sampler: sampler_builder.build().unwrap(),
+            _vk_sampler: sampler,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -758,6 +764,8 @@ impl TextureBuilder
         ImageCreationError,
     >
     {
+        //println!("Dimensions = {:?}", dimensions);
+        //println!("mipmap_count = {:?}", mip_map_count);
         let device = queue.device();
         let usage = ImageUsage {
             transfer_destination: true,
@@ -811,7 +819,7 @@ impl TextureBuilder
             let block_size = u64s * 8;
             let blocks = ((width+3)/4)*((height+3)/4);
             let size = (blocks * block_size) as usize;
-
+            println!("Загрузка mip-уровня {} ({}x{})", i, width, height);
             let source = CpuAccessibleBuffer::from_iter(
                 device.clone(),
                 BufferUsage::transfer_source(),
@@ -829,8 +837,11 @@ impl TextureBuilder
                 i,
             )
             .unwrap();
-            width  /= 2;
-            height /= 2;
+            width  = width  / 2;
+            height = height / 2;
+            if width==0 || height==0 {
+                break;
+            }
         }
 
         let cb = cbb.build().unwrap();

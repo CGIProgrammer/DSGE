@@ -1,12 +1,13 @@
 extern crate winit;
 extern crate vulkano;
+extern crate bytemuck;
 
 mod teapot;
 mod time;
 
 use std::sync::Arc;
 
-use vulkano::instance::Instance;
+use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::Version;
 use vulkano_win::VkSurfaceBuild;
 use winit::event::{Event, WindowEvent};
@@ -23,6 +24,7 @@ mod references;
 mod framebuffer;
 mod texture;
 mod material;
+#[macro_use]
 mod game_object;
 mod renderer;
 mod components;
@@ -48,8 +50,7 @@ impl Radian for f32
 pub struct Application {
     renderer: renderer::Renderer,
     event_pump: EventLoop<()>,
-    object : RcBox<MeshObject>,
-    monkey : RcBox<MeshObject>,
+    root_objects: Vec<RcBox<dyn GameObject>>,
     counter: f32
 }
 
@@ -57,7 +58,11 @@ impl Application {
     pub fn new(title: &str, width: u16, height: u16, fullscreen: bool, _vsync: bool) -> Result<Self, String>
     {
         let required_extensions = vulkano_win::required_extensions();
-        let vk_instance = Instance::new(None, Version::V1_2, &required_extensions, None).unwrap();
+        let vk_instance = Instance::new(InstanceCreateInfo {
+            enabled_extensions: required_extensions,
+            max_api_version: Some(Version::major_minor(1, 2)),
+            ..Default::default()
+        }).unwrap();
         
         let event_loop = EventLoop::new();
         let wsize = winit::dpi::PhysicalSize { width, height };
@@ -68,20 +73,26 @@ impl Application {
             .build_vk_surface(&event_loop, vk_instance.clone())
             .unwrap();
 
+        // Инициализация рендера
         let mut renderer = renderer::Renderer::from_winit(vk_instance, surface, _vsync);
-        let mut texture = Texture::from_file(renderer.queue().clone(), "image_img.png").unwrap();
-        texture.set_anisotropy(16.0);
+
+        // Загрузка теустуры
+        let mut texture = Texture::from_file(renderer.queue().clone(), "data/texture/image_img.dds").unwrap();
+        texture.set_anisotropy(Some(1.0));
         texture.set_mipmap(MipmapMode::Linear);
         texture.set_mag_filter(TextureFilter::Linear);
         texture.update_sampler();
 
-        let mut mesh = Mesh::builder("default teapot");
-        mesh.push_teapot();
-        let mesh = mesh.build_mutex(renderer.device().clone()).unwrap();
+        // Загрузка полисеток
+        let mut monkey_subdiv_1 = Mesh::builder("default teapot");
+        monkey_subdiv_1.push_from_file("data/mesh/monkey_subdiv_1.mesh");
+        //mesh.push_teapot();
+        let monkey_subdiv_1 = monkey_subdiv_1.build_mutex(renderer.device().clone()).unwrap();
         let mut monkey = Mesh::builder("monkey");
-        monkey.push_from_file("data/mesh/monkey.mesh");
+        monkey.push_from_file("data/mesh/monkey_subdiv_1.mesh");
         let monkey = monkey.build_mutex(renderer.device().clone()).unwrap();
         
+        // Создание материала
         let mut material = material::MaterialBuilder::start(renderer.device().clone());
         material
             .define("diffuse_map", "")
@@ -92,13 +103,23 @@ impl Application {
             .add_numeric_parameter("metallic", 0.0.into());
         let material = material.build_mutex(renderer.device().clone());
 
-        renderer.set_camera(RcBox::construct(CameraObject::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0)));
+        // Создание камеры
+        let camera = CameraObject::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        renderer.set_camera(camera);
+
+        // Создание объектов
+        let o1 = MeshObject::new(monkey_subdiv_1, material.clone());
+        let o2 = MeshObject::new(monkey.clone(), material.clone());
+        let o2_satellite = MeshObject::new(monkey, material);
+        o2_satellite.lock().unwrap().set_parent(o2.clone());
+        o2_satellite.lock().unwrap().transform_mut().local[12] += 1.0;
+
+        //o2.take_mut().se
 
         Ok(Self {
             renderer: renderer,
             event_pump: event_loop,
-            object: RcBox::construct(MeshObject::new(mesh, material.clone())),
-            monkey: RcBox::construct(MeshObject::new(monkey, material)),
+            root_objects: vec![o1, o2],
             counter: 0.0
         })
     }
@@ -134,8 +155,8 @@ impl Application {
                         -self.counter.sin(), 0.0, self.counter.cos(), 0.0,
                          0.0, 0.0, 0.0, 1.0,
                     );
-                    let mut obj = self.object.take_mut();
-                    let mut monkey = self.monkey.take_mut();
+                    let mut obj = self.root_objects[0].lock().unwrap();
+                    let mut monkey = self.root_objects[1].lock().unwrap();
                     let mut obj_transform = obj.transform_mut();
                     let mut mon_transform = monkey.transform_mut();
                     
@@ -144,7 +165,13 @@ impl Application {
                         0.0, 1.0, 0.0,  0.0,
                         0.0, 0.0, 1.0,  0.0,
                         0.0, 0.0, 0.0,  1.0,
-                    ) * transform;
+                    ) * transform * 
+                    types::Mat4::new(
+                        0.5, 0.0, 0.0,  0.0,
+                        0.0, 0.5, 0.0,  0.0,
+                        0.0, 0.0, 0.5,  0.0,
+                        0.0, 0.0, 0.0,  1.0,
+                    );
                     let tr2 = types::Mat4::new(
                         1.0, 0.0, 0.0, -1.0,
                         0.0, 1.0, 0.0,  0.0,
@@ -157,23 +184,21 @@ impl Application {
                         0.0, 0.0, 0.5,  0.0,
                         0.0, 0.0, 0.0,  1.0,
                     );
-                    obj_transform.global_for_render_prev = obj_transform.global_for_render;
-                    obj_transform.global_for_render = tr1;
-                    obj_transform.global = tr1;
-
-                    mon_transform.global_for_render_prev = mon_transform.global_for_render;
-                    mon_transform.global_for_render = tr2;
-                    mon_transform.global = tr2;
-
+                    //obj_transform.global = tr1;
+                    //mon_transform.global = tr2;
+                    obj_transform.local = tr1;
+                    mon_transform.local = tr2;
                     drop(mon_transform);
-                    drop(monkey);
                     drop(obj_transform);
+                    drop(monkey);
                     drop(obj);
 
                     self.renderer.update_timer(&tu);
                     self.renderer.begin_geametry_pass();
-                    self.renderer.draw(self.object.clone());
-                    self.renderer.draw(self.monkey.clone());
+                    for obj in &self.root_objects{
+                        obj.lock().unwrap().next_frame();
+                        self.renderer.draw(obj.clone());
+                    }
                     self.renderer.end_frame();
                 },
                 _ => { }
@@ -183,6 +208,6 @@ impl Application {
 }
 
 fn main() {
-    let app = Application::new("DSGE VK", 800, 600, false, true).unwrap();
+    let app = Application::new("DSGE VK", 320, 300, false, false).unwrap();
     app.event_loop();
 }
