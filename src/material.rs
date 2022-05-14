@@ -23,9 +23,11 @@ type ColorRGBA = Vec4;
 
 pub type MaterialRef = RcBox<Material>;
 
+pub static SHADER_CAMERA_SET : usize = 3;
 pub static SHADER_TEXTURE_SET : usize = 2;
 pub static SHADER_MATERIAL_DATA_SET : usize = 1;
-pub static SHADER_VARIABLES_SET : usize = 0;
+pub static SHADER_TRANSFORM_SET : usize = 0;
+//pub static SHADER_VARIABLES_SET : usize = 0;
 
 
 /// Слот числовых параметров для материала
@@ -151,8 +153,9 @@ impl MaterialBuilder
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET).unwrap()
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET).unwrap();
+            //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
+            .uniform_constant::<GOTransformUniform>("object").unwrap()
+            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_CAMERA_SET).unwrap();
         
         // Шейдер для скелетной деформации
         // TODO сделать нормальную реализацию. Сейчас это просто копия базового вершинного шейдера материала
@@ -163,8 +166,9 @@ impl MaterialBuilder
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            .uniform_autoincrement::<GOTransformUniform>("object", SHADER_VARIABLES_SET).unwrap()
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_VARIABLES_SET).unwrap();
+            .uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
+            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_CAMERA_SET).unwrap();
 
         builder.fragment_base
             .input("position_prev", AttribType::FVec4)
@@ -336,6 +340,7 @@ impl Material
         shader.cull_faces = CullMode::Front;
         shader.use_subpass(render_pass, subpass_id);
         if !shader.is_set_initialized(SHADER_TEXTURE_SET) {
+            //println!("Init base_shader");
             let mut numeric_data = Vec::<f32>::with_capacity(self.numeric_slots.len());
             for num_slot in &self.numeric_slots {
                 let (val, size) = match num_slot {
@@ -356,7 +361,7 @@ impl Material
                 numeric_data.push(0.0);
             }
             shader.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
-            shader.build_uniform_sets();
+            shader.build_uniform_sets(&[SHADER_MATERIAL_DATA_SET, SHADER_TEXTURE_SET]);
         }
         //shader.clear_uniform_set(SHADER_VARIABLES_SET);
         shader
