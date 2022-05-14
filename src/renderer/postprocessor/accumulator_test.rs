@@ -13,7 +13,7 @@ impl Postprocessor
             .input("vectors")
             .input("accumulator")
             .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
-            .output("accumulator_out", TexturePixelFormat::RGBA16f, TextureFilter::Linear, true)
+            .output("accumulator_out", TexturePixelFormat::R16G16B16A16_SFLOAT, TextureFilter::Linear, true)
             .code("
             void main()
             {
@@ -30,7 +30,7 @@ impl Postprocessor
                     accumulator_out = vec4(0.0);
                 }
                 accumulator_out.a = 1.0;
-                swapchain_out.rgb = pow(accumulator_out.rgb, vec3(1.0/2.2)); //mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
+                swapchain_out.rgb = pow(accumulator_out.rgb, vec3(1.0)); //mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
                 swapchain_out.a = 1.0;
             }");
         
