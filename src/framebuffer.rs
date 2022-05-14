@@ -48,6 +48,11 @@ impl Framebuffer
         })
     }
 
+    pub fn viewport(&self) -> &Viewport
+    {
+        return &self._viewport;
+    }
+
     /// Присоединение "цветного" изображения к выходу фреймбуфера
     pub fn add_color_attachment(&mut self, att: TextureRef, default_val : FramebufferAttachmentDefaultValue) -> Result<(), String>
     {
@@ -129,12 +134,12 @@ use vulkano::render_pass::{RenderPass};
 
 pub trait FramebufferBinder
 {
-    fn bind_framebuffer(&mut self, framebuffer: &mut Framebuffer, render_pass: Arc<RenderPass>) -> Result<&mut Self, String>;
+    fn bind_framebuffer(&mut self, framebuffer: &mut Framebuffer, render_pass: Arc<RenderPass>, secondary: bool) -> Result<&mut Self, String>;
 }
 
 impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
 {
-    fn bind_framebuffer(&mut self, fb: &mut Framebuffer, render_pass: Arc<RenderPass>) -> Result<&mut Self, String>
+    fn bind_framebuffer(&mut self, fb: &mut Framebuffer, render_pass: Arc<RenderPass>, secondary: bool) -> Result<&mut Self, String>
     {
         let mut clear_values = Vec::new();
         if fb._vk_fb.is_none() {
@@ -151,7 +156,7 @@ impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
         }
         self.begin_render_pass(
             fb._vk_fb.as_ref().unwrap().clone(),
-            SubpassContents::Inline,
+            if secondary { SubpassContents::SecondaryCommandBuffers } else { SubpassContents::Inline },
             clear_values
         ).unwrap();
         
