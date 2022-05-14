@@ -74,14 +74,14 @@ impl KTXHeader {
     pub fn get_pixel_format(&self) -> TexturePixelFormat {
         
         match self._gl_internal_format {
-            super::pixel_format::GL_COMPRESSED_RGB8_ETC2 => TexturePixelFormat::Etc2RGB,
-            super::pixel_format::GL_COMPRESSED_RGBA8_ETC2_EAC => TexturePixelFormat::Etc2RGBA,
-            super::pixel_format::GL_COMPRESSED_R11_EAC => TexturePixelFormat::EacR11,
-            super::pixel_format::GL_COMPRESSED_RG11_EAC => TexturePixelFormat::EacRG11,
-            super::pixel_format::GL_COMPRESSED_RGB_S3TC_DXT1_EXT => TexturePixelFormat::S3tcDXT1,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT1_EXT => TexturePixelFormat::S3tcDXT1a,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT3_EXT => TexturePixelFormat::S3tcDXT3,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT5_EXT => TexturePixelFormat::S3tcDXT5,
+            super::pixel_format::GL_COMPRESSED_RGB8_ETC2 => TexturePixelFormat::ETC2_R8G8B8_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA8_ETC2_EAC => TexturePixelFormat::ETC2_R8G8B8A8_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_R11_EAC => TexturePixelFormat::EAC_R11_UNORM_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RG11_EAC => TexturePixelFormat::EAC_R11G11_UNORM_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGB_S3TC_DXT1_EXT => TexturePixelFormat::BC1_RGB_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT1_EXT => TexturePixelFormat::BC1_RGBA_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT3_EXT => TexturePixelFormat::BC3_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT5_EXT => TexturePixelFormat::BC5_UNORM_BLOCK,
             _ => panic!("Неизвестный формат сжатия")
         }
     }
