@@ -28,6 +28,17 @@ impl CameraObject
         result.take_mut().transform.set_owner(result.clone());
         result
     }
+	
+	fn fork_inner(&self) -> RcBox<dyn GameObject>
+	{
+		let result = Self {
+            transform : self.transform.clone(),
+            projection : self.projection,
+        };
+        let result = RcBox::construct(result);
+        result.take_mut().transform.set_owner(result.clone());
+        result
+	}
 }
 
 impl AbstractCameraObject for CameraObject {}
