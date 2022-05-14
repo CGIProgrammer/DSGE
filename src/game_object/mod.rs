@@ -80,7 +80,7 @@ impl GOTransform
     }
 }
 
-pub trait GameObject
+pub trait GameObject: Send + Sync
 {
     fn apply_transform(&mut self);
     fn transform(&self) -> &GOTransform;
@@ -94,6 +94,7 @@ pub trait GameObject
     fn add_child(&mut self, child: RcBox<dyn GameObject>);
     fn remove_parent(&mut self);
     fn children(&self) -> Vec<RcBox<dyn GameObject>>;
+    fn fork(&self) -> RcBox<dyn GameObject>;
     //fn set_relation(child: RcBox<dyn GameObject>, parent: RcBox<dyn GameObject>);
 }
 
@@ -217,6 +218,11 @@ macro_rules! impl_gameobject
                 }
             }
             next_frame_closure(self);
+        }
+
+        fn fork(&self) -> RcBox<dyn GameObject>
+        {
+            self.fork_inner()
         }
     };
 }
