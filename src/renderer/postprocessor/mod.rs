@@ -21,6 +21,7 @@ type StageOutputIndex = u64;
 mod accumulator_test;
 mod rolling_hills;
 mod copy;
+mod fsr;
 
 /// Выход ноды постобработки.
 /// Задаётся:
@@ -215,7 +216,14 @@ impl RenderStageBuilder
 
     pub fn output(&mut self, name: &str, pix_fmt: TexturePixelFormat, filtering: TextureFilter, accumulator: bool) -> &mut Self
     {
-        self._fragment_shader.output(name, AttribType::FVec4);
+        let glsl_type = match pix_fmt.subpixels() {
+            1 => AttribType::Float,
+            2 => AttribType::FVec2,
+            3 => AttribType::FVec3,
+            4 => AttribType::FVec4,
+            _ => panic!()
+        };
+        self._fragment_shader.output(name, glsl_type);
         self._output_accum.push((pix_fmt, accumulator, filtering));
         self
     }
@@ -382,7 +390,7 @@ impl Postprocessor
             _buffers: Vec::new(),
             _busy_buffers: HashMap::new(),
             _framebuffer: Framebuffer::new(width, height),
-            _screen_plane: Mesh::make_screen_plane(device.clone()).unwrap(),
+            _screen_plane: Mesh::make_screen_plane(queue.clone()).unwrap(),
             _image_inputs: HashMap::new(),
             //_uniform_inputs: String::new(),
             timer: Default::default(),
@@ -392,7 +400,7 @@ impl Postprocessor
         }
     }
 
-    pub fn uniform_to_all<T>(&mut self, name: &String, data: &T)
+    pub fn uniform_to_all<T>(&mut self, name: &String, data: T)
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         for (_, rs) in &self._stages {
@@ -400,7 +408,7 @@ impl Postprocessor
         }
     }
 
-    pub fn uniform_to_stage<T>(&mut self, stage_id: StageIndex, name: &String, data: &T)
+    pub fn uniform_to_stage<T>(&mut self, stage_id: StageIndex, name: &String, data: T)
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         match self._stages.get(&stage_id) {
@@ -493,9 +501,9 @@ impl Postprocessor
     /// Получение текстуры-выхода
     /// Input потому, что это вход для нулевой ноды, являющейся выходом дерева
     #[allow(dead_code)]
-    pub fn get_output(&self, name: &StageInputIndex) -> Option<TextureRef>
+    pub fn get_output(&self, name: StageInputIndex) -> Option<TextureRef>
     {
-        let result = self._outputs.get(name);
+        let result = self._outputs.get(&name);
         if result.is_some() {
             Some(result.unwrap().clone())
         } else {
@@ -534,7 +542,7 @@ impl Postprocessor
     /// TODO: сделать проверку неуказанных циклов, иначе при наличии циклов без
     /// накопительных буферов будет переполняться стек.
     #[allow(dead_code)]
-    pub fn execute_graph(&mut self) -> PrimaryAutoCommandBuffer
+    pub fn execute_graph(&mut self) -> AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
     {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self._device.clone(),
@@ -554,7 +562,7 @@ impl Postprocessor
         }
         
         self._image_inputs.clear();
-        command_buffer_builder.build().unwrap()
+        command_buffer_builder //.build().unwrap()
     }
 
     /// Запрос свободного изображения
@@ -661,12 +669,12 @@ impl Postprocessor
         program.use_subpass(render_pass.clone(), 0);
         
         program.uniform_by_name(
-            &RenderResolution{
+            RenderResolution{
                 width:  stage._resolution.width() as f32,
                 height: stage._resolution.height() as f32,
                 ..Default::default()
             }, &format!("resolution")).unwrap();
-        program.uniform_by_name(&self.timer, &format!("timer")).unwrap();
+        program.uniform_by_name(self.timer, &"timer".to_string()).unwrap();
 
         for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._image_inputs {
             if render_stage_id == &id {
@@ -716,9 +724,9 @@ impl Postprocessor
         fb.view_port(stage._resolution.width() as _, stage._resolution.height() as _);
         let prog = &mut *_prog.take();
         command_buffer_builder
-            .bind_framebuffer(&mut *fb, render_pass.clone()).unwrap()
+            .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
             .bind_shader_program(prog).unwrap()
-            .bind_shader_uniforms(prog).unwrap()
+            .bind_shader_uniforms(prog, false).unwrap()
             .bind_mesh(&*self._screen_plane.take()).unwrap()
             .end_render_pass().unwrap();
         drop(fb);
