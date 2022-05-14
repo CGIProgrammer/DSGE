@@ -13,7 +13,7 @@ use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
 use winit::window::{Window};
-
+use crate::vulkano::device::DeviceOwned;
 use std::{sync::{Arc, LockResult}, marker::PhantomData, ffi::c_void};
 
 use crate::texture::{Texture, TexturePixelFormat, TextureDimensions, TextureRef, TexturePixelFormatFeatures};
@@ -147,17 +147,182 @@ impl GBuffer
     }
 }
 
+//#[derive(Clone)]
+pub enum RenderSurface
+{
+    Winit {
+        surface: Arc<Surface<Window>>,
+        swapchain: Arc<Swapchain<Window>>,
+        swapchain_images: Vec<Arc<SwapchainImage<Window>>>,
+        swapchain_textures: Vec<TextureRef>,
+    },
+    Offscreen {
+        image: TextureRef,
+        dimensions: [u16; 2]
+    }
+}
+
+impl RenderSurface
+{
+    pub fn dimensions(&self) -> [u16; 2]
+    {
+        match self {
+            Self::Winit{surface, ..} => surface.window().inner_size().into(),
+            Self::Offscreen{image: _, dimensions} => *dimensions
+        }
+    }
+
+    pub fn acquire_image(&self) -> Result<(TextureRef, usize, bool, Option<vulkano::swapchain::SwapchainAcquireFuture<Window>>), AcquireError>
+    {
+        match self {
+            Self::Offscreen {image, ..} => Ok((image.clone(), 0, false, None)),
+            Self::Winit{surface: _, swapchain, swapchain_images: _, swapchain_textures, ..} => {
+                let (image_num, suboptimal, acquire_future) =
+                match swapchain::acquire_next_image(swapchain.clone(), None) {
+                    Ok(r) => r,
+                    Err(AcquireError::OutOfDate) => {
+                        return Err(AcquireError::OutOfDate);
+                    }
+                    Err(e) => panic!("Failed to acquire next image: {:?}", e),
+                };
+                Ok((swapchain_textures[image_num].clone(), image_num, suboptimal, Some(acquire_future)))
+            }
+        }
+    }
+
+    pub fn winit(surface: Arc<Surface<Window>>, device: Arc<Device>, vsync: bool) -> Result<Self, String>
+    {
+        let physical_device = device.physical_device();
+        let caps = physical_device.surface_capabilities(&surface, Default::default()).unwrap();
+        let composite_alpha = caps.supported_composite_alpha.iter().next().unwrap();
+
+        let formats: Vec<(vulkano::format::Format, ColorSpace)> =
+            physical_device.surface_formats(&surface, Default::default()).unwrap()
+            .into_iter()
+            .filter_map(|a| {
+                println!("{:?}: {:?}", a.0, a.1);
+                match a {
+                    (
+                        vulkano::format::Format::R8G8B8_SRGB   |
+                        vulkano::format::Format::R8G8B8A8_SRGB |
+                        vulkano::format::Format::B8G8R8_SRGB   |
+                        vulkano::format::Format::B8G8R8A8_SRGB |
+                        vulkano::format::Format::A8B8G8R8_SRGB_PACK32,
+                        ColorSpace::SrgbNonLinear
+                    ) => Some(a),
+                    _ => None
+                }
+            })
+            .collect::<_>();
+        
+        let (swapchain, sc_images) = Swapchain::new(device.clone(), surface.clone(), SwapchainCreateInfo{
+            min_image_count: caps.min_image_count,
+            image_format: Some(formats[0].0),
+            image_extent: surface.window().inner_size().into(),
+            image_usage: ImageUsage::color_attachment(),
+            composite_alpha: composite_alpha,
+            present_mode: if vsync { PresentMode::Fifo } else { PresentMode::Immediate },
+            ..Default::default()
+        }).unwrap();
+        Ok(RenderSurface::Winit {
+            surface: surface,
+            swapchain: swapchain,
+            swapchain_images: sc_images.clone(),
+            swapchain_textures: sc_images.iter().map(|image|{
+                let cb = Texture::from_vk_image_view(
+                    ImageView::new_default(image.clone()).unwrap(),
+                    Some(image.clone()),
+                    device.clone()
+                ).unwrap();
+                cb.take_mut().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
+                cb.take_mut().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
+                cb.take_mut().update_sampler();
+                cb
+            }).collect::<Vec<_>>()
+        })
+    }
+
+    pub fn update_swapchain(&mut self)
+    {
+        let (surface, swapchain) = match self {
+            RenderSurface::Winit { ref surface, ref swapchain, .. } =>
+                (surface.clone(), swapchain.clone()),
+            RenderSurface::Offscreen { .. } => return
+        };
+        let dimensions: [u32; 2] = surface.window().inner_size().into();
+        let sc_create_info = swapchain.create_info();
+        let mut usage = sc_create_info.image_usage;
+        usage.transfer_source = true;
+        usage.transfer_destination = true;
+        let (new_swapchain, new_images) =
+            match swapchain.recreate(SwapchainCreateInfo{
+                    image_extent: dimensions,
+                    image_usage: usage,
+                    ..sc_create_info
+                }) {
+                Ok(r) => r,
+                Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
+            };
+            
+        let device = swapchain.device().clone();
+
+        let mut sc_textures = Vec::new();
+        //self._sc_textures.clear();
+        for image in &new_images
+        {
+            let cb = Texture::from_vk_image_view(
+                ImageView::new_default(image.clone()).unwrap(),
+                Some(image.clone()),
+                device.clone()
+            ).unwrap();
+            cb.take_mut().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
+            cb.take_mut().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
+            cb.take_mut().update_sampler();
+            sc_textures.push(cb);
+        }
+        match self {
+            RenderSurface::Winit {
+                surface: ref mut surf,
+                ref mut swapchain,
+                ref mut swapchain_images,
+                ref mut swapchain_textures,.. } =>
+                {
+                    *surf = surface;
+                    *swapchain = new_swapchain;
+                    *swapchain_images = new_images;
+                    *swapchain_textures = sc_textures;
+                },
+            RenderSurface::Offscreen { .. } => panic!()
+        };
+    }
+
+    pub fn offscreen(device: Arc<Device>, dimensions: [u16; 2], pix_fmt: TexturePixelFormat) -> Result<Self, String>
+    {
+        Ok(Self::Offscreen {
+            image: crate::texture::Texture::new_empty_mutex(
+                "Offscreen surface",
+                TextureDimensions::Dim2d {
+                    width: dimensions[0] as _,
+                    height: dimensions[1] as _,
+                    array_layers: 1 
+                },
+                pix_fmt,
+                device
+            )?,
+            dimensions: dimensions
+        })
+    }
+}
+
 /// Основная структура для рендеринга
 pub struct Renderer
 {
     _context : Arc<Instance>,
-    _vk_surface : Option<Arc<Surface<Window>>>,
+    _vk_surface : RenderSurface,
     _device : Arc<Device>,
     _queue : Arc<Queue>,
-    _swapchain : Arc<Swapchain<Window>>,
-    _sc_images : Vec<Arc<SwapchainImage<Window>>>,
-    _sc_textures : Vec<TextureRef>,
-    _last_sc_texture_id : u32,
+    //_swapchain : Option<(Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>)>,
+    //_sc_textures : Vec<TextureRef>,
 
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
@@ -168,7 +333,6 @@ pub struct Renderer
     _screen_plane : MeshRef,
     //_screen_plane_shader : ShaderProgramRef,
     _gbuffer : GBuffer,
-    _postprocess_pass : Arc<RenderPass>,
     _aspect : f32,
     _camera : Option<RcBox<dyn GameObject>>,
 
@@ -183,15 +347,23 @@ impl Renderer
     {
         &mut self._postprocessor
     }
+    pub fn render_result(&self) -> TextureRef
+    {
+        match self._vk_surface {
+            RenderSurface::Offscreen { ref image, .. } =>
+                image.clone(),
+            RenderSurface::Winit { surface: _, swapchain: _, swapchain_images: _, ref swapchain_textures } =>
+                swapchain_textures[0].clone()
+        }
+    }
 }
 
+use vulkano::device::DeviceCreationError;
 #[allow(dead_code)]
 impl Renderer
 {
-    pub fn from_winit(vk_instance : Arc<Instance>, win: Arc<Surface<Window>>, vsync: bool) -> Self
+    fn default_device(vk_instance : Arc<Instance>) -> Result<(Arc<Device>, impl ExactSizeIterator<Item = Arc<Queue>>), DeviceCreationError>
     {
-        let dimensions: [f32; 2] = win.window().inner_size().into();
-        println!("{:?}", dimensions);
         let device_extensions = DeviceExtensions {
             khr_swapchain: true,
             ..DeviceExtensions::none()
@@ -203,7 +375,8 @@ impl Renderer
             .filter_map(|p| {
                 p.queue_families()
                     .find(|&q| {
-                        q.supports_graphics() && q.supports_surface(&win).unwrap_or(false)
+                        q.supports_graphics()
+                        
                     })
                     .map(|q| (p, q))
             })
@@ -219,8 +392,6 @@ impl Renderer
             .unwrap();
         let features = Features {
             sampler_anisotropy: true,
-            //push_descriptor: true,
-            //extended_dynamic_state: true,
             .. Features::none()
         };
         let dev_info = DeviceCreateInfo {
@@ -231,8 +402,13 @@ impl Renderer
                 .union(&device_extensions),
             ..Default::default()
         };
-        let (device, mut queues) = Device::new(physical_device, dev_info).unwrap();
-        
+        Device::new(physical_device, dev_info)
+    }
+
+    pub fn offscreen(vk_instance : Arc<Instance>, dimensions: [u16; 2]) -> Self
+    {
+        let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
+        let physical_device = device.physical_device();
         println!(
             "Используется устройство: {} (type: {:?})",
             physical_device.properties().device_name,
@@ -240,91 +416,54 @@ impl Renderer
         );
 
         let queue = queues.next().unwrap();
-        let (swapchain, images) : (Arc<Swapchain<Window>>, Vec<Arc<SwapchainImage<Window>>>) = {
-            let caps = physical_device.surface_capabilities(&win, Default::default()).unwrap();
-            let composite_alpha = caps.supported_composite_alpha.iter().next().unwrap();
-    
-            let formats: Vec<(vulkano::format::Format, ColorSpace)> =
-                physical_device.surface_formats(&win, Default::default()).unwrap()
-                .into_iter()
-                .filter_map(|a| {
-                    println!("{:?}: {:?}", a.0, a.1);
-                    match a {
-                        (
-                            vulkano::format::Format::R8G8B8_SRGB   |
-                            vulkano::format::Format::R8G8B8A8_SRGB |
-                            vulkano::format::Format::B8G8R8_SRGB   |
-                            vulkano::format::Format::B8G8R8A8_SRGB |
-                            vulkano::format::Format::A8B8G8R8_SRGB_PACK32,
-                            ColorSpace::SrgbNonLinear
-                        ) => Some(a),
-                        _ => None
-                    }
-                })
-                .collect::<_>();
-            
-            Swapchain::new(device.clone(), win.clone(), SwapchainCreateInfo{
-                min_image_count: caps.min_image_count,
-                image_format: Some(formats[0].0),
-                image_extent: win.window().inner_size().into(),
-                image_usage: ImageUsage::color_attachment(),
-                composite_alpha: composite_alpha,
-                present_mode: if vsync { PresentMode::Fifo } else { PresentMode::Immediate },
-                ..Default::default()
-            }).unwrap()
-        };
-
-        let final_renderpass = RenderPassCreateInfo{
-            attachments: vec![
-            AttachmentDescription {
-                format: Some(swapchain.image_format()),
-                samples: SampleCount::Sample1,
-                load_op: vulkano::render_pass::LoadOp::Clear,
-                store_op: vulkano::render_pass::StoreOp::Store,
-                stencil_load_op: vulkano::render_pass::LoadOp::DontCare,
-                stencil_store_op: vulkano::render_pass::StoreOp::DontCare,
-                final_layout: ImageLayout::ColorAttachmentOptimal,
-                ..Default::default()
-            },
-            AttachmentDescription {
-                format: Some(TexturePixelFormat::D16_UNORM.vk_format()),
-                samples: SampleCount::Sample1,
-                load_op: vulkano::render_pass::LoadOp::Clear,
-                store_op: vulkano::render_pass::StoreOp::Store,
-                stencil_load_op: vulkano::render_pass::LoadOp::Clear,
-                stencil_store_op: vulkano::render_pass::StoreOp::Store,
-                initial_layout: ImageLayout::DepthStencilAttachmentOptimal,
-                final_layout: ImageLayout::DepthStencilAttachmentOptimal,
-                ..Default::default()
-            }],
-            subpasses: vec![SubpassDescription {
-                color_attachments: vec![Some(AttachmentReference{attachment: 0, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()})],
-                depth_stencil_attachment: Some(AttachmentReference{attachment: 1, layout: ImageLayout::DepthStencilAttachmentOptimal, ..Default::default()}),
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        let final_render_pass = RenderPass::new(device.clone(), final_renderpass).unwrap();
-
+        let surface = RenderSurface::offscreen(device.clone(), dimensions, TexturePixelFormat::B8G8R8A8_SRGB).unwrap();
         let result = Renderer {
-            _vk_surface : Some(win),
-            _swapchain : swapchain,
+            _vk_surface : surface,
             _aspect : dimensions[0] as f32 / dimensions[1] as f32,
             _context : vk_instance,
             _device : device.clone(),
             _queue : queue.clone(),
-            _postprocess_pass : final_render_pass,
-            _sc_images : images,
-            _last_sc_texture_id : 0,
             _framebuffers : Vec::new(),
             _screen_plane : Mesh::make_screen_plane(queue.clone()).unwrap(),
-            _gbuffer : GBuffer::new(dimensions[0] as u16, dimensions[1] as u16, queue.clone()),
+            _gbuffer : GBuffer::new(dimensions[0], dimensions[1], queue.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
             _camera : None,
-            _sc_textures : Vec::new(),
-            _postprocessor : Postprocessor::new(queue.clone(), dimensions[0] as u16, dimensions[1] as u16),
+            _postprocessor : Postprocessor::new(queue.clone(), dimensions[0], dimensions[1]),
+            _timer : Default::default()
+        };
+        result
+    }
+
+    pub fn winit(vk_instance : Arc<Instance>, surface: Arc<Surface<Window>>, vsync: bool) -> Self
+    {
+        let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
+        let physical_device = device.physical_device();
+        println!(
+            "Используется устройство: {} (type: {:?})",
+            physical_device.properties().device_name,
+            physical_device.properties().device_type,
+        );
+
+        let queue = queues.next().unwrap();
+
+        let surface = RenderSurface::winit(surface, device.clone(), vsync).unwrap();
+        let dimensions = surface.dimensions();
+        let result = Renderer {
+            _vk_surface : surface,
+            _aspect : dimensions[0] as f32 / dimensions[1] as f32,
+            _context : vk_instance,
+            _device : device.clone(),
+            _queue : queue.clone(),
+            _framebuffers : Vec::new(),
+            _screen_plane : Mesh::make_screen_plane(queue.clone()).unwrap(),
+            _gbuffer : GBuffer::new(dimensions[0], dimensions[1], queue.clone()),
+            _need_to_update_sc : true,
+            _frame_finish_event : Some(sync::now(device.clone()).boxed()),
+            _draw_list : Vec::new(),
+            _camera : None,
+            _postprocessor : Postprocessor::new(queue.clone(), dimensions[0], dimensions[1]),
             _timer : Default::default()
         };
         result
@@ -341,19 +480,24 @@ impl Renderer
         //let acc = self._postprocessor.copy_node(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
         let ((_, _), (ostage, output)) = self._postprocessor.fidelityfx_super_resolution(width, height);
         self._postprocessor.link_stages(ostage, output, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
-        let mut camera = self._camera.as_ref().unwrap().lock().unwrap();
-        camera.camera_mut().unwrap().set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        match self._camera {
+            Some(ref camera) => {
+                let mut camera = camera.lock().unwrap();
+                camera.camera_mut().unwrap().set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+            },
+            None => ()
+        }
         
     }
 
     pub fn width(&self) -> u16
     {
-        self._vk_surface.as_ref().unwrap().window().inner_size().width as u16
+        self._vk_surface.dimensions()[0]
     }
 
     pub fn height(&self) -> u16
     {
-        self._vk_surface.as_ref().unwrap().window().inner_size().height as u16
+        self._vk_surface.dimensions()[1]
     }
 
     pub fn update_timer(&mut self, timer: &UniformTime)
@@ -367,49 +511,9 @@ impl Renderer
     /// Как правило необходимо при изменении размера окна
     pub fn update_swapchain(&mut self)
     {
-        let dimensions: [u32; 2] = self._vk_surface.as_ref().unwrap().window().inner_size().into();
-        let mut usage = self._swapchain.create_info().image_usage;
-        usage.transfer_source = true;
-        usage.transfer_destination = true;
-        let (new_swapchain, new_images) =
-            match self._swapchain.recreate(SwapchainCreateInfo{
-                    image_extent: dimensions,
-                    image_usage: usage,
-                    ..self._swapchain.create_info()
-                }) {
-                Ok(r) => r,
-                Err(e) => panic!("Failed to recreate swapchain: {:?}", e),
-            };
-        self._aspect = dimensions[0] as f32 / dimensions[1] as f32;
-        let dims = TextureDimensions::Dim2d{
-            width: dimensions[0] as u32,
-            height: dimensions[1] as u32,
-            array_layers: 0
-        };
-        let db = Texture::new_empty_mutex("depth", dims, TexturePixelFormat::D16_UNORM, self._device.clone()).unwrap();
-        
-        self._swapchain = new_swapchain;
-        //let dimensions = new_images[0].dimensions().width_height();
-
-        self._framebuffers.clear();
-        self._sc_textures.clear();
-        for image in new_images
-        {
-            let cb = Texture::from_vk_image_view(
-                ImageView::new_default(image.clone()).unwrap(),
-                Some(image.clone()),
-                self._device.clone()
-            ).unwrap();
-            cb.take_mut().set_vertical_address(crate::texture::TextureRepeatMode::ClampToEdge);
-            cb.take_mut().set_horizontal_address(crate::texture::TextureRepeatMode::ClampToEdge);
-            cb.take_mut().update_sampler();
-            let fb = Framebuffer::new(dimensions[0] as u16, dimensions[1] as u16);
-            fb.take_mut().add_color_attachment(cb.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
-            fb.take_mut().set_depth_attachment(db.clone(), 1.0.into());
-            self._framebuffers.push(fb);
-            self._sc_textures.push(cb);
-        }
-        self.resize(dimensions[0] as u16, dimensions[1] as u16);
+        self._vk_surface.update_swapchain();
+        let dimensions = self._vk_surface.dimensions();
+        self.resize(dimensions[0], dimensions[1]);
     }
 
     /// Начинает проход геометрии
@@ -448,18 +552,24 @@ impl Renderer
             gbuffer_rp.clone(),
             false
         ).unwrap();
-        let camera_data = self._camera.as_ref().unwrap().lock().unwrap().camera().unwrap().uniform_data();
-        let mut last_meshmat_pair = (-1, -1);
-        for _obj in &self._draw_list
-        {
-            let locked = _obj.lock().unwrap();
-            let obj = locked.visual().unwrap();
-            last_meshmat_pair = obj.draw(
-                &mut command_buffer_builder,
-                camera_data,
-                gbuffer_rp.clone(), 0,
-                last_meshmat_pair
-            ).unwrap();
+
+        match self._camera {
+            Some(ref camera) => {
+                let camera_data = camera.lock().unwrap().camera().unwrap().uniform_data();
+                let mut last_meshmat_pair = (-1, -1);
+                for _obj in &self._draw_list
+                {
+                    let locked = _obj.lock().unwrap();
+                    let obj = locked.visual().unwrap();
+                    last_meshmat_pair = obj.draw(
+                        &mut command_buffer_builder,
+                        camera_data,
+                        gbuffer_rp.clone(), 0,
+                        last_meshmat_pair
+                    ).unwrap();
+                }
+            },
+            None => ()
         }
         
         /*
@@ -515,11 +625,6 @@ impl Renderer
         result
     }
 
-    pub fn last_sc_image(&self) -> TextureRef
-    {
-        self._sc_textures[self._last_sc_texture_id as usize].clone()
-    }
-
     pub fn wait(&mut self)
     {
         //let future = self._frame_finish_event.as_mut().unwrap().clone();
@@ -530,71 +635,92 @@ impl Renderer
     }
 
     /// Выполняет все сформированные буферы команд
-    pub fn end_frame(&mut self)
+    pub fn execute(&mut self, inputs: std::collections::HashMap<String, TextureRef>)
     {
         if self._need_to_update_sc {
             self.update_swapchain();
             self._need_to_update_sc = false;
         }
 
-        let (image_num, suboptimal, acquire_future) =
-        match swapchain::acquire_next_image(self._swapchain.clone(), None) {
-            Ok(r) => r,
-            Err(AcquireError::OutOfDate) => {
-                self.update_swapchain();
-                self.begin_geametry_pass();
-                return;
-            }
-            Err(e) => panic!("Failed to acquire next image: {:?}", e),
-        };
+        let (sc_target, image_num, suboptimal, acquire_future) = self._vk_surface.acquire_image().unwrap();
         if suboptimal {
             self._need_to_update_sc = true;
             return;
         }
-        self._last_sc_texture_id = image_num as _;
         // Построение прохода геометрии
         let gp_command_buffer = self.build_geametry_pass();
         //let geom_pass_time = timer.elapsed().unwrap().as_secs_f64();
 
         // Построение прохода постобработки
         // Передача входов в постобработку
-        self._postprocessor.image_to_all(&format!("image"),   &self._gbuffer._albedo);
+        if inputs.len() > 0 {
+            for (name, img) in &inputs {
+                self._postprocessor.image_to_all(name, img);
+            }
+        } else {
+            self._postprocessor.image_to_all(&format!("image"),   &self._gbuffer._albedo);
+        }
         //self._postprocessor.image_to_all(&format!("vectors"), &self._gbuffer._vectors);
 
         // Подключение swapchain-изображения в качестве выхода
-        //self._postprocessor.set_output(format!("swapchain_out"), self._sc_textures[image_num].clone());
+        match self._vk_surface {
+            RenderSurface::Winit { .. } => (),
+            RenderSurface::Offscreen { .. } => self._postprocessor.set_output(format!("swapchain_out"), sc_target.clone())
+        }
         let mut pp_command_buffer = self._postprocessor.execute_graph();
         let sc_out = self._postprocessor.get_output("swapchain_out".to_string()).unwrap();
-        let sc_target = (&self._sc_textures[image_num]).take();
-        Texture::copy(&*(sc_out.take()), &*sc_target, Some(&mut pp_command_buffer), None);
+        
+        match self._vk_surface {
+            RenderSurface::Winit { .. } => Texture::copy(&*(sc_out.take()), &*(sc_target.take()), Some(&mut pp_command_buffer), None),
+            RenderSurface::Offscreen { .. } => ()
+        };
         let pp_command_buffer = pp_command_buffer.build().unwrap();
-        //let timer = std::time::SystemTime::now();
-        let future = self._frame_finish_event
-            .take().unwrap()
-            .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
-            .join(acquire_future)
-            .then_execute_same_queue(pp_command_buffer).unwrap()
-            .then_swapchain_present(self._queue.clone(), self._swapchain.clone(), image_num)
-            .then_signal_fence_and_flush();
-
-        match future {
-            Ok(future) => {
-                self._frame_finish_event = Some(future.boxed());
-            }
-            Err(FlushError::OutOfDate) => {
-                self._need_to_update_sc = true;
-                self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
-            }
-            Err(e) => {
-                println!("Failed to flush future: {:?}", e);
-                self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+        
+        
+        match self._vk_surface {
+            RenderSurface::Winit { ref swapchain, .. } => {
+                let future = self._frame_finish_event
+                    .take().unwrap()
+                    .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
+                    .join(acquire_future.unwrap())
+                    .then_execute_same_queue(pp_command_buffer).unwrap()
+                    .then_swapchain_present(self._queue.clone(), swapchain.clone(), image_num as _)
+                    .then_signal_fence_and_flush();
+                match future {
+                    Ok(future) => {
+                        self._frame_finish_event = Some(future.boxed());
+                    }
+                    Err(FlushError::OutOfDate) => {
+                        self._need_to_update_sc = true;
+                        self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+                    }
+                    Err(e) => {
+                        println!("Failed to flush future: {:?}", e);
+                        self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+                    }
+                };
+            },
+            RenderSurface::Offscreen { .. } => {
+                let future = self._frame_finish_event
+                    .take().unwrap()
+                    .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
+                    .then_execute_same_queue(pp_command_buffer).unwrap()
+                    .then_signal_fence_and_flush();
+                match future {
+                    Ok(future) => {
+                        self._frame_finish_event = Some(future.boxed());
+                    }
+                    Err(FlushError::OutOfDate) => {
+                        self._need_to_update_sc = true;
+                        self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+                    }
+                    Err(e) => {
+                        println!("Failed to flush future: {:?}", e);
+                        self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+                    }
+                };
             }
         };
-        //let future_time = timer.elapsed().unwrap().as_secs_f64();
-        /*println!(
-            "end_frame => update_swapchain {:.3}ms, geom_pass_time {:.3}ms, postprocess_time {:.3}ms, future_time {:.3}ms",
-            update_swapchain_time*1000.0, geom_pass_time*1000.0, postprocess_time*1000.0, future_time*1000.0
-        );*/
     }
 
     pub fn queue(&self) -> &Arc<Queue>

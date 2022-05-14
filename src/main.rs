@@ -76,7 +76,8 @@ impl Application {
             .unwrap();
 
         // Инициализация рендера
-        let mut renderer = renderer::Renderer::from_winit(vk_instance, surface, _vsync);
+        let mut renderer = renderer::Renderer::winit(vk_instance, surface, _vsync);
+        //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
         
         // Создание камеры
         let camera = CameraObject::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
@@ -199,7 +200,7 @@ impl Application {
                         let img = self.renderer.postprocessor().get_output("swapchain_out".to_string()).unwrap();
                         img.take().save(self.renderer.queue().clone(), "./screenshot.png");
                     }
-                    self.renderer.end_frame();
+                    self.renderer.execute(std::collections::HashMap::new());
                     let postprocess_time = postprocess_timer.elapsed().unwrap().as_secs_f64();
                     let frame_time = frame_timer.elapsed().unwrap().as_secs_f64();
 					frames += 1;
@@ -220,7 +221,6 @@ impl Application {
                         ft  = 0.0;
 						fps_timer = SystemTime::now();
 					}
-                    //panic!("А на сегодня всё.");
                 },
                 _ => { }
             }
@@ -229,6 +229,6 @@ impl Application {
 }
 
 fn main() {
-    let app = Application::new("DSGE VK", 320, 300, false, false).unwrap();
+    let app = Application::new("DSGE VK", 640, 360, false, false).unwrap();
     app.event_loop();
 }
