@@ -13,6 +13,7 @@ nalgebra = "0.28.0"
 image = "0.24.1"
 bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }
 byteorder = { version = "1.3", default-features = false }
+half = "1.8.2"
 
 [profile.release.package."*"] # +
 #opt-level = "z" # +
@@ -27,3 +28,10 @@ lto = true
 codegen-units = 1
 panic = 'abort'
 overflow-checks = false
+
+[profile.dev]
+opt-level = 3
+
+[[bin]]
+name = "process_frames"
+path = "src/process_frames.rs"
