@@ -4,6 +4,7 @@
 /data
 !/data/exporter.blend
 /.vscode
+Cargo.lock
 *.dds
 *.ktx
 *.bmp
