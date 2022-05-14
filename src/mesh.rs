@@ -6,9 +6,9 @@ use std::path::Path;
 use super::types::*;
 use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess};
-use vulkano::device::Device;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess, ImmutableBuffer};
+use vulkano::device::{Device, Queue};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
 pub use crate::references::*;
@@ -80,10 +80,10 @@ vulkano::impl_vertex!(VkVertex,
     v_grp);
 
 /// Псевдоним для вершинного буфера
-type VertexBufferRef = Arc<CpuAccessibleBuffer<[VkVertex]>>;
+type VertexBufferRef = Arc<ImmutableBuffer<[VkVertex]>>;
 
 /// Псевдоним для индексного буфера
-type IndexBufferRef = Arc<CpuAccessibleBuffer<[u32]>>;
+type IndexBufferRef = Arc<ImmutableBuffer<[u32]>>;
 
 #[allow(dead_code)]
 impl Vertex {
@@ -326,19 +326,19 @@ impl MeshBuilder
             )
     }
 
-    pub fn build_mutex(self, device: Arc<Device>) -> Result<MeshRef, String>
+    pub fn build_mutex(self, queue: Arc<Queue>) -> Result<MeshRef, String>
     {
-        Ok(MeshRef::construct(self.build(device)?))
+        Ok(MeshRef::construct(self.build(queue)?))
     }
 
-    pub fn build(mut self, device: Arc<Device>) -> Result<Mesh, String>
+    pub fn build(mut self, queue: Arc<Queue>) -> Result<Mesh, String>
     {
-        self._vertex_buffer = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._vertices.clone()).unwrap());
-        self._index_buffer  = Some(CpuAccessibleBuffer::from_iter(device.clone(), BufferUsage::all(), false, self._indices.clone()).unwrap());
+        self._vertex_buffer = Some(ImmutableBuffer::from_iter(self._vertices.clone(), BufferUsage::vertex_buffer(), queue.clone()).unwrap().0);
+        self._index_buffer  = Some(ImmutableBuffer::from_iter(self._indices.clone(), BufferUsage::index_buffer(), queue.clone()).unwrap().0);
 
         let mesh = Mesh {
             name: self._name.clone(),
-            device: device,
+            device: queue.device().clone(),
             deformed: false,
             vertices: Vec::new(),
             indices: Vec::new(),
@@ -374,7 +374,7 @@ impl Mesh {
         res
     }
 
-    pub fn make_screen_plane(device: Arc<Device>) -> Result<MeshRef, String>
+    pub fn make_screen_plane(queue: Arc<Queue>) -> Result<MeshRef, String>
     {
         let mut plane = Mesh::builder("screen_plane");
         plane
@@ -388,10 +388,10 @@ impl Mesh {
                 &Vec3::new( 1.0,  1.0, 0.0),
                 &Vec3::new( 1.0, -1.0, 0.0)
             );
-        plane.build_mutex(device)
+        plane.build_mutex(queue)
     }
 
-    pub fn make_cube(name : &str, device: Arc<Device>) -> Result<MeshRef, String>
+    pub fn make_cube(name : &str, queue: Arc<Queue>) -> Result<MeshRef, String>
     {
         let mut cube = Mesh::builder(name);
         cube.push_quad_coords(
@@ -430,7 +430,7 @@ impl Mesh {
             &Vec3::new(-1.0, -1.0,  1.0),
             &Vec3::new(-1.0, -1.0, -1.0),
         );
-        cube.build_mutex(device)
+        cube.build_mutex(queue)
     }
 
     pub fn vertex_buffer(&self) -> Option<VertexBufferRef>
@@ -447,38 +447,71 @@ impl Mesh {
 pub trait MeshBinder
 {
     fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
+    fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
 }
 
 use vulkano::command_buffer::validity::*;
 use vulkano::command_buffer::DrawIndexedError;
 
-impl MeshBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
-{
-    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
-    {
-        let vbo = mesh.vertex_buffer().unwrap();
-        let ibo = mesh.index_buffer().unwrap();
-        let result = self
-            .bind_vertex_buffers(0, vbo.clone())
-            .bind_index_buffer(ibo.clone())
-            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+macro_rules! impl_mesh_binder {
+    ($type_name:ty) => {
+        impl MeshBinder for $type_name
+        {
+            fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+            {
+                let vbo = mesh.vertex_buffer().unwrap();
+                let ibo = mesh.index_buffer().unwrap();
+                let result = self
+                    .bind_vertex_buffers(0, vbo.clone())
+                    .bind_index_buffer(ibo.clone())
+                    .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
 
-        match result {
-            Ok(slf) => Ok(slf),
-            Err(derr) => 
-                match derr {
-                    DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
-                    match err {
-                        CheckDescriptorSetsValidityError::InvalidDescriptorResource {
-                            set_num,
-                            binding_num,
-                            index,
-                            ..
-                        } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
-                        _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
-                    },
-                    _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
+                match result {
+                    Ok(slf) => Ok(slf),
+                    Err(derr) => 
+                        match derr {
+                            DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
+                            match err {
+                                CheckDescriptorSetsValidityError::InvalidDescriptorResource {
+                                    set_num,
+                                    binding_num,
+                                    index,
+                                    ..
+                                } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
+                                _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
+                            },
+                            _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
+                        }
                 }
+            }
+
+            fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+            {
+                //let vbo = mesh.vertex_buffer().unwrap();
+                let ibo = mesh.index_buffer().unwrap();
+                let result = self.draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+
+                match result {
+                    Ok(slf) => Ok(slf),
+                    Err(derr) => 
+                        match derr {
+                            DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
+                            match err {
+                                CheckDescriptorSetsValidityError::InvalidDescriptorResource {
+                                    set_num,
+                                    binding_num,
+                                    index,
+                                    ..
+                                } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
+                                _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
+                            },
+                            _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
+                        }
+                }
+            }
         }
-    }
+    };
 }
+
+impl_mesh_binder!(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>);
+impl_mesh_binder!(AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
