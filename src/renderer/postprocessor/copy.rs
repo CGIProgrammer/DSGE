@@ -15,7 +15,6 @@ impl Postprocessor
             void main()
             {
                 swapchain_out = texture(image, fragCoordWp);
-                swapchain_out.rgb = pow(swapchain_out.rgb, vec3(1.0/2.2));
                 swapchain_out.rgb += 1.0 / pow(timer.uptime*10, 10.0);
             }");
         
