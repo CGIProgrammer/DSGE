@@ -1,5 +1,6 @@
 use byteorder::{ByteOrder, LittleEndian};
-use super::pixel_format::*;
+//use super::pixel_format::*;
+use crate::texture::pixel_format::TexturePixelFormat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DDSPixFormat {
@@ -80,9 +81,9 @@ impl DDSHeader
     pub fn get_pixel_format(&self) -> TexturePixelFormat
     {
         match self.ddspf.four_cc {
-            0x31545844 => TexturePixelFormat::S3tcDXT1,
-            0x33545844 => TexturePixelFormat::S3tcDXT3,
-            0x35545844 => TexturePixelFormat::S3tcDXT5,
+            0x31545844 => TexturePixelFormat::BC1_RGB_SRGB_BLOCK,//::S3tcDXT1,
+            0x33545844 => TexturePixelFormat::BC3_SRGB_BLOCK,//::S3tcDXT3,
+            0x35545844 => TexturePixelFormat::BC5_UNORM_BLOCK,//::S3tcDXT5,
             _ => panic!("Неизвестный формат сжатия в DDS изображении")
         }
     }
