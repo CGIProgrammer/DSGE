@@ -4,8 +4,8 @@
 /// TODO: заставить работать и адаптировать под vulkano
 
 use vulkano::device::Device;
-use vulkano::render_pass::RenderPass;
-use vulkano::pipeline::graphics::rasterization::{RasterizationState, CullMode};
+use vulkano::pipeline::graphics::rasterization::CullMode;
+use vulkano::render_pass::Subpass;
 use std::sync::Arc;
 use std::collections::HashMap;
 
@@ -26,7 +26,6 @@ pub type MaterialRef = RcBox<Material>;
 pub static SHADER_CAMERA_SET : usize = 3;
 pub static SHADER_TEXTURE_SET : usize = 2;
 pub static SHADER_MATERIAL_DATA_SET : usize = 1;
-pub static SHADER_TRANSFORM_SET : usize = 0;
 //pub static SHADER_VARIABLES_SET : usize = 0;
 
 
@@ -198,7 +197,7 @@ impl MaterialBuilder
 
     /// Меняет код, описывающий повержность материала.
     /// Если нужен процедурный материал, то это то, что нужно
-    pub fn set_pbr_code(&mut self, code: &str) -> &mut Self
+    pub fn set_pbr_code<T: ToString>(&mut self, code: T) -> &mut Self
     {
         self.pbr_code = code.to_string();
         self
@@ -301,20 +300,33 @@ impl MaterialBuilder
             .fragment(&self.fragment_shadowmap).unwrap()
             .vertex(&self.vertex_deformed).unwrap();
 
-        Material {
+        let base_shader = base_builder.build(device.clone()).unwrap();
+        let deformed_shader = deformed_builder.build(device.clone()).unwrap();
+        let shadowmap_base_shader = base_shadowmap_builder.build(device.clone()).unwrap();
+        let shadowmap_deformed_shader = deformed_shadowmap_builder.build(device.clone()).unwrap();
+
+        let base_ub = base_shader.new_uniform_buffer();
+        let deformed_ub = deformed_shader.new_uniform_buffer();
+        let shadowmap_base_ub = shadowmap_base_shader.new_uniform_buffer();
+        let shadowmap_deformed_ub = shadowmap_deformed_shader.new_uniform_buffer();
+
+        let result = Material {
             texture_slots : self.texture_slots.clone(),
             numeric_slots : self.numeric_slots.clone(),
             shader_set    : MaterialShaderSet {
-                base : base_builder.build(device.clone()).unwrap(),
-                deformed : deformed_builder.build(device.clone()).unwrap(),
-                shadowmap_base : base_shadowmap_builder.build(device.clone()).unwrap(),
-                shadowmap_deformed : deformed_shadowmap_builder.build(device.clone()).unwrap(),
+                base : (base_shader, base_ub),
+                deformed : (deformed_shader, deformed_ub),
+                shadowmap_base : (shadowmap_base_shader, shadowmap_base_ub),
+                shadowmap_deformed : (shadowmap_deformed_shader, shadowmap_deformed_ub),
             }
-        }
+        };
+        
+        result
     }
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct Material {
     texture_slots : HashMap<String, TextureRef>,
     numeric_slots : Vec<MaterialSlot>,
@@ -334,47 +346,80 @@ enum MatShaderType {
 #[allow(dead_code)]
 impl Material
 {
-    pub fn base_shader(&mut self, render_pass: Arc<RenderPass>, subpass_id: u32) -> &mut ShaderProgram
+    pub fn base_shader(&mut self, subpass: Subpass) -> (&mut ShaderProgram, ShaderProgramUniformBuffer)
     {
-        let shader = &mut self.shader_set.base;
-        shader.cull_faces = CullMode::Front;
-        shader.use_subpass(render_pass, subpass_id);
-        if !shader.is_set_initialized(SHADER_TEXTURE_SET) {
-            //println!("Init base_shader");
-            let mut numeric_data = Vec::<f32>::with_capacity(self.numeric_slots.len());
-            for num_slot in &self.numeric_slots {
-                let (val, size) = match num_slot {
-                    MaterialSlot::Scalar(val) => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Vec2(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Vec3(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Vec4(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Mat2(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Mat3(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                    MaterialSlot::Mat4(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
-                };
-                unsafe { numeric_data.extend(std::slice::from_raw_parts(val, size)) };
-            }
-            for (name, tex) in &self.texture_slots {
-                shader.uniform_sampler_by_name(tex, name).unwrap();
-            }
-            while numeric_data.len()%(64/4) != 0 {
-                numeric_data.push(0.0);
-            }
-            shader.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
-            shader.build_uniform_sets(&[SHADER_MATERIAL_DATA_SET, SHADER_TEXTURE_SET]);
+        self.shader_set.base.0.cull_faces = CullMode::Front;
+        let (subpass, new) = self.shader_set.base.0.use_subpass(subpass);
+        match subpass {
+            PipelineType::Graphics(_) =>
+                if new {
+                    self.shader_set.base.1 = Material::build_uniform_buffer(self, &self.shader_set.base.0);
+                },
+            PipelineType::Compute(_) => panic!("Вычислительный конвейер не поддерживается материалами"),
+            _ => panic!("Конвейер не инициализирован")
         }
-        //shader.clear_uniform_set(SHADER_VARIABLES_SET);
-        shader
+        (&mut self.shader_set.base.0, self.shader_set.base.1.clone())
+    }
+
+    pub fn base_shadowmap_shader(&mut self, subpass: Subpass) -> (&mut ShaderProgram, ShaderProgramUniformBuffer)
+    {
+        self.shader_set.shadowmap_base.0.cull_faces = CullMode::Front;
+        let (subpass, new) = self.shader_set.shadowmap_base.0.use_subpass(subpass);
+        match subpass {
+            PipelineType::Graphics(_) =>
+                if new {
+                    self.shader_set.shadowmap_base.1 = Material::build_uniform_buffer(self, &self.shader_set.shadowmap_base.0);
+                },
+            PipelineType::Compute(_) => panic!("Вычислительный конвейер не поддерживается материалами"),
+            _ => panic!("Конвейер не инициализирован")
+        }
+        (&mut self.shader_set.shadowmap_base.0, self.shader_set.shadowmap_base.1.clone())
+    }
+
+    fn build_uniform_buffer(material: &Material, shader: &ShaderProgram) -> ShaderProgramUniformBuffer
+    {
+        println!("Сборка uniform буфера для материала");
+        let mut uniform_buffer = shader.new_uniform_buffer();
+        let mut numeric_data = Vec::<f32>::with_capacity(material.numeric_slots.len());
+        for num_slot in &material.numeric_slots {
+            let (val, size) = match num_slot {
+                MaterialSlot::Scalar(val) => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Vec2(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Vec3(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Vec4(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Mat2(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Mat3(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+                MaterialSlot::Mat4(val)   => (val as *const _ as *const f32, std::mem::size_of_val(val) >> 2),
+            };
+            unsafe { numeric_data.extend(std::slice::from_raw_parts(val, size)) };
+        }
+        for (name, tex) in &material.texture_slots {
+            uniform_buffer.uniform_sampler_by_name(tex, name).unwrap();
+        }
+        while numeric_data.len()%(64/4) != 0 {
+            numeric_data.push(0.0);
+        }
+        uniform_buffer.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
+        uniform_buffer.build_uniform_sets(&[SHADER_MATERIAL_DATA_SET, SHADER_TEXTURE_SET]);
+        uniform_buffer
     }
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 struct MaterialShaderSet
 {
-    base : ShaderProgram,
-    deformed : ShaderProgram,
-    shadowmap_base : ShaderProgram,
-    shadowmap_deformed : ShaderProgram,
+    /// Базовый шейдер статичных моделей
+    base : (ShaderProgram, ShaderProgramUniformBuffer),
+
+    /// Базовый шейдер деформируемых моделей
+    deformed : (ShaderProgram, ShaderProgramUniformBuffer),
+
+    /// Шейдер теневой карты для статичных моделей
+    shadowmap_base : (ShaderProgram, ShaderProgramUniformBuffer),
+
+    /// Шейдер теневой карты для деформируемых моделей
+    shadowmap_deformed : (ShaderProgram, ShaderProgramUniformBuffer),
 }
 
 static DEFAULT_PBR : &str = "void principled() {

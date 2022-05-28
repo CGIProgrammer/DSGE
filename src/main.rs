@@ -52,7 +52,7 @@ impl Radian for f32
 pub struct Application {
     renderer: renderer::Renderer,
     event_pump: EventLoop<()>,
-    root_objects: Vec<RcBox<dyn GameObject>>,
+    root_objects: Vec<RcBox<GameObject>>,
     counter: f32
 }
 
@@ -80,7 +80,7 @@ impl Application {
         //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
         
         // Создание камеры
-        let camera = CameraObject::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        let camera = GameObject::new_camera("camera", 1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
         renderer.set_camera(camera);
         renderer.update_swapchain();
 
@@ -94,8 +94,8 @@ impl Application {
 
         // Загрузка полисеток
         let mut monkey = Mesh::builder("monkey");
-        //monkey.push_from_file("data/mesh/cube.mesh");
-        monkey.push_from_file("data/mesh/monkey.mesh");
+        monkey.push_from_file("data/mesh/cube.mesh");
+        //monkey.push_from_file("data/mesh/monkey.mesh");
         let monkey = monkey.build_mutex(renderer.queue().clone()).unwrap();
         
         // Создание материала
@@ -110,12 +110,14 @@ impl Application {
         let material = material.build_mutex(renderer.device().clone());
 
         // Создание объектов
-        let ob = MeshObject::new(monkey.clone(), material.clone());
+        let ob = GameObject::new_mesh("model", monkey.clone(), material.clone());
         let mut objects = Vec::new();
         for row in -7..=7 {
             for col in -12..=12 {
-                let ob = ob.lock().unwrap().fork();
-                let mut _ob = ob.lock().unwrap();
+        //for row in -1..=1 {
+        //    for col in -1..=1 {
+                let ob = ob.take().fork();
+                let mut _ob = ob.take();
                 let transform = _ob.transform_mut();
                 transform.local = nalgebra::Matrix4::from_euler_angles(0.0, 0.0, std::f32::consts::PI);
                 for i in 0..15 {
@@ -123,7 +125,7 @@ impl Application {
                 }
                 transform.local[12] = (col as f32) / 5.0;
                 transform.local[13] = (row as f32) / 5.0;
-                transform.local[14] = -1.0;
+                transform.local[14] = -3.0;
                 drop(transform);
                 drop(_ob);
                 objects.push(ob);
@@ -185,17 +187,17 @@ impl Application {
                     let tu = timer.next_frame();
                     self.counter = tu.uptime;
                     let frame_timer = SystemTime::now();
-                    self.renderer.update_timer(&tu);
+                    self.renderer.update_timer(tu);
                     let renderpass_timer = SystemTime::now();
                     self.renderer.begin_geametry_pass();
                     for obj in &self.root_objects{
-                        obj.lock().unwrap().next_frame();
+                        obj.take().next_frame();
                         self.renderer.draw(obj.clone());
                     }
                     let renderpass_time = renderpass_timer.elapsed().unwrap().as_secs_f64();
                     let postprocess_timer = SystemTime::now();
-                    self.renderer.wait();
                     if take_screenshot {
+                        self.renderer.wait();
                         take_screenshot = false;
                         let img = self.renderer.postprocessor().get_output("swapchain_out".to_string()).unwrap();
                         img.take().save(self.renderer.queue().clone(), "./screenshot.png");
@@ -207,6 +209,7 @@ impl Application {
                     ppt += postprocess_time;
                     rpt += renderpass_time;
                     ft  += frame_time;
+                    //println!("frame");
 					let t = fps_timer.elapsed().unwrap().as_secs_f64();
 					if t >= 1.0 {
 						println!("{} FPS. frame_time = {:.3}ms, rp_time = {:.3}ms ({:.3}%), pp_time = {:.3}ms ({:.3}%)",

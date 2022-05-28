@@ -26,7 +26,6 @@ mod components;
 
 use mesh::*;
 use texture::*;
-use game_object::*;
 
 trait Radian
 {
@@ -50,28 +49,33 @@ fn main() {
             max_api_version: Some(Version::major_minor(1, 2)),
             ..Default::default()
         }).unwrap();
-    let mut renderer = renderer::Renderer::offscreen(vk_instance, [1920, 1080]);
+    let mut renderer = renderer::Renderer::offscreen(vk_instance, [480, 360]);
     let mut timer = time::Timer::new();
-
-    let mut img = Texture::from_file(renderer.queue().clone(), "data/texture/image_img.dds").unwrap();
-    img.set_anisotropy(Some(16.0));
-    img.set_mipmap(MipmapMode::Linear);
-    img.set_mag_filter(TextureFilter::Linear);
-    img.update_sampler();
-    let img = TextureRef::construct(img);
-    let inputs = 
-    HashMap::from([
-        (String::from("image"), img.clone())
-    ]);
     let queue = renderer.queue().clone();
-    for i in 0..10 {
+    let device = queue.device().clone();
+
+    let img = Texture::new_empty_mutex(
+        "frame",
+        TextureDimensions::Dim2d { width: 384, height: 288, array_layers: 1 },
+        TexturePixelFormat::R8G8B8A8_SRGB,
+        device.clone()
+    ).unwrap(); //renderer.queue().clone(), "/media/ivan/b74968cd-84c1-49ba-8a04-e0829fef9c9a/torrent/dmb/frames_dmb_sr/frame_038005.jpg").unwrap();
+    let source = "/media/ivan/b74968cd-84c1-49ba-8a04-e0829fef9c9a/Видео/brrrr/frames_sr_x2/";
+    let target = "/media/ivan/b74968cd-84c1-49ba-8a04-e0829fef9c9a/Видео/brrrr/frames_fsr/";
+    println!("Begin");
+    for i in 1..=9000 {
+        img.take_mut().load_data(queue.clone(), format!("{}/{:06}.png", source, i)).unwrap();
+        println!("frame {}      \r", i);
         let tu = timer.next_frame();
-        renderer.update_timer(&tu);
+        renderer.update_timer(tu);
         
-        renderer.execute(inputs.clone());
+        renderer.execute(HashMap::from([
+            (String::from("image"), img.clone())
+        ]));
         renderer.wait();
         
         let out = renderer.render_result();
-        out.take().save(queue.clone(), format!("data/render_result/{}.jpg", i));
+        out.take().save(queue.clone(), format!("{}/{:06}.png", target, i));
     }
+    println!("Finished");
 }

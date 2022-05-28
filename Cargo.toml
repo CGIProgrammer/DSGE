@@ -25,12 +25,9 @@ overflow-checks = false
 opt-level = 3
 #opt-level = "z"
 lto = true
-codegen-units = 1
+#codegen-units = 1
 panic = 'abort'
 overflow-checks = false
-
-[profile.dev]
-opt-level = 3
 
 [[bin]]
 name = "process_frames"

@@ -11,10 +11,11 @@ use vulkano::image::{view::ImageView, SwapchainImage, ImageUsage, ImageLayout, S
 use vulkano::render_pass::{RenderPass, RenderPassCreateInfo, SubpassDescription, AttachmentDescription, AttachmentReference};
 use vulkano::sync::{self, FlushError, GpuFuture};
 use vulkano::instance::Instance;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer};
+#[allow(unused_imports)]
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
 use winit::window::{Window};
 use crate::vulkano::device::DeviceOwned;
-use std::{sync::{Arc, LockResult}, marker::PhantomData, ffi::c_void};
+use std::sync::Arc;
 
 use crate::texture::{Texture, TexturePixelFormat, TextureDimensions, TextureRef, TexturePixelFormatFeatures};
 use crate::framebuffer::{Framebuffer, FramebufferRef, FramebufferBinder};
@@ -22,6 +23,7 @@ use crate::mesh::{MeshRef, Mesh};
 use crate::shader::ShaderStructUniform;
 use crate::references::*;
 use crate::game_object::*;
+use crate::components::*;
 use postprocessor::Postprocessor;
 use crate::time::UniformTime;
 
@@ -62,7 +64,7 @@ impl GBuffer
 {
     fn new(width : u16, height : u16, queue : Arc<Queue>) -> Self
     {
-        println!("Создание нового G-буфера {}x{}", width, height);
+        //println!("Создание нового G-буфера {}x{}", width, height);
         let device = queue.device();
         let formats = [
             TexturePixelFormat::R8G8B8A8_UNORM,
@@ -249,11 +251,13 @@ impl RenderSurface
                 (surface.clone(), swapchain.clone()),
             RenderSurface::Offscreen { .. } => return
         };
-        let dimensions: [u32; 2] = surface.window().inner_size().into();
         let sc_create_info = swapchain.create_info();
         let mut usage = sc_create_info.image_usage;
         usage.transfer_source = true;
         usage.transfer_destination = true;
+        let dimensions: [u32; 2] = surface.window().inner_size().into();
+        //surface
+        //swapchain.device().physical_device().surface_capabilities(surface.as_ref(), surface_info);
         let (new_swapchain, new_images) =
             match swapchain.recreate(SwapchainCreateInfo{
                     image_extent: dimensions,
@@ -327,14 +331,15 @@ pub struct Renderer
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
 
-    _draw_list : Vec<RcBox<dyn GameObject>>,
+    _draw_list : Vec<RcBox<GameObject>>,
     
     _framebuffers : Vec<FramebufferRef>,
     _screen_plane : MeshRef,
     //_screen_plane_shader : ShaderProgramRef,
     _gbuffer : GBuffer,
     _aspect : f32,
-    _camera : Option<RcBox<dyn GameObject>>,
+    _camera : Option<RcBox<GameObject>>,
+    _camera_data : CameraUniformData,
 
     _postprocessor : Postprocessor,
     _timer : UniformTime
@@ -347,6 +352,7 @@ impl Renderer
     {
         &mut self._postprocessor
     }
+
     pub fn render_result(&self) -> TextureRef
     {
         match self._vk_surface {
@@ -355,6 +361,16 @@ impl Renderer
             RenderSurface::Winit { surface: _, swapchain: _, swapchain_images: _, ref swapchain_textures } =>
                 swapchain_textures[0].clone()
         }
+    }
+
+    pub fn geometry_subpass(&self) -> Subpass
+    {
+        self._gbuffer._geometry_pass.clone().first_subpass()
+    }
+
+    pub fn camera_data(&self) -> CameraUniformData
+    {
+        self._camera_data
     }
 }
 
@@ -408,12 +424,12 @@ impl Renderer
     pub fn offscreen(vk_instance : Arc<Instance>, dimensions: [u16; 2]) -> Self
     {
         let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
-        let physical_device = device.physical_device();
-        println!(
+        //let physical_device = device.physical_device();
+        /*println!(
             "Используется устройство: {} (type: {:?})",
             physical_device.properties().device_name,
             physical_device.properties().device_type,
-        );
+        );*/
 
         let queue = queues.next().unwrap();
         let surface = RenderSurface::offscreen(device.clone(), dimensions, TexturePixelFormat::B8G8R8A8_SRGB).unwrap();
@@ -430,6 +446,7 @@ impl Renderer
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
             _camera : None,
+            _camera_data : CameraUniformData::default(),
             _postprocessor : Postprocessor::new(queue.clone(), dimensions[0], dimensions[1]),
             _timer : Default::default()
         };
@@ -439,12 +456,12 @@ impl Renderer
     pub fn winit(vk_instance : Arc<Instance>, surface: Arc<Surface<Window>>, vsync: bool) -> Self
     {
         let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
-        let physical_device = device.physical_device();
-        println!(
+        //let physical_device = device.physical_device();
+        /*println!(
             "Используется устройство: {} (type: {:?})",
             physical_device.properties().device_name,
             physical_device.properties().device_type,
-        );
+        );*/
 
         let queue = queues.next().unwrap();
 
@@ -463,6 +480,7 @@ impl Renderer
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
             _camera : None,
+            _camera_data : CameraUniformData::default(),
             _postprocessor : Postprocessor::new(queue.clone(), dimensions[0], dimensions[1]),
             _timer : Default::default()
         };
@@ -471,19 +489,27 @@ impl Renderer
 
     fn resize(&mut self, width: u16, height: u16)
     {
-        self._gbuffer = GBuffer::new(width/2, height/2, self._queue.clone());
+        self._gbuffer = GBuffer::new(width, height, self._queue.clone());
         /* Создание узлов и связей графа постобработки */
         /* На данный момент это размытие в движении */
         self._postprocessor.reset();
+        
         //let rh = self._postprocessor.rolling_hills(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();
         //let acc = self._postprocessor.acc_mblur_new(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
-        //let acc = self._postprocessor.copy_node(width, height, self._sc_textures[0].take().pix_fmt().clone()).unwrap();  // Создание ноды размытия в движении
-        let ((_, _), (ostage, output)) = self._postprocessor.fidelityfx_super_resolution(width, height);
-        self._postprocessor.link_stages(ostage, output, 0, format!("swapchain_out"));    // Соединение ноды с выходом.
-        match self._camera {
+        
+        let acc = self._postprocessor.copy_node(width, height, TexturePixelFormat::B8G8R8A8_SRGB).unwrap();  // Создание ноды размытия в движении
+        self._postprocessor.link_stages(acc, 0, 0, "swapchain_out".to_string());    // Соединение ноды с выходом.
+        
+        //let ((_istage, _input), (ostage, output)) = self._postprocessor.fidelityfx_super_resolution(width, height);
+        //self._postprocessor.link_stages(ostage, output, 0, "swapchain_out".to_string());    // Соединение ноды с выходом.
+        let self_camera = self._camera.clone();
+        match self_camera {
             Some(ref camera) => {
-                let mut camera = camera.lock().unwrap();
-                camera.camera_mut().unwrap().set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+                let mut _camera = camera.take();
+                let cam_component_mutex = _camera.camera().unwrap().clone();
+                let mut cam_component = cam_component_mutex.take_mut();
+                cam_component.set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+                cam_component.on_render_init(&mut *_camera, self).unwrap();
             },
             None => ()
         }
@@ -500,11 +526,16 @@ impl Renderer
         self._vk_surface.dimensions()[1]
     }
 
-    pub fn update_timer(&mut self, timer: &UniformTime)
+    pub fn update_timer(&mut self, timer: UniformTime)
     {
         //self._timer = timer.clone();
-        self._postprocessor.timer = timer.clone();
+        self._postprocessor.timer = timer;
         //self._postprocessor.uniform_to_all(&format!("timer"), timer);
+    }
+
+    pub fn update_camera_data(&mut self, camera: CameraUniformData)
+    {
+        self._camera_data = camera.clone();
     }
 
     /// Обновление swapchain изображений
@@ -523,9 +554,9 @@ impl Renderer
     }
 
     /// Передаёт объект для растеризации
-    pub fn draw(&mut self, obj: RcBox<dyn GameObject>)
+    pub fn draw(&mut self, obj: RcBox<GameObject>)
     {
-        let owner = obj.lock().unwrap();
+        let owner = obj.take();
         let is_visual = owner.visual().is_some();
         if is_visual {
             self._draw_list.push(obj.clone());
@@ -536,8 +567,46 @@ impl Renderer
         }
     }
 
+    /*fn draw_thread(
+        queue: Arc<Queue>,
+        draw_list: Vec<RcBox<GameObject>>,
+        subpass: vulkano::render_pass::Subpass,
+        viewport: Viewport,
+        thr_num: usize,
+        thr_cnt: usize,
+        camera_data: CameraUniformData
+    ) -> SecondaryAutoCommandBuffer
+    {
+        let device = queue.device().clone();
+        let mut last_meshmat_pair = (-1, -1);
+        let queue_family = queue.family();
+        let mut secondary = AutoCommandBufferBuilder::secondary_graphics(
+            device.clone(),
+            queue_family,
+            CommandBufferUsage::OneTimeSubmit,
+            subpass.clone()
+        ).unwrap();
+        secondary.set_viewport(0, [viewport.clone()]);
+        let begin = draw_list.len()*thr_num/thr_cnt;
+        let end = (draw_list.len()*(thr_num+1)/thr_cnt).min(draw_list.len());
+        
+        for _obj in &draw_list[begin..end]
+        {
+            let locked = _obj.take();
+            let obj = locked.visual().unwrap();
+            last_meshmat_pair = obj.draw(
+                &*locked,
+                &mut secondary,
+                camera_data,
+                subpass.clone(),
+                last_meshmat_pair
+            ).unwrap();
+        }
+        secondary.build().unwrap()
+    }*/
+
     /// Фомирует буфер команд GPU
-    pub fn build_geametry_pass(&self) -> PrimaryAutoCommandBuffer
+    pub fn build_geametry_pass(&mut self) -> PrimaryAutoCommandBuffer
     {
         //let timer = std::time::SystemTime::now();
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
@@ -546,70 +615,54 @@ impl Renderer
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
         let gbuffer_rp = self._gbuffer._geometry_pass.clone();
-        let gbuffer_fb = &mut *self._gbuffer._frame_buffer.take_mut();
-        command_buffer_builder.bind_framebuffer(
-            gbuffer_fb,
-            gbuffer_rp.clone(),
-            false
-        ).unwrap();
+        {
+            let gbuffer_fb = &mut *self._gbuffer._frame_buffer.take_mut();
+            command_buffer_builder.bind_framebuffer(
+                gbuffer_fb,
+                gbuffer_rp.clone(),
+                false
+            ).unwrap();
+        }
 
-        match self._camera {
-            Some(ref camera) => {
-                let camera_data = camera.lock().unwrap().camera().unwrap().uniform_data();
-                let mut last_meshmat_pair = (-1, -1);
-                for _obj in &self._draw_list
-                {
-                    let locked = _obj.lock().unwrap();
-                    let obj = locked.visual().unwrap();
-                    last_meshmat_pair = obj.draw(
-                        &mut command_buffer_builder,
-                        camera_data,
-                        gbuffer_rp.clone(), 0,
-                        last_meshmat_pair
-                    ).unwrap();
-                }
-            },
+        match self._camera.clone() {
+            Some(ref camera_object) => {
+                let camera_locked = camera_object.take_mut();
+                camera_locked.camera().unwrap().take_mut().on_render_init(&*camera_locked, self).unwrap();
+            }
             None => ()
         }
+
+        let mut last_meshmat_pair = (-1, -1);
+        for _obj in self._draw_list.clone()
+        {
+            let locked = _obj.take();
+            let mut visual = locked.visual().unwrap().take_mut();
+            last_meshmat_pair = visual.on_geometry_pass(
+                &*locked,
+                self,
+                &mut command_buffer_builder,
+                last_meshmat_pair
+            ).unwrap();
+        }
         
-        /*
-        let subpass = Subpass::from(gbuffer_rp.clone(), 0).unwrap();
-        let quarter = self._draw_list.len()/4;
-        let half = self._draw_list.len()/2;
-        let tquart = quarter * 3;
+        //let quarter = self._draw_list.len()/4;
+        //let half = self._draw_list.len()/2;
+        //let tquart = quarter * 3;
+        /*let thr_cnt = 2;
         let mut tasks = Vec::new();
-        for dl in 0..4 {
+        for thr_num in 0..thr_cnt {
             let draw_list = self._draw_list.clone();
             let viewport = gbuffer_fb.viewport().clone();
-            let device = self._device.clone();
+            let subpass = gbuffer_rp.clone().first_subpass();
             let queue = self._queue.clone();
-            let render_pass = gbuffer_rp.clone();
             let secondary = std::thread::spawn( move || {
-                let mut last_meshmat_pair = (-1, -1);
-                let queue_family = queue.family();
-                let subpass = Subpass::from(render_pass.clone(), 0).unwrap();
-                let mut secondary = AutoCommandBufferBuilder::secondary_graphics(
-                    device.clone(),
-                    queue_family,
-                    CommandBufferUsage::OneTimeSubmit,
-                    subpass
-                ).unwrap();
-                secondary.set_viewport(0, [viewport.clone()]);
-                let begin = draw_list.len()*dl/4;
-                let end = (draw_list.len()*(dl+1)/4).min(draw_list.len());
-
-                for _obj in &draw_list[begin..end]
-                {
-                    let locked = _obj.lock().unwrap();
-                    let obj = locked.visual().unwrap();
-                    last_meshmat_pair = obj.draw_secondary(
-                        &mut secondary,
-                        camera_data,
-                        render_pass.clone(), 0,
-                        last_meshmat_pair
-                    ).unwrap();
-                }
-                secondary.build().unwrap()
+                Self::draw_thread(
+                    queue,
+                    draw_list,
+                    subpass,
+                    viewport,
+                    thr_num,thr_cnt,
+                    camera_data)
             });
             tasks.push(secondary);
         }
@@ -637,6 +690,8 @@ impl Renderer
     /// Выполняет все сформированные буферы команд
     pub fn execute(&mut self, inputs: std::collections::HashMap<String, TextureRef>)
     {
+        self._frame_finish_event.as_mut().unwrap().cleanup_finished();
+
         if self._need_to_update_sc {
             self.update_swapchain();
             self._need_to_update_sc = false;
@@ -653,12 +708,15 @@ impl Renderer
 
         // Построение прохода постобработки
         // Передача входов в постобработку
+        self._postprocessor.image_to_all(&"albedo".to_string(),   &self._gbuffer._albedo);
+        //self._postprocessor.image_to_all(&format!("normals"),   &self._gbuffer._normals);
+        //self._postprocessor.image_to_all(&format!("specromet"),   &self._gbuffer._specromet);
+        //self._postprocessor.image_to_all(&format!("vectors"),   &self._gbuffer._vectors);
+        //self._postprocessor.image_to_all(&format!("depth"),   &self._gbuffer._depth);
         if inputs.len() > 0 {
             for (name, img) in &inputs {
                 self._postprocessor.image_to_all(name, img);
             }
-        } else {
-            self._postprocessor.image_to_all(&format!("image"),   &self._gbuffer._albedo);
         }
         //self._postprocessor.image_to_all(&format!("vectors"), &self._gbuffer._vectors);
 
@@ -668,6 +726,11 @@ impl Renderer
             RenderSurface::Offscreen { .. } => self._postprocessor.set_output(format!("swapchain_out"), sc_target.clone())
         }
         let mut pp_command_buffer = self._postprocessor.execute_graph();
+        /*let mut pp_command_buffer = AutoCommandBufferBuilder::primary(
+            self._device.clone(),
+            self._queue.family(),
+            CommandBufferUsage::OneTimeSubmit,
+        ).unwrap();*/
         let sc_out = self._postprocessor.get_output("swapchain_out".to_string()).unwrap();
         
         match self._vk_surface {
@@ -733,10 +796,12 @@ impl Renderer
         &self._device
     }
 
-    pub fn set_camera(&mut self, camera: RcBox<dyn GameObject>)
+    pub fn set_camera(&mut self, camera: RcBox<GameObject>)
     {
-        if camera.lock().unwrap().camera().is_some() {
+        if camera.take().camera().is_some() {
             self._camera = Some(camera.clone());
+        } else {
+            panic!("Указанный объект не содержит компонента камеры");
         }
     }
 }

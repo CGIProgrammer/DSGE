@@ -3,6 +3,7 @@ use crate::texture::TexturePixelFormat;
 use crate::texture::TextureFilter;
 use super::{StageIndex, StageOutputIndex, StageInputIndex};
 
+#[allow(dead_code)]
 impl Postprocessor
 {
     pub fn fidelityfx_super_resolution(&mut self, width: u16, height: u16) -> ((StageIndex, StageInputIndex), (StageIndex, StageOutputIndex))
@@ -10,7 +11,7 @@ impl Postprocessor
         let easu = self.make_easu_stage(width, height).unwrap();
         let rcas = self.make_rcas_stage(width, height).unwrap();
         self.link_stages(easu, 0, rcas, "EASU_pass".to_string());
-        ((easu, "image".to_string()), (rcas, 0))
+        ((easu, "albedo".to_string()), (rcas, 0))
     }
     
     fn make_easu_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String>
@@ -18,11 +19,11 @@ impl Postprocessor
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("image")
-            .output("EASU_pass", TexturePixelFormat::R16G16B16A16_SFLOAT, TextureFilter::Nearest, false)
+            .input("albedo")
+            .output("EASU_pass", TexturePixelFormat::R8G8B8A8_UNORM, TextureFilter::Nearest, false)
             .code("
             vec3 FsrEasuCF(vec2 p) {
-                return texelFetch(image, ivec2(p*vec2(textureSize(image, 0))), 0).rgb;
+                return texelFetch(albedo, ivec2(p*vec2(textureSize(albedo, 0))), 0).rgb;
             }
             
             void FsrEasuCon(
@@ -185,12 +186,12 @@ impl Postprocessor
                 vec3 c;
                 vec4 con0,con1,con2,con3;
                 
-                vec2 rendersize = vec2(textureSize(image, 0)); //iChannelResolution[0].xy;
+                vec2 rendersize = vec2(textureSize(albedo, 0)); //iChannelResolution[0].xy;
                 FsrEasuCon(
                     con0, con1, con2, con3, rendersize, rendersize, iResolution.xy
                 );
                 FsrEasuF(c, fragCoord, con0, con1, con2, con3);
-                EASU_pass = vec4(c.xyz, min(1.0, timer.uptime*10.0));
+                EASU_pass = vec4(c.xyz, 1.0);
             }");
             stage_builder.build(self)
     }
@@ -278,7 +279,7 @@ impl Postprocessor
 
                 vec3 col = FsrRcasF(fragCoord-vec2(1.0), con);
 
-                fsr_out = vec4(col, min(1.0, timer.uptime*10.0));
+                fsr_out = vec4(col, 1.0);
             }");
             stage_builder.build(self)
     }

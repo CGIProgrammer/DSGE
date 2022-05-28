@@ -237,7 +237,13 @@ impl Texture
                     return Err(format!("Файл {} не найден.", path.to_string()));
                 }
                 let reader = reader.unwrap();
-                let mut buf_reader = std::io::BufReader::new(reader);
+                let buf_reader = std::io::BufReader::new(reader);
+                let img_rdr = ImageReader::new(buf_reader).with_guessed_format();
+                if img_rdr.is_err() {
+                    return Err(String::from("Неизвестный формат изображения"));
+                }
+                let img_rdr = img_rdr.unwrap();
+                let image = img_rdr.decode().unwrap().to_rgba8();        
                 
                 match os_str.to_str() {
                     Some("dds") | Some("ktx") => {
@@ -249,8 +255,9 @@ impl Texture
                             queue.family(),
                             CommandBufferUsage::OneTimeSubmit
                         ).unwrap();
-                        let mut data = Vec::new();
-                        buf_reader.read_to_end(&mut data).unwrap();
+                        //let mut data = Vec::new();
+                        //buf_reader.read_to_end(&mut data).unwrap();
+                        let data = image.as_raw().clone();
                         
                         let cpuab = CpuAccessibleBuffer::from_iter(
                             self._vk_device.clone(), BufferUsage::transfer_source(), false, data
