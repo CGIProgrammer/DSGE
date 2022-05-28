@@ -1,16 +1,13 @@
-//extern crate spirv_compiler;
-
 use std::collections::{HashMap, HashSet};
-use std::process::ExitStatus;
 pub use super::glenums::{ShaderType, GLSLVersion, GLSLType, AttribType};
 use std::sync::Arc;
 use vulkano::pipeline::graphics::rasterization::{RasterizationState, CullMode};
 use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
-use vulkano::descriptor_set::{PersistentDescriptorSet, WriteDescriptorSetElements};
-use vulkano::pipeline::{GraphicsPipeline, StateMode};
+use vulkano::descriptor_set::{PersistentDescriptorSet};
+use vulkano::pipeline::{GraphicsPipeline, ComputePipeline, PipelineLayout};
 use vulkano::render_pass::{RenderPass, Subpass};
 use vulkano::pipeline::graphics::depth_stencil::DepthStencilState;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::buffer::{CpuBufferPool, CpuAccessibleBuffer, BufferUsage};
 use vulkano::pipeline::PipelineBindPoint;
 
@@ -37,6 +34,7 @@ pub trait ShaderStructUniform
     fn texture(&self) -> Option<&crate::texture::TextureRef>; // Позволяет получить текстуру, если структура является таковой
 }
 
+#[derive(Clone)]
 struct ShaderSourceUniform
 {
     name: String,
@@ -332,108 +330,97 @@ impl Shader
         let cache_path = Path::new("./shader_cache/");
         let spv_path = Path::new(fname.as_str());
         
-        if cache_path.is_dir() && spv_path.is_file() {
+        if !cache_path.is_dir() {
+            std::fs::create_dir(cache_path).unwrap();
+        }
+
+        if !spv_path.is_file() {
+            let sh_type = match self.sh_type {
+                ShaderType::Vertex => "vertex",
+                ShaderType::Fragment => "fragment",
+                ShaderType::TesselationControl => "tess_control",
+                ShaderType::TesselationEval => "tess_evaluation",
+                ShaderType::Compute => "compute",
+                ShaderType::Geometry => "geometry",
+            };
+            
+            let source = self.source.as_str().as_bytes();
+            #[cfg(target_os = "windows")]
+            let glslc = ".\\vulkan_sdk\\Bin\\glslc.exe";
+            #[cfg(target_os = "linux")]
+            let glslc = "glslc";
+            let mut child_compiler = std::process::Command::new(glslc)
+                .args([
+                    format!("-fshader-stage={}", sh_type).as_str(),
+                    "-fauto-bind-uniforms",
+                    "-fauto-map-locations",
+                    "--target-env=vulkan1.2",
+                    "--target-spv=spv1.5",
+                    "-fentry-point=main",
+                    "-",
+                    "-O0",
+                    "-o", spv_path.to_str().unwrap()
+                ])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+
+            let mut spirv_log = String::new();
+            {
+                let compiler_stdin = child_compiler.stdin.as_mut().unwrap();
+                compiler_stdin.write_all(source).unwrap();
+            }
+            match child_compiler.wait()
+            {
+                Ok(status) => {
+                    if status.code().unwrap() != 0 {
+                        let compiler_stdout = child_compiler.stderr.as_mut().unwrap();
+                        compiler_stdout.read_to_string(&mut spirv_log).unwrap();
+                        let mut numbered_src = String::new();
+                        let mut line_num = 1;
+                        for line in self.source.split("\n") {
+                            numbered_src += format!("{}: {}\n", line_num, line).as_str();
+                            line_num += 1;
+                        }
+                        panic!("{}\nОшибка шейдера (исходник с нуменованными строками представлен выше)\n{}", numbered_src, spirv_log);
+                    }
+                },
+                Err(_) => return Err(format!("Шейдер не скомпилирован"))
+            }
+        };
+
+        if spv_path.is_file() {
             let mut file = File::open(spv_path).unwrap();
             let mut spv = Vec::new();
             file.read_to_end(&mut spv).unwrap();
             unsafe {
                 self.module = Some(vulkano::shader::ShaderModule::from_bytes(self.device.clone(), spv.as_ref()).unwrap());
             }
-            println!("{} шейдер загружен из кэша", self.sh_type);
-            return Ok(self);
-        };
-        //return Err(format!("Шейдер не найден в кэше. Возможность компиляции шейдеров отключена."));
-        
-        //let mut compiler = spirv_compiler::CompilerBuilder::new().with_source_language(spirv_compiler::SourceLanguage::GLSL).build().unwrap();
-        let sh_type = match self.sh_type {
-            ShaderType::Vertex => "vertex",
-            ShaderType::Fragment => "fragment",
-            ShaderType::TesselationControl => "tess_control",
-            ShaderType::TesselationEval => "tess_evaluation",
-            ShaderType::Compute => "compute",
-            ShaderType::Geometry => "geometry",
-        };
-        //println!("{}", self.source);
-        let source = self.source.as_str().as_bytes();
-        #[cfg(target_os = "windows")]
-        let glslc = ".\\vulkan_sdk\\Bin\\glslc.exe";
-        #[cfg(target_os = "linux")]
-        let glslc = "glslc";
-        let mut child_compiler = std::process::Command::new(glslc)
-            .args([
-                format!("-fshader-stage={}", sh_type).as_str(),
-                "-fauto-bind-uniforms",
-                "-fauto-map-locations",
-                "--target-env=vulkan1.2",
-                "--target-spv=spv1.5",
-                "-",
-                "-O0",
-                "-o", spv_path.to_str().unwrap()
-            ])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
+            match self.module {
+                Some (ref module) => {
+                    let ep = module.entry_point("main").unwrap();
+                    let module_uniforms = ep.descriptor_requirements().map(
+                        |((set, binding), _)| {
+                            (set, binding)
+                        }
+                    ).collect::<HashSet<_>>();
 
-        let mut spirv_log = String::new();
-        {
-            let compiler_stdin = child_compiler.stdin.as_mut().unwrap();
-            compiler_stdin.write_all(source).unwrap();
-        }
-        match child_compiler.wait()
-        {
-            Ok(status) => {
-                if status.code().unwrap() != 0 {
-                    let compiler_stdout = child_compiler.stderr.as_mut().unwrap();
-                    compiler_stdout.read_to_string(&mut spirv_log).unwrap();
-                    let mut numbered_src = String::new();
-                    let mut line_num = 1;
-                    for line in self.source.split("\n") {
-                        numbered_src += format!("{}: {}\n", line_num, line).as_str();
-                        line_num += 1;
+                    let source_uniforms = self.uniforms.clone();
+                    for (_, ShaderSourceUniform {name, type_name: _, set, binding} ) in &source_uniforms {
+                        let key = (*set as u32, *binding as u32);
+                        if !module_uniforms.contains(&key) {
+                            self.uniforms.remove(name);
+                        }
                     }
-                    panic!("{}\nОшибка шейдера (исходник с нуменованными строками представлен выше)\n{}", numbered_src, spirv_log);
-                }
-            },
-            Err(_) => ()
-        }
-
-        if cache_path.is_dir() && spv_path.is_file() {
-            let mut file = File::open(spv_path).unwrap();
-            let mut spv = Vec::new();
-            file.read_to_end(&mut spv).unwrap();
-            unsafe {
-                self.module = Some(vulkano::shader::ShaderModule::from_bytes(self.device.clone(), spv.as_ref()).unwrap());
-            }
-            println!("{} шейдер загружен из кэша после компиляции", self.sh_type);
+                },
+                None => ()
+            };
             return Ok(self);
         };
 
-        /*let spirv = compiler.compile_from_string(self.source.as_str(), sh_type);
-        match spirv {
-            Err(error) => {
-                let mut numbered_src = String::new();
-                let mut line_num = 1;
-                for line in self.source.split("\n") {
-                    numbered_src += format!("{}: {}\n", line_num, line).as_str();
-                    line_num += 1;
-                }
-                panic!("{}\nОшибка шейдера (исходник с нуменованными строками представлен выше)\n{}", numbered_src, error);
-            },
-            Ok(spv_ok) => {
-                if cache_path.is_dir() {
-                    let mut file = File::create(spv_path).unwrap();
-                    for val in spv_ok.as_slice() {
-                        file.write(&val.to_le_bytes()).unwrap();
-                    }
-                }
-                self.module = unsafe { Some(vulkano::shader::ShaderModule::from_words(self.device.clone(), spv_ok.as_slice()).unwrap()) };
-                println!("Скопилирован {} шейдер (self.module={})", self.sh_type, self.module.is_some());
-                return Ok(self);
-            }
-        };*/
-        return Err(format!("Шейдер не скомпилирован"));
+        Err(format!("Шейдер не скомпилирован"))
     }
 }
 
@@ -648,18 +635,16 @@ impl ShaderProgramBuilder
         Ok(
             ShaderProgram{
                 device : device.clone(),
-                pipeline : None,
+                pipeline : PipelineType::None,
                 subpass_id : (0, 0),
-                
-                write_set_descriptors : HashMap::new(),
-                uniforms_sets : HashMap::new(),
-                uniform_buffer : CpuBufferPool::uniform_buffer(device.clone()),
+
                 vertex_shader : self.vertex_shader.clone(),
                 fragment_shader : self.fragment_shader.clone(),
                 tess_controll : self.tess_controll.clone(),
                 tess_eval : self.tess_eval.clone(),
                 compute : self.compute.clone(),
                 fragment_outputs : self.fragment_outputs.clone(),
+
                 uniforms_types : self.uniforms_types,
                 uniforms_locations : self.uniforms_locations,
 
@@ -680,19 +665,212 @@ impl ShaderProgramBuilder
 use vulkano::descriptor_set::WriteDescriptorSet;
 pub trait PipelineUniform: ShaderStructUniform + std::marker::Send + std::marker::Sync {}
 
+/// Буфер uniform-переменных для шейдеров
+pub struct ShaderProgramUniformBuffer
+{
+    write_set_descriptors: HashMap<usize, Vec<WriteDescriptorSet>>,
+    uniforms_sets: HashMap<usize, Arc<PersistentDescriptorSet>>,
+    uniforms_locations : HashMap<String, (usize, usize)>,
+    uniform_buffer : CpuBufferPool<f32>,
+    device: Arc<Device>,
+    pipeline: PipelineType,
+}
+
+impl Clone for ShaderProgramUniformBuffer
+{
+    fn clone(&self) -> Self {
+        Self {
+            write_set_descriptors: HashMap::new(),
+            uniforms_sets: self.uniforms_sets.clone(),
+            uniforms_locations: self.uniforms_locations.clone(),
+            uniform_buffer: self.uniform_buffer.clone(),
+            device: self.device.clone(),
+            pipeline: self.pipeline.clone(),
+        }
+    }
+}
+
+#[allow(dead_code)]
+impl ShaderProgramUniformBuffer
+{
+    /// Собирает дескрипторы наборов uniform-переменных (`PersistentDescriptorSet`).
+    /// Полезно для формирования неизменяемого списка текстур материала
+    pub fn build_uniform_sets(&mut self, sets: &[usize])
+    {
+        let layouts = self.pipeline.layout().unwrap().set_layouts();
+        for set_num in sets {
+            let set_desc = self.write_set_descriptors.remove(set_num).unwrap();
+            let pers_decc_set = PersistentDescriptorSet::new(layouts.get(*set_num).unwrap().clone(), set_desc).unwrap();
+            self.uniforms_sets.insert(*set_num, pers_decc_set);
+        }
+    }
+
+    /// Проверяет инициализирован ли набор uniform-переменных
+    pub fn is_set_initialized(&self, set_num: usize) -> bool
+    {
+        self.uniforms_sets.contains_key(&set_num)
+    }
+
+    /// Очищает заданный набор uniform-переменных
+    pub fn clear_uniform_set(&mut self, set_num: usize)
+    {
+        //self.uniform_set_builders.remove(&set_num);
+        self.uniforms_sets.remove(&set_num);
+    }
+
+    /// Передаёт в шейдер массив данных неопределённой структуры
+    pub fn uniform_structure<I>(&mut self, obj: I, set_num: usize, binding_num: usize)
+        where I: IntoIterator<Item = f32>,
+        I::IntoIter: ExactSizeIterator
+    {
+        let uniform_buffer = WriteDescriptorSet::buffer(binding_num as u32, self.uniform_buffer.chunk(obj).unwrap());
+        
+        match self.write_set_descriptors.get_mut(&set_num)
+        {
+            Some(set_buffer) => {
+                if binding_num >= set_buffer.len() {
+                    for binding in set_buffer.len()..binding_num {
+                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
+                    }
+                } else {
+                    set_buffer.remove(binding_num);
+                }
+                set_buffer.insert(binding_num, uniform_buffer);
+            },
+            None => {
+                let mut uniform_set = Vec::new();
+                for binding in 0..binding_num {
+                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
+                }
+                uniform_set.push(uniform_buffer);
+                self.write_set_descriptors.insert(set_num, uniform_set);
+            }
+        };
+    }
+    
+    /// Передаёт uniform-переменную в шейдер
+    /// Может передавать как `TextureRef`, так и структуры, для которых определён `trait ShaderStructUniform`
+    pub fn uniform<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
+        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + Clone + 'static
+    {
+        let s = [obj];
+        let sas : &[f32] = bytemuck::cast_slice(&s);
+        self.uniform_structure(sas.to_vec(), set_num, binding_num);
+    }
+
+    pub fn uniform_sampler(&mut self, texture: &TextureRef, set_num: usize, binding_num: usize)
+    {
+        let texture = texture.take();
+        let wds = WriteDescriptorSet::image_view_sampler(binding_num as u32, texture.image_view().clone(), texture.sampler().clone());
+        match self.write_set_descriptors.get_mut(&set_num)
+        {
+            Some(set_buffer) => {
+                if binding_num >= set_buffer.len() {
+                    for binding in set_buffer.len()..binding_num {
+                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
+                    }
+                } else {
+                    set_buffer.remove(binding_num);
+                }
+                set_buffer.insert(binding_num, wds);
+            },
+            None => {
+                let mut uniform_set = Vec::new();
+                for binding in 0..binding_num {
+                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
+                }
+                uniform_set.push(wds);
+                self.write_set_descriptors.insert(set_num, uniform_set);
+            }
+        };
+    }
+
+    pub fn uniform_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
+    where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
+    {
+        //println!("uniform {} to {}", name, self.hash);
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => val,
+            None => return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name))
+        };
+        self.uniform(obj, set_num, binding_num);
+        Ok(())
+    }
+
+    pub fn uniform_sampler_by_name(&mut self, texture: &TextureRef, name: &String) -> Result<(usize, usize), String>
+    {
+        
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => {
+                //println!("uniform (set={}, binding={}) {}", val.0, val.1, name);
+                val
+            },
+            None => {
+                //println!("Uniform-переменная {} не объявлена в этом шейдере.", name);
+                return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name));
+            }
+        };
+        //println!("{}", self.fragment_shader_source());
+        self.uniform_sampler(texture, set_num, binding_num);
+        Ok((set_num, binding_num))
+    }
+    
+    pub fn storage_buffer<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
+        where T: std::marker::Send + std::marker::Sync + Pod + 'static
+    {
+        if self.uniforms_sets.contains_key(&set_num) {
+            return;
+        }
+        let uniform_buffer = CpuAccessibleBuffer::from_data(self.device.clone(), BufferUsage::storage_buffer(), false, obj).unwrap();
+        let ub = WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer);
+
+        match self.write_set_descriptors.get_mut(&set_num)
+        {
+            Some(set_buffer) => {
+                if binding_num > set_buffer.len() {
+                    for binding in set_buffer.len()..binding_num {
+                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
+                    }
+                }
+                set_buffer.insert(binding_num, ub);
+            },
+            None => {
+                let mut uniform_set = vec![];
+                for binding in 0..binding_num {
+                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
+                }
+                uniform_set.insert(binding_num, ub);
+                self.write_set_descriptors.insert(set_num, uniform_set);
+            }
+        };
+    }
+    
+    pub fn storage_buffer_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
+        where T: std::marker::Send + std::marker::Sync + Pod + 'static
+    {
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => val,
+            None => return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name))
+        };
+        self.storage_buffer(obj, set_num, binding_num);
+        Ok(())
+    }
+}
+
 /// Шейдерная программа
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct ShaderProgram
 {
     device : Arc<Device>,
-    pipeline : Option<Arc<vulkano::pipeline::GraphicsPipeline>>,
+    pipeline : PipelineType,
     subpass_id : (u32, u32),
     
-    write_set_descriptors: HashMap<usize, Vec<WriteDescriptorSet>>,
-    uniforms_sets: HashMap<usize, Arc<PersistentDescriptorSet>>,
     uniforms_types  : HashMap<String, String>,
     uniforms_locations : HashMap<String, (usize, usize)>,
-    uniform_buffer : CpuBufferPool<f32>,
 
     vertex_shader : Option<Arc<vulkano::shader::ShaderModule>>,
     fragment_shader : Option<Arc<vulkano::shader::ShaderModule>>,
@@ -772,217 +950,41 @@ impl ShaderProgram
         }
     }
 
+    pub fn new_uniform_buffer(&self) -> ShaderProgramUniformBuffer
+    {
+        ShaderProgramUniformBuffer {
+            write_set_descriptors: HashMap::new(),
+            uniforms_sets: HashMap::new(),
+            uniforms_locations: self.uniforms_locations.clone(),
+            uniform_buffer: CpuBufferPool::uniform_buffer(self.device.clone()),
+            device: self.device.clone(),
+            pipeline: self.pipeline.clone(),
+        }
+    }
+
     pub fn device(&self) -> &Arc<Device>
     {
         &self.device
     }
 
-    pub fn pipeline(&self) -> Option<Arc<GraphicsPipeline>>
+    pub fn pipeline(&self) -> PipelineType
     {
         self.pipeline.clone()
     }
 
-    /// Проверяет инициализирован ли набор uniform-переменных
-    pub fn is_set_initialized(&self, set_num: usize) -> bool
-    {
-        self.uniforms_sets.contains_key(&set_num)
-    }
-
-    /// Очищает заданный набор uniform-переменных
-    pub fn clear_uniform_set(&mut self, set_num: usize)
-    {
-        //self.uniform_set_builders.remove(&set_num);
-        self.uniforms_sets.remove(&set_num);
-    }
-
-    /// Передаёт в шейдер массив данных неопределённой структуры
-    pub fn uniform_structure<I>(&mut self, obj: I, set_num: usize, binding_num: usize)
-        where I: IntoIterator<Item = f32>,
-        I::IntoIter: ExactSizeIterator
-    {
-        let uniform_buffer = WriteDescriptorSet::buffer(binding_num as u32, self.uniform_buffer.chunk(obj).unwrap());
-        
-        match self.write_set_descriptors.get_mut(&set_num)
-        {
-            Some(set_buffer) => {
-                if binding_num >= set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                } else {
-                    set_buffer.remove(binding_num);
-                }
-                set_buffer.insert(binding_num, uniform_buffer);
-            },
-            None => {
-                let mut uniform_set = Vec::new();
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
-                uniform_set.push(uniform_buffer);
-                self.write_set_descriptors.insert(set_num, uniform_set);
-            }
-        };
-    }
-    
-    /// Передаёт uniform-переменную в шейдер
-    /// Может передавать как `TextureRef`, так и структуры, для которых определён `trait ShaderStructUniform`
-    pub fn uniform<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
-        where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + Clone + 'static
-    {
-        let s = [obj];
-        let sas : &[f32] = bytemuck::cast_slice(&s);
-        self.uniform_structure(sas.to_vec(), set_num, binding_num);
-        //let sas = unsafe { std::mem::transmute::<&[T], &[f32]>(&[obj]) };
-        //println!("{}", sas.len());
-        /*if self.uniforms_sets.contains_key(&set_num) {
-            return;
-        }
-        let uniform_buffer = {
-            let uniform_buffer = CpuBufferPool::uniform_buffer(self.device.clone());
-            WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer.next(obj).unwrap())
-        };
-        
-        match self.write_set_descriptors.get_mut(&set_num)
-        {
-            Some(set_buffer) => {
-                if binding_num >= set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                } else {
-                    set_buffer.remove(binding_num);
-                }
-                set_buffer.insert(binding_num, uniform_buffer);
-            },
-            None => {
-                let mut uniform_set = Vec::new();
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
-                uniform_set.push(uniform_buffer);
-                self.write_set_descriptors.insert(set_num, uniform_set);
-            }
-        };*/
-    }
-
-    pub fn uniform_sampler(&mut self, texture: &TextureRef, set_num: usize, binding_num: usize)
-    {
-        let texture = texture.take_mut();
-        let wds = WriteDescriptorSet::image_view_sampler(binding_num as u32, texture.image_view().clone(), texture.sampler().clone());
-        match self.write_set_descriptors.get_mut(&set_num)
-        {
-            Some(set_buffer) => {
-                if binding_num >= set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                } else {
-                    set_buffer.remove(binding_num);
-                }
-                set_buffer.insert(binding_num, wds);
-            },
-            None => {
-                let mut uniform_set = Vec::new();
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
-                uniform_set.push(wds);
-                self.write_set_descriptors.insert(set_num, uniform_set);
-            }
-        };
-    }
-
-    pub fn uniform_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
-    where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
-    {
-        //println!("uniform {} to {}", name, self.hash);
-        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
-        {
-            Some(val) => val,
-            None => return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name))
-        };
-        self.uniform(obj, set_num, binding_num);
-        Ok(())
-    }
-
-    pub fn uniform_sampler_by_name(&mut self, texture: &TextureRef, name: &String) -> Result<(), String>
-    {
-        
-        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
-        {
-            Some(val) => {
-                //println!("uniform (set={}, binding={}) {}", val.0, val.1, name);
-                val
-            },
-            None => {
-                //println!("Uniform-переменная {} не объявлена в этом шейдере.", name);
-                return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name));
-            }
-        };
-        //println!("{}", self.fragment_shader_source());
-        self.uniform_sampler(texture, set_num, binding_num);
-        Ok(())
-    }
-    
-    pub fn storage_buffer<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
-        where T: std::marker::Send + std::marker::Sync + Pod + 'static
-    {
-        if self.uniforms_sets.contains_key(&set_num) {
-            return;
-        }
-        let uniform_buffer = CpuAccessibleBuffer::from_data(self.device.clone(), BufferUsage::storage_buffer(), false, obj).unwrap();
-        let ub = WriteDescriptorSet::buffer(binding_num as u32, uniform_buffer);
-
-        match self.write_set_descriptors.get_mut(&set_num)
-        {
-            Some(set_buffer) => {
-                if binding_num > set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                }
-                set_buffer.insert(binding_num, ub);
-            },
-            None => {
-                let mut uniform_set = vec![];
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
-                uniform_set.insert(binding_num, ub);
-                self.write_set_descriptors.insert(set_num, uniform_set);
-            }
-        };
-    }
-    
-    pub fn storage_buffer_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
-        where T: std::marker::Send + std::marker::Sync + Pod + 'static
-    {
-        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
-        {
-            Some(val) => val,
-            None => return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name))
-        };
-        self.storage_buffer(obj, set_num, binding_num);
-        Ok(())
-    }
-
     /// Перестраивает `Pipeline` для использования с заданным `Subpass`'ом.
-    /// Необходимо вызывать каждый раз при использовании нового `Subpass`'а перед вызовами `uniform` и `uniform_structure`.
-    /// 
-    /// Вызов `use_subpass` приводит к полной очистке буферов uniform-переменных
-    pub fn use_subpass(&mut self, render_pass : Arc<RenderPass>, subpass_id: u32)
+    /// Возвращает true, если переданный subpass отличается от использованного в прошлый раз
+    pub fn use_subpass(&mut self, subpass : Subpass) -> (PipelineType, bool)
     {
-        let render_pass_id = render_pass.as_ref() as *const RenderPass as u32;
-        let subpass_full_id = (render_pass_id, subpass_id);
+        let render_pass_id = subpass.render_pass().as_ref() as *const RenderPass as u32;
+        let subpass_full_id = (render_pass_id, subpass.index());
         
         if subpass_full_id == self.subpass_id {
-            return;
+            return (self.pipeline.clone(), false);
         }
-        //println!("Исользуется новый subpass");
+        println!("Исользуется новый subpass {:?}", subpass_full_id);
         self.subpass_id = subpass_full_id;
-        let subpass = Subpass::from(render_pass.clone(), subpass_id).unwrap();
-        self.uniforms_sets.clear();
+        /*self.uniforms_sets.clear();*/
         let depth_test = subpass.has_depth();
         let mut pipeline = vulkano::pipeline::GraphicsPipeline::start()
             .vertex_input_state(BuffersDefinition::new().vertex::<super::mesh::VkVertex>());
@@ -1010,20 +1012,8 @@ impl ShaderProgram
             pipeline = pipeline.depth_stencil_state(DepthStencilState::simple_depth_test());
         }
         //if self.
-        self.pipeline = Some(pipeline.build(self.device.clone()).unwrap());
-    }
-
-    /// Собирает дескрипторы наборов uniform-переменных (`PersistentDescriptorSet`).
-    /// Полезно для формирования неизменяемого списка текстур материала
-    pub fn build_uniform_sets(&mut self, sets: &[usize])
-    {
-        let layouts = self.pipeline.as_ref().unwrap().layout().set_layouts();
-        for set_num in sets {
-            //let set_num = *self.write_set_descriptors.keys().nth(0).unwrap();
-            let set_desc = self.write_set_descriptors.remove(set_num).unwrap();
-            let pers_decc_set = PersistentDescriptorSet::new(layouts.get(*set_num).unwrap().clone(), set_desc).unwrap();
-            self.uniforms_sets.insert(*set_num, pers_decc_set);
-        }
+        self.pipeline = PipelineType::Graphics(pipeline.build(self.device.clone()).unwrap());
+        (self.pipeline.clone(), true)
     }
 
     /// Возвращает имена выходов фрагментного фейдера
@@ -1041,110 +1031,38 @@ pub trait ShaderProgramBinder
     fn bind_shader_program(&mut self, shader: &ShaderProgram) -> Result<&mut Self, String>;
 
     /// Присоединение uniform-переменных к `AutoCommandBufferBuilder`'у
-    fn bind_shader_uniforms(&mut self, shader: &mut ShaderProgram, only_dynamic: bool) -> Result<&mut Self, String>;
+    fn bind_shader_uniforms(&mut self, uniform_buffer: &mut ShaderProgramUniformBuffer, only_dynamic: bool) -> Result<&mut Self, String>;
 
     fn bind_uniform_constant<T>(&mut self, shader: &mut ShaderProgram, data: T) -> Result<&mut Self, String>;
 }
 
-macro_rules! impl_shader_program_binder {
-    ($type_name:ty) => {
-        impl ShaderProgramBinder for $type_name
-        {
-            fn bind_shader_program(&mut self, shader: &ShaderProgram) -> Result<&mut Self, String>
-            {
-                match shader.pipeline() {
-                    Some(pipeline) => Ok(self.bind_pipeline_graphics(pipeline)),
-                    None => Err("Не установлен Subpass".to_string())
-                }
-            }
-
-            fn bind_uniform_constant<T>(&mut self, shader: &mut ShaderProgram, data: T) -> Result<&mut Self, String>
-            {
-                let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
-                self.push_constants(pipeline_layout.clone(), 0, data);
-                Ok(self)
-            }
-
-            fn bind_shader_uniforms(&mut self, shader: &mut ShaderProgram, only_dynamic: bool) -> Result<&mut Self, String>
-            {
-                let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
-                let layouts = pipeline_layout.set_layouts();
-                let mut desc_sets = Vec::new();
-                
-                let keys = shader.write_set_descriptors.keys().map(|elem| {*elem}).collect::<Vec<_>>();
-                for set_num in keys {
-                    let descriptor_writes = shader.write_set_descriptors.remove(&set_num).unwrap();
-                    let layout = 
-                    match layouts.get(set_num)
-                    {
-                        Some(layout) => layout,
-                        None => return Err(format!("В шейдере есть неиспользуемые uniform-переменные. Набор {} не используется нигде.", set_num))
-                    };
-                    
-                    let set = PersistentDescriptorSet::new(layout.clone(), descriptor_writes);
-                    match set {
-                        Ok(set) => desc_sets.push((set_num, set)),
-                        Err(e)  => {
-                            println!("{}", shader.fragment_shader_source);
-                            return Err(format!("Не удалось сформировать набор uniform-переменных №{}: {:?}", set_num, e));
-                        }
-                    };
-                }
-                if !only_dynamic {
-                    for (set_num, desc_set) in &shader.uniforms_sets {
-                        desc_sets.push((*set_num, desc_set.clone()));
-                    }
-                }
-                desc_sets.sort_by(|(set_num_a, _), (set_num_b, _)| {
-                    if set_num_a < set_num_b {
-                        return std::cmp::Ordering::Less;
-                    } else {
-                        if set_num_a == set_num_b {
-                            return std::cmp::Ordering::Equal;
-                        } else {
-                            return std::cmp::Ordering::Greater;
-                        }
-                    }
-                });
-                if desc_sets.len() == 0 {
-                    return Ok(self);
-                }
-                //println!("desc_sets {}", desc_sets.len());
-                let first_set_num = desc_sets.first().unwrap().0;
-                let desc_sets = desc_sets.iter().map(|elem| {elem.1.clone()}).collect::<Vec<_>>();
-                self.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), first_set_num as _, desc_sets);
-                Ok(self)
-            }
-        }
-    }
-}
-
-/*impl ShaderProgramBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
+impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
 {
     fn bind_shader_program(&mut self, shader: &ShaderProgram) -> Result<&mut Self, String>
     {
         match shader.pipeline() {
-            Some(pipeline) => Ok(self.bind_pipeline_graphics(pipeline)),
-            None => Err("Не установлен Subpass".to_string())
+            PipelineType::Graphics(pipeline) => Ok(self.bind_pipeline_graphics(pipeline)),
+            PipelineType::Compute(pipeline) => Ok(self.bind_pipeline_compute(pipeline)),
+            PipelineType::None => Err("Не установлен Subpass".to_string())
         }
     }
 
     fn bind_uniform_constant<T>(&mut self, shader: &mut ShaderProgram, data: T) -> Result<&mut Self, String>
     {
-        let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
+        let pipeline_layout = shader.pipeline.layout().unwrap();
         self.push_constants(pipeline_layout.clone(), 0, data);
         Ok(self)
     }
 
-    fn bind_shader_uniforms(&mut self, shader: &mut ShaderProgram, only_dynamic: bool) -> Result<&mut Self, String>
+    fn bind_shader_uniforms(&mut self, uniform_buffer: &mut ShaderProgramUniformBuffer, only_dynamic: bool) -> Result<&mut Self, String>
     {
-        let pipeline_layout = shader.pipeline.as_ref().unwrap().layout();
+        let pipeline_layout = uniform_buffer.pipeline.layout().unwrap();
         let layouts = pipeline_layout.set_layouts();
         let mut desc_sets = Vec::new();
         
-        let keys = shader.write_set_descriptors.keys().map(|elem| {*elem}).collect::<Vec<_>>();
+        let keys = uniform_buffer.write_set_descriptors.keys().map(|elem| {*elem}).collect::<Vec<_>>();
         for set_num in keys {
-            let descriptor_writes = shader.write_set_descriptors.remove(&set_num).unwrap();
+            let descriptor_writes = uniform_buffer.write_set_descriptors.remove(&set_num).unwrap();
             let layout = 
             match layouts.get(set_num)
             {
@@ -1155,11 +1073,14 @@ macro_rules! impl_shader_program_binder {
             let set = PersistentDescriptorSet::new(layout.clone(), descriptor_writes);
             match set {
                 Ok(set) => desc_sets.push((set_num, set)),
-                Err(e)  => return Err(format!("Не удалось сформировать набор uniform-переменных №{}: {:?}", set_num, e))
+                Err(e)  => {
+                    //println!("{}", shader.fragment_shader_source);
+                    return Err(format!("Не удалось сформировать набор uniform-переменных №{}: {:?}", set_num, e));
+                }
             };
         }
         if !only_dynamic {
-            for (set_num, desc_set) in &shader.uniforms_sets {
+            for (set_num, desc_set) in &uniform_buffer.uniforms_sets {
                 desc_sets.push((*set_num, desc_set.clone()));
             }
         }
@@ -1183,7 +1104,26 @@ macro_rules! impl_shader_program_binder {
         self.bind_descriptor_sets(PipelineBindPoint::Graphics, pipeline_layout.clone(), first_set_num as _, desc_sets);
         Ok(self)
     }
-}*/
+}
 
-impl_shader_program_binder!(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>);
-impl_shader_program_binder!(AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
+#[derive(Clone)]
+#[allow(dead_code)]
+pub enum PipelineType
+{
+    Compute(Arc<ComputePipeline>),
+    Graphics(Arc<GraphicsPipeline>),
+    None
+}
+
+impl PipelineType
+{
+    pub fn layout(&self) -> Option<&Arc<PipelineLayout>>
+    {
+        match self
+        {
+            Self::Compute(pipeline) => Some(pipeline.layout()),
+            Self::Graphics(pipeline) => Some(pipeline.layout()),
+            Self::None => None
+        }
+    }
+}

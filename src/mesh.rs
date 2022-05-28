@@ -6,9 +6,9 @@ use std::path::Path;
 use super::types::*;
 use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
-use vulkano::buffer::{BufferUsage, CpuAccessibleBuffer, TypedBufferAccess, ImmutableBuffer};
+use vulkano::buffer::{BufferUsage, TypedBufferAccess, ImmutableBuffer};
 use vulkano::device::{Device, Queue};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
 pub use crate::references::*;
@@ -352,6 +352,7 @@ impl MeshBuilder
 }
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct Mesh {
     name: String,
     indices: Vec<u32>,
@@ -453,65 +454,62 @@ pub trait MeshBinder
 use vulkano::command_buffer::validity::*;
 use vulkano::command_buffer::DrawIndexedError;
 
-macro_rules! impl_mesh_binder {
-    ($type_name:ty) => {
-        impl MeshBinder for $type_name
-        {
-            fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
-            {
-                let vbo = mesh.vertex_buffer().unwrap();
-                let ibo = mesh.index_buffer().unwrap();
-                let result = self
-                    .bind_vertex_buffers(0, vbo.clone())
-                    .bind_index_buffer(ibo.clone())
-                    .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+impl <T>MeshBinder for AutoCommandBufferBuilder<T>
+{
+    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+    {
+        let vbo = mesh.vertex_buffer().unwrap();
+        let ibo = mesh.index_buffer().unwrap();
+        let result = self
+            .bind_vertex_buffers(0, vbo.clone())
+            .bind_index_buffer(ibo.clone())
+            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
 
-                match result {
-                    Ok(slf) => Ok(slf),
-                    Err(derr) => 
-                        match derr {
-                            DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
-                            match err {
-                                CheckDescriptorSetsValidityError::InvalidDescriptorResource {
-                                    set_num,
-                                    binding_num,
-                                    index,
-                                    ..
-                                } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
-                                _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
-                            },
-                            _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
-                        }
+        match result {
+            Ok(slf) => Ok(slf),
+            Err(derr) => 
+                match derr {
+                    DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
+                    match err {
+                        CheckDescriptorSetsValidityError::InvalidDescriptorResource {
+                            set_num,
+                            binding_num,
+                            index,
+                            ..
+                        } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
+                        
+                        CheckDescriptorSetsValidityError::MissingDescriptorSet{set_num} => 
+                            Err(format!("Набор uniform-переменных №{} не передан в шейдер", set_num)),
+                        
+                        _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
+                    },
+                    _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
                 }
-            }
-
-            fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
-            {
-                //let vbo = mesh.vertex_buffer().unwrap();
-                let ibo = mesh.index_buffer().unwrap();
-                let result = self.draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
-
-                match result {
-                    Ok(slf) => Ok(slf),
-                    Err(derr) => 
-                        match derr {
-                            DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
-                            match err {
-                                CheckDescriptorSetsValidityError::InvalidDescriptorResource {
-                                    set_num,
-                                    binding_num,
-                                    index,
-                                    ..
-                                } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
-                                _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
-                            },
-                            _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
-                        }
-                }
-            }
         }
-    };
-}
+    }
 
-impl_mesh_binder!(AutoCommandBufferBuilder<SecondaryAutoCommandBuffer>);
-impl_mesh_binder!(AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>);
+    fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+    {
+        //let vbo = mesh.vertex_buffer().unwrap();
+        let ibo = mesh.index_buffer().unwrap();
+        let result = self.draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+
+        match result {
+            Ok(slf) => Ok(slf),
+            Err(derr) => 
+                match derr {
+                    DrawIndexedError::CheckDescriptorSetsValidityError(err) => 
+                    match err {
+                        CheckDescriptorSetsValidityError::InvalidDescriptorResource {
+                            set_num,
+                            binding_num,
+                            index,
+                            ..
+                        } => Err(format!("Uniform-переменная {{set_num: {}, binding_num: {}, index: {}}} не передана в шейдер", set_num, binding_num, index)),
+                        _ => Err(format!("Ошибка uniform-переменных: {:?}", err))
+                    },
+                    _ => Err(format!("Ошибка отображения полигональной сетки: {:?}", derr))
+                }
+        }
+    }
+}

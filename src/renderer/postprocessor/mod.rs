@@ -119,6 +119,7 @@ struct RenderStage
 {
     _id: StageIndex,
     _program: ShaderProgramRef,
+    _uniform_buffer : ShaderProgramUniformBuffer,
     _resolution: TextureDimensions,
     _outputs: Vec<RenderStageOutput>,
     _executed: bool,
@@ -245,8 +246,6 @@ impl RenderStageBuilder
             .vertex(&v_shader).unwrap()
             .fragment(f_shader).unwrap();
 
-        let program = program.build_mutex(device.clone())?;
-
         let outputs = self._output_accum.iter().map(
             |(pix_fmt, accum, filter)| {
                 let acc = 
@@ -310,16 +309,20 @@ impl RenderStageBuilder
         };
 
         //println!("{}", program.take().fragment_shader_source());
-
+        let render_pass = RenderPass::new(device.clone(), render_pass_desc).unwrap();
+        let mut program = program.build(device.clone())?;
+        program.use_subpass(render_pass.clone().first_subpass());
+        let uniform_buffer = program.new_uniform_buffer();
+        
         let stage = RenderStage {
             _id: pp_graph._render_stage_id_counter,
-            _program: program,
+            _program: RcBox::construct(program),
+            _uniform_buffer: uniform_buffer,
             _resolution: self._dimenstions,
             _outputs: outputs,
-            _render_pass: RenderPass::new(device.clone(), render_pass_desc).unwrap(),
+            _render_pass: render_pass,
             _executed: false
         };
-
         let result = pp_graph._render_stage_id_counter;
         pp_graph._stages.insert(result, stage);
         pp_graph._render_stage_id_counter += 1;
@@ -403,31 +406,31 @@ impl Postprocessor
     pub fn uniform_to_all<T>(&mut self, name: &String, data: T)
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
-        for (_, rs) in &self._stages {
-            drop(rs._program.take_mut().uniform_by_name(data, name));
+        for (_, rs) in &mut self._stages {
+            drop(rs._uniform_buffer.uniform_by_name(data, name));
         }
     }
 
     pub fn uniform_to_stage<T>(&mut self, stage_id: StageIndex, name: &String, data: T)
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
-        match self._stages.get(&stage_id) {
-            Some(stage) => drop(stage._program.take_mut().uniform_by_name(data, name)),
+        match self._stages.get_mut(&stage_id) {
+            Some(stage) => drop(stage._uniform_buffer.uniform_by_name(data, name)),
             None => ()
         };
     }
 
     pub fn image_to_all(&mut self, name: &String, data: &TextureRef)
     {
-        for (_, rs) in &self._stages {
-            drop(rs._program.take_mut().uniform_sampler_by_name(data, name));
+        for (_, rs) in &mut self._stages {
+            rs._uniform_buffer.uniform_sampler_by_name(data, name).unwrap();
         }
     }
 
     pub fn image_to_stage(&mut self, stage_id: StageIndex, name: &String, data: &TextureRef)
     {
-        match self._stages.get(&stage_id) {
-            Some(stage) => drop(stage._program.take_mut().uniform_sampler_by_name(data, name)),
+        match self._stages.get_mut(&stage_id) {
+            Some(stage) => drop(stage._uniform_buffer.uniform_sampler_by_name(data, name)),
             None => ()
         };
     }
@@ -639,6 +642,11 @@ impl Postprocessor
         self._stages.get(&id).unwrap()
     }
 
+    fn stage_by_id_mut(&mut self, id: StageIndex) -> &mut RenderStage
+    {
+        self._stages.get_mut(&id).unwrap()
+    }
+
     fn replace_stage(&mut self, id: StageIndex, stage: &RenderStage)
     {
         self._stages.insert(id.clone(), stage.clone());
@@ -658,34 +666,39 @@ impl Postprocessor
             }
         }
 
+        let resolution = self.stage_by_id(id)._resolution;
+        let stage_shader = self.stage_by_id(id)._program.clone();
         //println!("Выполнение ноды {}", id);
-        
-        let mut stage = self.stage_by_id(id).clone();
-        let _prog = stage._program.clone();
-        
-        let mut program = _prog.take_mut();
+        {
+            let timer = self.timer;
+            let image_inputs = self._image_inputs.clone();
+            let stage = self.stage_by_id_mut(id);
+            
+            let mut program = stage_shader.take_mut();
+            let render_pass = stage._render_pass.clone();
 
-        let render_pass = stage._render_pass.clone();
-        program.use_subpass(render_pass.clone(), 0);
-        
-        program.uniform_by_name(
-            RenderResolution{
-                width:  stage._resolution.width() as f32,
-                height: stage._resolution.height() as f32,
-                ..Default::default()
-            }, &format!("resolution")).unwrap();
-        program.uniform_by_name(self.timer, &"timer".to_string()).unwrap();
+            program.use_subpass(render_pass.clone().first_subpass());
+            
+            drop(stage._uniform_buffer.uniform_by_name(
+                RenderResolution{
+                    width:  resolution.width() as f32,
+                    height: resolution.height() as f32,
+                    ..Default::default()
+                }, &format!("resolution")));
+            drop(stage._uniform_buffer.uniform_by_name(timer, &"timer".to_string()));
 
-        for (RenderStageInputSocket{render_stage_id, input}, tex) in &self._image_inputs {
-            if render_stage_id == &id {
-                //drop(program.uniform_sampler_by_name(tex, input));
-                match program.uniform_sampler_by_name(tex, input) {
-                    Ok(_) => ()/*println!("Принимается входящее изображение {} на вход", input)*/,
-                    Err(_) => ()/*println!("Для входящего изображения {} не назначена uniform-переменная", input)*/,
-                };
+            for (RenderStageInputSocket{render_stage_id, input}, tex) in &image_inputs {
+                if render_stage_id == &id {
+                    //drop(program.uniform_sampler_by_name(tex, input));
+                    match stage._uniform_buffer.uniform_sampler_by_name(tex, &input) {
+                        Ok(_) => ()/*println!("Принимается входящее изображение {} на вход", input)*/,
+                        Err(_) => ()/*println!("Для входящего изображения {} не назначена uniform-переменная", input)*/,
+                    };
+                }
             }
         }
-
+        //let stage = self.stage_by_id(id);
+        let render_pass = self.stage_by_id(id)._render_pass.clone();
         let mut render_targets = HashMap::<StageOutputIndex, TextureRef>::new();
         for link in &links {
             if link._to.render_stage_id == id {
@@ -693,46 +706,47 @@ impl Postprocessor
                 if from_stage.is_output_acc(link._from.output) {
                     //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
                     let acc = from_stage.get_accumulator_buffer(link._from.output);
-                    program.uniform_sampler_by_name(&acc, &link._to.input).unwrap();
+                    self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&acc, &link._to.input).unwrap();
                 } else {
                     //println!("Принимается входящий буфер {} на вход", link._to.input);
-                    let free_tex = self._busy_buffers.get(link).unwrap();
-                    program.uniform_sampler_by_name(free_tex, &link._to.input).unwrap();
+                    let free_tex = self._busy_buffers.get(link).unwrap().clone();
+                    self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&free_tex, &link._to.input).unwrap();
                 }
             }
             if link._from.render_stage_id == id {
                 if render_targets.contains_key(&link._from.output) { continue; };
                 //println!("Запрос буфера для записи в слот {}.", link._from.output);
-                let output = stage._outputs.get(link._from.output as usize).unwrap();
+                let output = self.stage_by_id(id)._outputs.get(link._from.output as usize).unwrap().clone();
                 let _tex = self.request_texture(link, output.pix_fmt(), output.filtering());
                 let __tex = _tex.take_mut();
                 render_targets.insert(link._from.output, _tex.clone());
             }
         }
-        drop(program);
+        {
+            let mut fb = self._framebuffer.take_mut();
+            fb.reset_attachments();
+            for ind in 0..render_targets.len() {
+                let tex = 
+                match render_targets.get(&(ind as _)) {
+                    Some(tex) => tex,
+                    None => panic!("Нода {} имеет неиспользованный выход {}.", id, ind)
+                };
+                fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
+            }
+            fb.view_port(resolution.width() as _, resolution.height() as _);
 
-        let mut fb = self._framebuffer.take_mut();
-        fb.reset_attachments();
-        for ind in 0..render_targets.len() {
-            let tex = 
-            match render_targets.get(&(ind as _)) {
-                Some(tex) => tex,
-                None => panic!("Нода {} имеет неиспользованный выход {}.", id, ind)
-            };
-            fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
+            let prog = &mut *stage_shader.take();
+
+            command_buffer_builder
+                .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
+                .bind_shader_program(prog).unwrap()
         }
-        fb.view_port(stage._resolution.width() as _, stage._resolution.height() as _);
-        let prog = &mut *_prog.take();
-        command_buffer_builder
-            .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
-            .bind_shader_program(prog).unwrap()
-            .bind_shader_uniforms(prog, false).unwrap()
+            .bind_shader_uniforms(&mut self.stage_by_id_mut(id)._uniform_buffer, false).unwrap()
             .bind_mesh(&*self._screen_plane.take()).unwrap()
             .end_render_pass().unwrap();
-        drop(fb);
-        drop(prog);
+            
         for output in 0..16 {
-            if stage.is_output_acc(output)
+            if self.stage_by_id(id).is_output_acc(output)
             {
                 let used_acc = render_targets.get(&(output as _)).unwrap();
                 let mut buf_index = 0;
@@ -743,12 +757,12 @@ impl Postprocessor
                     buf_index += 1;
                 }
                 let old_acc = &self._buffers.remove(buf_index);
-                let new_acc = stage.swap_accumulator_buffer(output, old_acc);
+                let new_acc = self.stage_by_id_mut(id).swap_accumulator_buffer(output, old_acc);
                 self._buffers.push(new_acc);
             }
         }
         
-        self.replace_stage(id, &stage);
+        //self.replace_stage(id, &stage);
 
         //println!("Конец выполнения ноды {}", id);
 

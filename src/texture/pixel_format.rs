@@ -1,7 +1,4 @@
 #[allow(dead_code)]
-
-use crate::glenums::AttribType;
-
 pub type GLenum = u32;
 pub const GL_COMPRESSED_RGB8_ETC2 : GLenum = 0x9274;
 pub const GL_COMPRESSED_RGBA8_ETC2_EAC : GLenum = 0x9278;

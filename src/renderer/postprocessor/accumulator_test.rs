@@ -2,6 +2,7 @@ use super::Postprocessor;
 use super::{StageIndex};
 use crate::texture::{TexturePixelFormat, TextureFilter};
 
+#[allow(dead_code)]
 impl Postprocessor
 {
     pub fn acc_mblur_new(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
@@ -30,7 +31,7 @@ impl Postprocessor
                     accumulator_out = vec4(0.0);
                 }
                 accumulator_out.a = 1.0;
-                swapchain_out.rgb = pow(accumulator_out.rgb, vec3(1.0)); //mix(texture(background, fragCoordWp).rgb, accumulator_out.rgb, original.a);
+                swapchain_out.rgb = pow(accumulator_out.rgb, vec3(1.0));
                 swapchain_out.a = 1.0;
             }");
         
