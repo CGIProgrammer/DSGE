@@ -1,11 +1,12 @@
-use super::Postprocessor;
+use super::PostprocessingPass;
 use crate::texture::TexturePixelFormat;
 use crate::texture::TextureFilter;
 use super::{StageIndex, StageOutputIndex, StageInputIndex};
 
 #[allow(dead_code)]
-impl Postprocessor
+impl PostprocessingPass
 {
+    /// Адаптированный Super Resolution v1.0 от AMD
     pub fn fidelityfx_super_resolution(&mut self, width: u16, height: u16) -> ((StageIndex, StageInputIndex), (StageIndex, StageOutputIndex))
     {
         let easu = self.make_easu_stage(width, height).unwrap();
@@ -22,6 +23,23 @@ impl Postprocessor
             .input("albedo")
             .output("EASU_pass", TexturePixelFormat::R8G8B8A8_UNORM, TextureFilter::Nearest, false)
             .code("
+            // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+            // Permission is hereby granted, free of charge, to any person obtaining a copy
+            // of this software and associated documentation files(the \"Software\"), to deal
+            // in the Software without restriction, including without limitation the rights
+            // to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+            // copies of the Software, and to permit persons to whom the Software is
+            // furnished to do so, subject to the following conditions :
+            // The above copyright notice and this permission notice shall be included in
+            // all copies or substantial portions of the Software.
+            // THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+            // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+            // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+            // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+            // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+            // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+            // THE SOFTWARE.
+
             vec3 FsrEasuCF(vec2 p) {
                 return texelFetch(albedo, ivec2(p*vec2(textureSize(albedo, 0))), 0).rgb;
             }
@@ -203,7 +221,25 @@ impl Postprocessor
             .dimenstions(width, height)
             .input("EASU_pass")
             .output("fsr_out", TexturePixelFormat::B8G8R8A8_SRGB, TextureFilter::Nearest, false)
-            .code("#define FSR_RCAS_LIMIT (0.25-(1.0/16.0))
+            .code("
+            // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
+            // Permission is hereby granted, free of charge, to any person obtaining a copy
+            // of this software and associated documentation files(the \"Software\"), to deal
+            // in the Software without restriction, including without limitation the rights
+            // to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
+            // copies of the Software, and to permit persons to whom the Software is
+            // furnished to do so, subject to the following conditions :
+            // The above copyright notice and this permission notice shall be included in
+            // all copies or substantial portions of the Software.
+            // THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+            // IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+            // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
+            // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+            // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+            // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+            // THE SOFTWARE.
+            
+            #define FSR_RCAS_LIMIT (0.25-(1.0/16.0))
             #define FSR_RCAS_DENOISE
 
             vec4 FsrRcasLoadF(vec2 p);
