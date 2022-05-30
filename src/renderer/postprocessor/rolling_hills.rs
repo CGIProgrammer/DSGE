@@ -1,10 +1,12 @@
-use super::Postprocessor;
+use super::PostprocessingPass;
 use super::{StageIndex};
 use crate::texture::{TexturePixelFormat, TextureFilter};
 
+
 #[allow(dead_code)]
-impl Postprocessor
+impl PostprocessingPass
 {
+	/// Адаптированная демосцена Rolling Hills (https://www.shadertoy.com/view/Xsf3zX)
 	pub fn rolling_hills(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
 	{
         let mut stage_builder = Self::stage_builder(self._device.clone());
@@ -14,6 +16,15 @@ impl Postprocessor
 			//.input("accumulator")
             .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
 			.code("
+// Rolling hills. By David Hoskins, November 2013.
+// License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
+
+// https://www.shadertoy.com/view/Xsf3zX
+
+// v.2.00 Uses eiffie's 'Circle of Confusion' function
+//		  for blurred ray marching into the grass.
+// v.1.02 Camera aberrations.
+// v.1.01 Added better grass, with wind movement.
 #define THRESHOLD .003
 #define MOD2 vec2(3.07965, 7.4235)
 float PI  = 4.0*atan(1.0);
