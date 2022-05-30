@@ -7,7 +7,7 @@ pub use crate::references::*;
 pub use crate::shader::ShaderStructUniform;
 pub type TextureRef = RcBox<Texture>;
 pub use pixel_format::TexturePixelFormatFeatures;
-
+pub use types::*;
 
 use std::io::{Read, Seek, BufRead};
 use image::io::Reader as ImageReader;
@@ -30,7 +30,7 @@ use vulkano::image::{
 };
 
 pub use vulkano::image::ImageDimensions as TextureDimensions;
-pub use vulkano::image::view::ImageViewType as TextureType;
+pub use vulkano::image::view::ImageViewType as TextureView;
 
 pub use vulkano::sampler::{
     Sampler as TextureSampler,
@@ -57,17 +57,21 @@ pub enum TextureViewType
 
 /// Текстура (она же изображение)
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct Texture
 {
     name: String,
 
     _vk_image_dims: TextureDimensions,
     _vk_image_view: Arc<dyn ImageViewAbstract + 'static>,
-    _vk_image_access: Option<Arc<dyn ImageAccess + 'static>>,
+    _vk_image_access: Arc<dyn ImageAccess + 'static>,
     _vk_sampler: Arc<TextureSampler>,
     _vk_device: Arc<Device>,
 
     _pix_fmt: TexturePixelFormat,
+
+    is_cubemap: bool,
+    is_array: bool,
 
     min_filter: TextureFilter,
     mag_filter: TextureFilter,
@@ -153,7 +157,7 @@ impl Texture
         &self.name
     }
 
-    pub fn ty(&self) -> TextureType
+    pub fn ty(&self) -> TextureView
     {
         self._vk_image_view.view_type()
     }
@@ -212,9 +216,9 @@ impl Texture
                 ([width as _, height as _, depth as _], 1),
         };
         cbb.blit_image(
-            from._vk_image_access.as_ref().unwrap().clone(), [0,0,0], from_dims,
+            from._vk_image_access.clone(), [0,0,0], from_dims,
             0, 0,
-            to._vk_image_access.as_ref().unwrap().clone(), [0,0,0], to_dims,
+            to._vk_image_access.clone(), [0,0,0], to_dims,
             0,0, from_array_layers.min(to_array_layers),
             TextureFilter::Nearest
         ).unwrap();
@@ -262,7 +266,7 @@ impl Texture
                         let cpuab = CpuAccessibleBuffer::from_iter(
                             self._vk_device.clone(), BufferUsage::transfer_source(), false, data
                         ).unwrap();
-                        cbb.copy_buffer_to_image(cpuab, self._vk_image_access.as_ref().unwrap().clone()).unwrap();
+                        cbb.copy_buffer_to_image(cpuab, self._vk_image_access.clone()).unwrap();
                         drop(cbb.build().unwrap().execute(queue).unwrap());
                         Ok(())
                     }
@@ -291,12 +295,12 @@ impl Texture
             }
         };
         cbb.blit_image(
-            self._vk_image_access.as_ref().unwrap().clone(),
+            self._vk_image_access.clone(),
             [0, 0, 0],
             dims,
             0,
             0,
-            tex._vk_image_access.as_ref().unwrap().clone(),
+            tex._vk_image_access.clone(),
             [0, 0, 0],
             dims,
             0,
@@ -337,7 +341,7 @@ impl Texture
             false
         ).unwrap() };
         
-        cbb.copy_image_to_buffer(img._vk_image_access.as_ref().unwrap().clone(), cpuab.clone()).unwrap();
+        cbb.copy_image_to_buffer(img._vk_image_access.clone(), cpuab.clone()).unwrap();
         drop(cbb.build().unwrap().execute(queue).unwrap());
         let buf = cpuab.read().unwrap().to_vec();
         match subpix_count {
@@ -364,7 +368,7 @@ impl Texture
     /// Создаёт `TextureRef` на основе `ImageViewAbstract`.
     /// В основном используется для представления swapchain изображения в виде текстуры
     /// для вывода результата рендеринга
-    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, img_access: Option<Arc<dyn ImageAccess + 'static>>, device: Arc<Device>) -> Result<TextureRef, String>
+    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
     {
         let img_dims = img.image().dimensions();
         let sampler = TextureSampler::new(device.clone(), SamplerCreateInfo {
@@ -378,17 +382,27 @@ impl Texture
 
         let pix_fmt = TexturePixelFormat::from_vk_format(img.image().format())?;
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
+        
         //TextureDimensions{width: img_dims[0], }
         Ok(RcBox::construct(Self{
             name : "".to_string(),
 
-            _vk_image_dims : img_dims.into(),
-            _vk_image_access : img_access,
-            _vk_image_view : img,
-            _vk_sampler : sampler,
-            _vk_device : device.clone(),
+            _vk_image_dims: img_dims.into(),
+            _vk_image_access: img.image(),
+            _vk_image_view: img.clone(),
+            _vk_sampler: sampler,
+            _vk_device: device.clone(),
 
             _pix_fmt : pix_fmt,
+
+            is_cubemap : match img.view_type() {
+                TextureView::CubeArray | TextureView::Cube => true,
+                _ => false
+            },
+            is_array : match img.view_type() {
+                TextureView::CubeArray | TextureView::Dim1dArray | TextureView::Dim2dArray => true,
+                _ => false
+            },
 
             min_filter : TextureFilter::Nearest,
             mag_filter : TextureFilter::Nearest,
@@ -567,6 +581,11 @@ impl Texture
             TextureDimensions::Dim2d{..} => 1,
             TextureDimensions::Dim3d{width:_, height:_, depth} => depth,
         }
+    }
+
+    pub fn array_layers(&self) -> u32
+    {
+        self._vk_image_view.array_layers().count() as _
     }
 
     pub fn dims(&self) -> TextureDimensions
@@ -758,14 +777,26 @@ impl TextureBuilder
             ..Default::default()
         }).unwrap();
 
+        let image_view = ImageView::new_default(texture.clone()).unwrap();
+
         Ok(Texture {
             name: self.name.to_string(),
             _vk_image_dims: dimensions,
-            _vk_image_view: ImageView::new_default(texture.clone()).unwrap(),
-            _vk_image_access: Some(texture.clone()),
+            _vk_image_view: image_view.clone(),
+            _vk_image_access: texture.clone(),
             _vk_device: device.clone(),
             _pix_fmt: pix_fmt,
             _vk_sampler: sampler,
+            
+            is_cubemap : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Cube => true,
+                _ => false
+            },
+            is_array : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Dim1dArray | TextureView::Dim2dArray => true,
+                _ => false
+            },
+
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -851,15 +882,27 @@ impl TextureBuilder
             ..Default::default()
         }).unwrap();
 
+        
         tex_future.flush().unwrap();
+        let image_view = ImageView::new_default(texture.clone()).unwrap();
         Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
-            _vk_image_view: ImageView::new_default(texture.clone()).unwrap(),
-            _vk_image_access: Some(texture.clone()),
+            _vk_image_view: image_view.clone(),
+            _vk_image_access: texture.clone(),
             _vk_device: device.clone(),
             _pix_fmt: header.pixel_format(),
             _vk_sampler: sampler,
+            
+            is_cubemap : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Cube => true,
+                _ => false
+            },
+            is_array : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Dim1dArray | TextureView::Dim2dArray => true,
+                _ => false
+            },
+
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -920,14 +963,25 @@ impl TextureBuilder
         }).unwrap();
 
         tex_future.flush().unwrap();
+        let image_view = ImageView::new_default(texture.clone()).unwrap();
         Ok(Texture {
             name: self.name.clone(),
             _vk_image_dims: dimensions,
             _vk_image_view: ImageView::new_default(texture.clone()).unwrap(),
-            _vk_image_access: Some(texture.clone()),
+            _vk_image_access: texture.clone(),
             _vk_device: queue.device().clone(),
             _pix_fmt: pix_fmt,
             _vk_sampler: sampler,
+            
+            is_cubemap : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Cube => true,
+                _ => false
+            },
+            is_array : match image_view.view_type() {
+                TextureView::CubeArray | TextureView::Dim1dArray | TextureView::Dim2dArray => true,
+                _ => false
+            },
+            
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -1095,27 +1149,5 @@ impl CompressedFormat for KTXHeader {
     {
         let size = self.pixel_format().block_size().unwrap();
         size as _
-    }
-}
-
-pub trait TextureTypeGlsl
-{
-    fn glsl_sampler_name(&self) -> &'static str;
-}
-
-impl TextureTypeGlsl for TextureType
-{
-    fn glsl_sampler_name(&self) -> &'static str
-    {
-        match self
-        {
-            TextureType::Dim1d => "sampler1D",
-            TextureType::Dim1dArray => "sampler1DArray",
-            TextureType::Dim2d => "sampler2D",
-            TextureType::Dim2dArray => "sampler2DArray",
-            TextureType::Cube => "samplerCube",
-            TextureType::Dim3d => "sampler3D",
-            TextureType::CubeArray => "samplerCubeArray",
-        }
     }
 }
