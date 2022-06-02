@@ -13,7 +13,7 @@ use crate::types::*;
 use crate::shader::*;
 use crate::references::*;
 use crate::texture::*;
-use crate::components::camera::*;
+use crate::components::ProjectionUniformData;
 use crate::game_object::GOTransformUniform;
 
 #[allow(dead_code)]
@@ -102,8 +102,10 @@ impl std::convert::From<[f32; 4]> for MaterialSlot
 /// Строитель материала
 pub struct MaterialBuilder
 {
+    name : String,
+
     /// Присоединённые текстуры
-    texture_slots : HashMap<String, TextureRef>,
+    texture_slots : HashMap<String, Texture>,
 
     /// Числовые поля, представляющие регулируемые параметры материала.
     numeric_slots : Vec<MaterialSlot>,
@@ -131,9 +133,10 @@ pub struct MaterialBuilder
 #[allow(dead_code)]
 impl MaterialBuilder
 {
-    pub fn start(device : Arc<Device>) -> MaterialBuilder
+    pub fn start(name: &str, device : Arc<Device>) -> MaterialBuilder
     {
         let mut builder = MaterialBuilder {
+            name : name.to_string(),
             texture_slots : HashMap::new(),
             numeric_slots : Vec::new(),
             vertex_base : Shader::builder(ShaderType::Vertex, device.clone()),
@@ -154,7 +157,7 @@ impl MaterialBuilder
             .output("TBN", AttribType::FMat3)
             //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
             .uniform_constant::<GOTransformUniform>("object").unwrap()
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_CAMERA_SET).unwrap();
+            .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
         
         // Шейдер для скелетной деформации
         // TODO сделать нормальную реализацию. Сейчас это просто копия базового вершинного шейдера материала
@@ -167,7 +170,7 @@ impl MaterialBuilder
             .output("TBN", AttribType::FMat3)
             .uniform_constant::<GOTransformUniform>("object").unwrap()
             //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
-            .uniform_autoincrement::<CameraUniformData>("camera", SHADER_CAMERA_SET).unwrap();
+            .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
 
         builder.fragment_base
             .input("position_prev", AttribType::FVec4)
@@ -204,12 +207,12 @@ impl MaterialBuilder
     }
 
     /// Добавить текстуру
-    pub fn add_texture(&mut self, name: &str, texture: TextureRef) -> &mut Self
+    pub fn add_texture(&mut self, name: &str, texture: &Texture) -> &mut Self
     {
-        let ty = texture.take().ty();
+        let ty = texture.ty();
         self.fragment_base.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
         self.fragment_shadowmap.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
-        self.texture_slots.insert(name.to_string(), texture);
+        self.texture_slots.insert(name.to_string(), texture.clone());
         self
     }
 
@@ -311,6 +314,7 @@ impl MaterialBuilder
         let shadowmap_deformed_ub = shadowmap_deformed_shader.new_uniform_buffer();
 
         let result = Material {
+            name : self.name,
             texture_slots : self.texture_slots.clone(),
             numeric_slots : self.numeric_slots.clone(),
             shader_set    : MaterialShaderSet {
@@ -328,7 +332,8 @@ impl MaterialBuilder
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct Material {
-    texture_slots : HashMap<String, TextureRef>,
+    name : String,
+    texture_slots : HashMap<String, Texture>,
     numeric_slots : Vec<MaterialSlot>,
     shader_set : MaterialShaderSet
 }
@@ -346,6 +351,12 @@ enum MatShaderType {
 #[allow(dead_code)]
 impl Material
 {
+    #[inline]
+    pub fn name(&self) -> &String
+    {
+        &self.name
+    }
+
     pub fn base_shader(&mut self, subpass: Subpass) -> (&mut ShaderProgram, ShaderProgramUniformBuffer)
     {
         self.shader_set.base.0.cull_faces = CullMode::Front;
@@ -426,26 +437,26 @@ static DEFAULT_PBR : &str = "void principled() {
     //float duv = length(abs(dFdx(texture_uv)) + abs(dFdx(texture_uv))) * 10.0;
     
     #ifdef diffuse_map
-    mDiffuse = texture(fDiffuseMap, texture_uv);
+    mDiffuse = texture(diffuse_map, texture_uv);
     #else
     mDiffuse.rgb = material.diffuse.rgb;
     #endif
 
     #ifdef normal_map
-    vec3 nrm = texture(fReliefMap, texture_uv).rgb*2.0-1.0;
+    vec3 nrm = texture(normal_map, texture_uv).rgb*2.0-1.0;
     nrm.z = sqrt(1.0 - nrm.x*nrm.x + nrm.y*nrm.y);
     nrm = normalize(nrm);
     mNormal = mix(vec3(0.0,0.0,1.0), nrm, clamp(fReliefValue, 0.0, 1.0));
     #endif
     
     #ifdef roughness_map
-        mRoughness = texture(fRoughnessMap, texture_uv).r;
+        mRoughness = texture(roughness_map, texture_uv).r;
     #else
         mRoughness = material.roughness;
     #endif
 
     #ifdef metallic_map
-        mMetallic = texture(fMetallicMap, texture_uv).r;
+        mMetallic = texture(metallic_map, texture_uv).r;
     #else
         mMetallic = material.metallic;
     #endif
@@ -453,7 +464,7 @@ static DEFAULT_PBR : &str = "void principled() {
     mAmbient = vec3(material.glow)*0.0; //texture(fLightMap, texture_uv).rgb;
 
     #ifdef glowing_map
-    mAmbient += texture(fGlowingMap, texture_uv).rgb*1000.0;
+    mAmbient += texture(glowing_map, texture_uv).rgb*1000.0;
     #endif
     mRoughness *= mRoughness;
 }";
