@@ -4,11 +4,10 @@ pub use crate::components::camera::*;
 
 use crate::types::*;
 use crate::shader::{ShaderStructUniform};
-use crate::texture::TextureRef;
+use crate::texture::Texture;
 use crate::references::*;
-use crate::mesh::MeshRef;
-use crate::material::MaterialRef;
 use bytemuck::{Zeroable, Pod};
+
 
 #[derive(Clone)]
 pub struct GOTransform
@@ -45,7 +44,7 @@ impl ShaderStructUniform for GOTransformUniform
         }")
     }
     
-    fn texture(&self) -> Option<&TextureRef>
+    fn texture(&self) -> Option<&Texture>
     {
         None
     }
@@ -81,6 +80,7 @@ impl GOTransform
     }
 }
 
+
 #[derive(Clone)]
 pub struct GameObject
 {
@@ -88,12 +88,19 @@ pub struct GameObject
     name: String,
     camera: Option<RcBox<CameraComponent>>,
     mesh_visual: Option<RcBox<MeshVisual>>,
-    components: Vec<RcBox<dyn std::any::Any>>
+    light: Option<RcBox<Light>>,
+    components: Vec<RcBox<dyn Component>>
 }
 
 #[allow(dead_code)]
 impl GameObject
 {
+    #[inline]
+    pub fn name(&self) -> &String
+    {
+        &self.name
+    }
+
     pub fn camera(&self) -> Option<&RcBox<CameraComponent>>
     {
         self.camera.as_ref()
@@ -104,6 +111,11 @@ impl GameObject
         self.mesh_visual.as_ref()
     }
     
+    pub fn light(&self) -> Option<&RcBox<Light>>
+    {
+        self.light.as_ref()
+    }
+    
     pub fn new<T: ToString>(name: T) -> RcBox<Self>
     {
         let obj = RcBox::construct(Self {
@@ -111,42 +123,11 @@ impl GameObject
             transform: GOTransform::identity(),
             camera: None,
             mesh_visual: None,
+            light: None,
             components: Vec::new()
         });
         obj.take_mut().transform._owner = Some(obj.clone());
         obj
-    }
-
-    pub fn new_camera<T: ToString>(name: T, aspect: f32, fov: f32, znear: f32, zfar: f32) -> RcBox<Self>
-    {
-        let camera = RcBox::construct(Self {
-            name: name.to_string(),
-            transform: GOTransform::identity(),
-            camera: None,
-            mesh_visual: None,
-            components: Vec::new()
-        });
-        
-        let mut _cam = camera.take_mut();
-        _cam.add_component(CameraComponent::new(aspect, fov, znear, zfar));
-        _cam.transform._owner = Some(camera.clone());
-        drop(_cam);
-        camera
-    }
-
-    pub fn new_mesh<T: ToString>(name: T, mesh: MeshRef, material: MaterialRef) -> RcBox<Self>
-    {
-        let camera = RcBox::construct(Self {
-            name: name.to_string(),
-            transform: GOTransform::identity(),
-            camera: None,
-            mesh_visual: None,
-            components: Vec::new()
-        });
-        camera.take_mut().transform._owner = Some(camera.clone());
-        let mesh = MeshVisual::new(mesh, material);
-        camera.take_mut().add_component(mesh);
-        camera
     }
 
     pub fn set_parent(&mut self, parent: RcBox<GameObject>)
@@ -193,14 +174,23 @@ impl GameObject
         self.components.push(RcBox::construct(component));
     }
 
-    pub fn get_component<T: Component>(&self) -> Option<&RcBox<(dyn std::any::Any + 'static)>>
+    pub fn get_component<T: Component>(&self) -> Option<&RcBox<(dyn Component)>>
     {
-        self.components.iter().find(|b| (*b).lock().unwrap().downcast_ref::<T>().is_some())
+        self.components.iter().find(|b| {
+            (*b).lock().unwrap().as_any().downcast_ref::<T>().is_some()
+        })
     }
 
-    pub fn get_components<T: Component>(&self) -> Vec<&RcBox<(dyn std::any::Any + 'static)>>
+    pub fn get_components<T: Component>(&self) -> Vec<&RcBox<(dyn Component)>>
     {
-        self.components.iter().filter(|b| (*b).lock().unwrap().downcast_ref::<T>().is_some()).collect::<Vec<_>>()
+        self.components.iter().filter(|b| {
+            (*b).lock().unwrap().as_any().downcast_ref::<T>().is_some()
+        }).collect::<Vec<_>>()
+    }
+
+    pub fn get_all_components(&self) -> &Vec<RcBox<(dyn Component)>>
+    {
+        &self.components
     }
 
     pub fn remove_parent(&mut self)
