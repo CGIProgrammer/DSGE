@@ -54,7 +54,7 @@ fn main() {
     let queue = renderer.queue().clone();
     let device = queue.device().clone();
 
-    let img = Texture::new_empty_mutex(
+    let img = Texture::new_empty(
         "frame",
         TextureDimensions::Dim2d { width: 384, height: 288, array_layers: 1 },
         TexturePixelFormat::R8G8B8A8_SRGB,
@@ -64,7 +64,7 @@ fn main() {
     let target = "/media/ivan/b74968cd-84c1-49ba-8a04-e0829fef9c9a/Видео/brrrr/frames_fsr/";
     println!("Begin");
     for i in 1..=9000 {
-        img.take_mut().load_data(queue.clone(), format!("{}/{:06}.png", source, i)).unwrap();
+        img.load_data(queue.clone(), format!("{}/{:06}.png", source, i)).unwrap();
         println!("frame {}      \r", i);
         let tu = timer.next_frame();
         renderer.update_timer(tu);
@@ -75,7 +75,7 @@ fn main() {
         renderer.wait();
         
         let out = renderer.render_result();
-        out.take().save(queue.clone(), format!("{}/{:06}.png", target, i));
+        out.save(queue.clone(), format!("{}/{:06}.png", target, i));
     }
     println!("Finished");
 }
