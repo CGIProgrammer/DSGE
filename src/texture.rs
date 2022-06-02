@@ -5,12 +5,14 @@ mod types;
 
 pub use crate::references::*;
 pub use crate::shader::ShaderStructUniform;
-pub type TextureRef = RcBox<Texture>;
+//pub type TextureRef = RcBox<Texture>;
 pub use pixel_format::TexturePixelFormatFeatures;
 pub use types::*;
 
+use std::ffi::c_void;
 use std::io::{Read, Seek, BufRead};
 use image::io::Reader as ImageReader;
+use image::EncodableLayout;
 
 use vulkano::format::{Format};
 
@@ -25,7 +27,7 @@ use vulkano::image::{
     view::{
         ImageView,
         ImageViewAbstract,
-        //ImageViewCreateInfo
+        ImageViewCreateInfo
     }
 };
 
@@ -93,7 +95,7 @@ impl std::hash::Hash for Texture
     }
 }
 */
-impl ShaderStructUniform for TextureRef
+impl ShaderStructUniform for Texture
 {
     fn glsl_type_name() -> String
     {
@@ -105,7 +107,7 @@ impl ShaderStructUniform for TextureRef
         String::new()
     }
 
-    fn texture(&self) -> Option<&TextureRef>
+    fn texture(&self) -> Option<&Texture>
     {
         Some(self)
     }
@@ -134,6 +136,13 @@ pub struct ImmutableImagePatch<A = PotentialDedicatedAllocation<StdMemoryPoolAll
 #[allow(dead_code)]
 impl Texture
 {
+    pub fn box_id(&self) -> u32
+    {
+        self._vk_sampler.as_ref() as *const TextureSampler as u32 ^
+        self._vk_image_access.as_ref() as *const dyn ImageAccess as *const c_void as u32 ^
+        self._vk_image_view.as_ref() as *const dyn ImageViewAbstract as *const c_void as u32
+    }
+
     pub fn builder() -> TextureBuilder
     {
         TextureBuilder {
@@ -170,11 +179,32 @@ impl Texture
         texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
-    /// Тоже что и new_empty, только Texture оборачивается в мьютекс
+    pub fn array_layer_as_texture(&self, layer: u32) -> Result<Texture, String>
+    {
+        let view_type = match self._vk_image_dims {
+            TextureDimensions::Dim1d {..} => TextureView::Dim1d,
+            TextureDimensions::Dim2d {..} => TextureView::Dim2d,
+            TextureDimensions::Dim3d {..} => TextureView::Dim2d
+        };
+        Texture::from_vk_image_view(
+            ImageView::new(
+                self._vk_image_access.clone(),
+                ImageViewCreateInfo {
+                    view_type: view_type,
+                    format: Some(self._pix_fmt),
+                    array_layers: layer..(layer+1),
+                    ..Default::default()
+                }
+            ).unwrap(),
+            self._vk_device.clone()
+        )
+    }
+
+    /*/// Тоже что и new_empty, только Texture оборачивается в мьютекс
     pub fn new_empty_mutex(name: &str, dims: TextureDimensions, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(Self::new_empty(name, dims, pix_fmt, device)?))
-    }
+    }*/
 
     /// Получает формат пикселя текстуры
     pub fn pix_fmt(&self) -> TexturePixelFormat
@@ -228,11 +258,11 @@ impl Texture
         }
     }
 
-    pub fn load_data<P : AsRef<std::path::Path> + ToString>(&mut self, queue: Arc<Queue>, path: P) -> Result<(), String>
+    pub fn load_data<P : AsRef<std::path::Path> + ToString>(&self, queue: Arc<Queue>, path: P) -> Result<(), String>
     {
         let extension = path.as_ref().extension();
-        let mut texture_builder = Texture::builder();
-        texture_builder.name(path.to_string().as_str());
+        //let mut texture_builder = Texture::builder();
+        //texture_builder.name(path.to_string().as_str());
         match extension {
             None => Err(String::from("Неизвестный формат изображения")),
             Some(os_str) => {
@@ -267,6 +297,15 @@ impl Texture
                             self._vk_device.clone(), BufferUsage::transfer_source(), false, data
                         ).unwrap();
                         cbb.copy_buffer_to_image(cpuab, self._vk_image_access.clone()).unwrap();
+                        /*self._vk_image_view = ImageView::new(self._vk_image_access.clone(), ImageViewCreateInfo{
+                            format: Some(TexturePixelFormat::R8G8B8A8_SRGB),
+                            view_type: self._vk_image_view.view_type(),
+                            component_mapping: self._vk_image_view.component_mapping(),
+                            aspects: self._vk_image_view.aspects().clone(),
+                            array_layers: self._vk_image_view.array_layers(),
+                            mip_levels: self._vk_image_view.mip_levels(),
+                            ..Default::default()
+                        }).unwrap();*/
                         drop(cbb.build().unwrap().execute(queue).unwrap());
                         Ok(())
                     }
@@ -368,7 +407,7 @@ impl Texture
     /// Создаёт `TextureRef` на основе `ImageViewAbstract`.
     /// В основном используется для представления swapchain изображения в виде текстуры
     /// для вывода результата рендеринга
-    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<TextureRef, String>
+    pub fn from_vk_image_view(img: Arc<dyn ImageViewAbstract>, device: Arc<Device>) -> Result<Texture, String>
     {
         let img_dims = img.image().dimensions();
         let sampler = TextureSampler::new(device.clone(), SamplerCreateInfo {
@@ -384,7 +423,7 @@ impl Texture
         println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
         
         //TextureDimensions{width: img_dims[0], }
-        Ok(RcBox::construct(Self{
+        Ok(Self{
             name : "".to_string(),
 
             _vk_image_dims: img_dims.into(),
@@ -414,13 +453,13 @@ impl Texture
             max_anisotropy : None,
             min_lod : 0.0,
             max_lod : 1.0,
-        }))
+        })
     }
 
-    pub fn from_file_mutex<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<TextureRef, String>
+    /*pub fn from_file_mutex<P : AsRef<std::path::Path> + ToString>(queue: Arc<Queue>, path: P) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(Self::from_file(queue, path)?))
-    }
+    }*/
 
     /// Загрузка изображения-текстуры из файла.
     /// Поддерживаются форматы dds, ktx и все форматы, поддерживаемые crate'ом image
@@ -428,6 +467,9 @@ impl Texture
     {
         let extension = path.as_ref().extension();
         let mut texture_builder = Texture::builder();
+        texture_builder.mag_filter = TextureFilter::Linear;
+        texture_builder.min_filter = TextureFilter::Linear;
+        texture_builder.mip_mode = MipmapMode::Linear;
         texture_builder.name(path.to_string().as_str());
 
         match extension {
@@ -497,7 +539,7 @@ impl Texture
         self.max_anisotropy = max_aniso;
     }
 
-    /// Задаёт фильтрацию при сжатии ихображения
+    /// Задаёт фильтрацию при сжатии изображения
     pub fn set_min_filter(&mut self, filter: TextureFilter)
     {
         self.min_filter = filter;
@@ -596,16 +638,18 @@ impl Texture
     /// Обновление сэмплера текстуры
     pub fn update_sampler(&mut self)
     {
-        self._vk_sampler = TextureSampler::new(self._vk_device.clone(), SamplerCreateInfo {
-            address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
-            mag_filter : self.mag_filter,
-            min_filter : self.min_filter,
-            mipmap_mode : self.mip_mode,
-            mip_lod_bias : self.mip_lod_bias,
-            anisotropy : self.max_anisotropy,
-            lod : self.min_lod..=self.max_lod,
-            ..Default::default()
-        }).unwrap();
+        self._vk_sampler = TextureSampler::new(self._vk_device.clone(),
+            SamplerCreateInfo {
+                address_mode : [self.u_repeat, self.v_repeat, self.w_repeat],
+                mag_filter : self.mag_filter,
+                min_filter : self.min_filter,
+                mipmap_mode : self.mip_mode,
+                mip_lod_bias : self.mip_lod_bias,
+                anisotropy : self.max_anisotropy,
+                lod : self.min_lod..=self.max_lod,
+                ..Default::default()
+            }
+        ).unwrap();
     }
 
     pub fn clear_color(&mut self, queue: Arc<Queue>)
@@ -738,10 +782,10 @@ impl TextureBuilder
         self
     }
 
-    pub fn build_mutable_mutex(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
+    /*pub fn build_mutable_mutex(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(self.build_mutable(device, pix_fmt, dimensions)?))
-    }
+    }*/
 
     /// Строит изменяемое изображение
     pub fn build_mutable(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<Texture, String>
@@ -810,10 +854,10 @@ impl TextureBuilder
         })
     }
     
-    pub fn build_immutable_compressed_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    /*pub fn build_immutable_compressed_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(self.build_immutable_compressed(reader, queue)?))
-    }
+    }*/
 
     /// Строит неизменяемое сжатое изображение
     pub fn build_immutable_compressed<Rdr : Read + Seek + BufRead>(mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<Texture, String>
@@ -916,25 +960,36 @@ impl TextureBuilder
         })
     }
 
-    pub fn build_immutable_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
+    /*pub fn build_immutable_mutex<Rdr : Read + Seek + BufRead>(self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(self.build_immutable(reader, queue)?))
-    }
+    }*/
 
     /// Строит неизменяемое несжатое изображение
     pub fn build_immutable<Rdr : Read + Seek + BufRead>(mut self, reader: &mut Rdr, queue: Arc<Queue>) -> Result<Texture, String>
     {
-        let pix_fmt = TexturePixelFormat::from_vk_format(Format::R8G8B8A8_SRGB)?;
         let img_rdr = ImageReader::new(reader).with_guessed_format();
         if img_rdr.is_err() {
             return Err(String::from("Неизвестный формат изображения"));
         }
         let img_rdr = img_rdr.unwrap();
-        let image = img_rdr.decode().unwrap().to_rgba8();
+        let image = img_rdr.decode().unwrap();
 
-        let (width, height) = image.dimensions();
-        let dimensions = TextureDimensions::Dim2d { width: width, height: height, array_layers: 1 };
-        let image_data = image.into_raw().clone();
+        let (image_data, pix_fmt, (width, height)) = match image {
+            image::DynamicImage::ImageLuma8(ref img)    => (img.as_raw().as_bytes().to_vec(), Format::R8_UNORM, img.dimensions()),
+            image::DynamicImage::ImageLumaA8(ref img)   => (img.as_raw().as_bytes().to_vec(), Format::R8G8_UNORM, img.dimensions()),
+            image::DynamicImage::ImageRgb8(ref img)     => (image.to_rgba8().as_raw().as_bytes().to_vec(), Format::R8G8B8A8_UNORM, img.dimensions()),
+            image::DynamicImage::ImageRgba8(ref img)    => (img.as_raw().as_bytes().to_vec(), Format::R8G8B8A8_UNORM, img.dimensions()),
+            image::DynamicImage::ImageLuma16(ref img)   => (img.as_raw().as_bytes().to_vec(), Format::R16_UNORM, img.dimensions()),
+            image::DynamicImage::ImageLumaA16(ref img)  => (img.as_raw().as_bytes().to_vec(), Format::R16G16_UNORM, img.dimensions()),
+            image::DynamicImage::ImageRgb16(ref img)    => (img.as_raw().as_bytes().to_vec(), Format::R16G16B16_UNORM, img.dimensions()),
+            image::DynamicImage::ImageRgba16(ref img)   => (img.as_raw().as_bytes().to_vec(), Format::R16G16B16A16_UNORM, img.dimensions()),
+            image::DynamicImage::ImageRgb32F(ref img)   => (img.as_raw().as_bytes().to_vec(), Format::R32G32B32_SFLOAT, img.dimensions()),
+            image::DynamicImage::ImageRgba32F(ref img)  => (img.as_raw().as_bytes().to_vec(), Format::R32G32B32A32_SFLOAT, img.dimensions()),
+            _ => panic!("Неизвестный формат пикселей")
+        };
+        let dimensions = TextureDimensions::Dim2d { width, height, array_layers: 1 };
+
         let (texture, tex_future) = ImmutableImage::from_iter(
             image_data.iter().cloned(),
             dimensions,
@@ -942,7 +997,7 @@ impl TextureBuilder
                 MipmapMode::Linear  => MipmapsCount::Log2,
                 MipmapMode::Nearest => MipmapsCount::One
             },
-            Format::R8G8B8A8_SRGB,
+            pix_fmt,
             queue.clone()
         ).unwrap();
 

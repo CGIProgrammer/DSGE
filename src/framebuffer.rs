@@ -11,13 +11,15 @@ use crate::texture::*;
 pub type FramebufferRef = RcBox<Framebuffer>;
 pub type FramebufferAttachmentDefaultValue = vulkano::format::ClearValue;
 
+#[derive(Clone)]
 struct Attachment
 {
-    storage : TextureRef,
+    storage : Texture,
     default_color : FramebufferAttachmentDefaultValue
 }
 
 /// Буфер кадра
+#[derive(Clone)]
 pub struct Framebuffer
 {
     _viewport: Viewport,                    // Окно вида
@@ -30,12 +32,12 @@ pub struct Framebuffer
 /// Буфер кадра
 /// Может использоваться и как буфер кадра "по умолчанию", так и
 /// для рендеринга в текстуру
-#[allow(dead_code)]
+//#[allow(dead_code)]
 impl Framebuffer
 {
-    pub fn new(width: u16, height: u16) -> FramebufferRef
+    pub fn new(width: u16, height: u16) -> Framebuffer
     {
-        RcBox::construct(Self {
+        Self {
             _viewport: Viewport {
                 origin: [0.0, 0.0],
                 dimensions: [0.0, 0.0],
@@ -45,7 +47,7 @@ impl Framebuffer
             _color_attachments: Vec::new(),
             _depth_attachment: None,
             _vk_fb: None
-        })
+        }
     }
 
     pub fn viewport(&self) -> &Viewport
@@ -54,10 +56,10 @@ impl Framebuffer
     }
 
     /// Присоединение "цветного" изображения к выходу фреймбуфера
-    pub fn add_color_attachment(&mut self, att: TextureRef, default_val : FramebufferAttachmentDefaultValue) -> Result<(), String>
+    pub fn add_color_attachment(&mut self, att: &Texture, default_val : FramebufferAttachmentDefaultValue) -> Result<(), String>
     {
         if self._color_attachments.len() < 15 {
-            self._color_attachments.push(Attachment{ storage : att, default_color : default_val });
+            self._color_attachments.push(Attachment{ storage : att.clone(), default_color : default_val });
             self._vk_fb = None;
             Ok(())
         } else {
@@ -66,10 +68,10 @@ impl Framebuffer
     }
 
     /// Присоединение изображения в качестве буфера глубины
-    pub fn set_depth_attachment(&mut self, depth: TextureRef, default_val : FramebufferAttachmentDefaultValue)
+    pub fn set_depth_attachment(&mut self, depth: &Texture, default_val : FramebufferAttachmentDefaultValue)
     {
         let attachment = Attachment {
-            storage : depth,
+            storage : depth.clone(),
             default_color : default_val
         };
         self._depth_attachment = Some(attachment);
@@ -81,12 +83,6 @@ impl Framebuffer
     {
         self._color_attachments.clear();
         self._vk_fb = None;
-    }
-
-    /// Получение структуры буфера кадра vulkano
-    pub fn vk_fb(&self) -> &Arc<VkFramebuffer>
-    {
-        self._vk_fb.as_ref().unwrap()
     }
 
     /// Установка окна вида
@@ -101,11 +97,11 @@ impl Framebuffer
         let mut attachments = Vec::new();
         for attachment in &self._color_attachments
         {
-            let sas = attachment.storage.take().image_view().clone();
+            let sas = attachment.storage.image_view().clone();
             attachments.push(sas);
         }
         if self._depth_attachment.is_some() {
-            attachments.push(self._depth_attachment.as_ref().unwrap().storage.take().image_view().clone());
+            attachments.push(self._depth_attachment.as_ref().unwrap().storage.image_view().clone());
         }
 
         let vk_fb = VkFramebuffer::new(render_pass.clone(), FramebufferCreateInfo{attachments: attachments, ..Default::default()});
