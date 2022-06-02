@@ -1,31 +1,23 @@
-pub type GLuint = u32;
+pub use vulkano::image::view::ImageViewType as TextureView;
 
-#[allow(dead_code)]
-#[derive(Copy, Clone, Debug)]
-pub enum TextureType
+pub trait TextureViewGlsl
 {
-    Texture1D,
-    Texture2D,
-    Texture3D,
-    TextureCube
+    fn glsl_sampler_name(&self) -> &'static str;
 }
 
-#[allow(dead_code)]
-impl TextureType
+impl TextureViewGlsl for TextureView
 {
-    pub fn stringify(self) -> String
+    fn glsl_sampler_name(&self) -> &'static str
     {
         match self
         {
-            TextureType::Texture1D => "Texture1D",
-            TextureType::Texture2D => "Texture2D",
-            TextureType::Texture3D => "Texture3D",
-            TextureType::TextureCube => "TextureCube",
-        }.to_string()
-    }
-
-    pub fn get_gl_const(self) -> GLuint
-    {
-        self as GLuint
+            TextureView::Dim1d => "sampler1D",
+            TextureView::Dim1dArray => "sampler1DArray",
+            TextureView::Dim2d => "sampler2D",
+            TextureView::Dim2dArray => "sampler2DArray",
+            TextureView::Cube => "samplerCube",
+            TextureView::Dim3d => "sampler3D",
+            TextureView::CubeArray => "samplerCubeArray",
+        }
     }
 }
