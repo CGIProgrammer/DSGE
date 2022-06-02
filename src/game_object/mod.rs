@@ -8,6 +8,8 @@ use crate::texture::Texture;
 use crate::references::*;
 use bytemuck::{Zeroable, Pod};
 
+#[allow(dead_code)]
+pub type GameObjectRef = RcBox<GameObject>;
 
 #[derive(Clone)]
 pub struct GOTransform
