@@ -1,9 +1,9 @@
-use super::Postprocessor;
+use super::PostprocessingPass;
 use super::{StageIndex};
 use crate::texture::{TexturePixelFormat, TextureFilter};
 
 #[allow(dead_code)]
-impl Postprocessor
+impl PostprocessingPass
 {
     pub fn acc_mblur_new(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
     {
