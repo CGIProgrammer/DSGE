@@ -1,9 +1,9 @@
-use super::Postprocessor;
+use super::PostprocessingPass;
 use super::{StageIndex};
 use crate::texture::{TexturePixelFormat, TextureFilter};
 
 #[allow(dead_code)]
-impl Postprocessor
+impl PostprocessingPass
 {
     pub fn copy_node(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
     {
@@ -15,10 +15,7 @@ impl Postprocessor
             .code("
             void main()
             {
-                vec2 size = vec2(textureSize(albedo, 0));
-                vec2 crd = fragCoordWp;
-                crd.y = (crd.y + 150.0 / size.y) / 1536.0 * 1080.0;
-                swapchain_out = texture(albedo, fragCoordWp);
+                swapchain_out = texture(albedo, fragCoordWp * vec2(1.0, -1.0) + vec2(0.0, 1.0));
             }");
         
         let result = stage_builder.build(self);
