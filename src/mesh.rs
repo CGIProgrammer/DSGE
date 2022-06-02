@@ -215,10 +215,14 @@ impl MeshBuilder
         self
     }
 
-    pub fn push_from_file(&mut self, fname: &str) -> &mut Self
+    pub fn push_from_file(&mut self, fname: &str) -> Result<&mut Self, String>
     {
         let path = Path::new(fname);
-        let mut file = File::open(path).unwrap();
+        let mut file = match File::open(path)
+        {
+            Ok(file) => file,
+            Err(error) => return Err(format!("Ошибка загрузки файла \"{}\": {:?}", fname, error))
+        };
         read_struct::<f64, File>(&mut file).unwrap();
         let deformed = read_struct::<bool, File>(&mut file).unwrap();
         let uv_count = (if read_struct::<bool, File>(&mut file).unwrap() {2} else {1}) as u8;
@@ -258,7 +262,7 @@ impl MeshBuilder
             if vertex.v_pos.z > bbox_end.z { bbox_end.z = vertex.v_pos.z; }
             self._vertices.push(vertex.to_vk_vertex());
         };
-        self
+        Ok(self)
     }
 
     /// Добавить чайник из Юты
