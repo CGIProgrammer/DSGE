@@ -1,13 +1,83 @@
 /// Компоненты для `GameObject`
 /// Пока в зачаточном состоянии
+use std::any::Any;
+use bytemuck::{Pod, Zeroable};
+
+use vulkano::render_pass::Subpass;
+use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 pub mod camera;
 pub mod visual;
-pub use crate::game_object::GameObject;
-use crate::renderer::{postprocessor::Postprocessor, Renderer};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
+pub mod light;
 
-pub trait Component: std::any::Any + Clone
+use crate::renderer::{PostprocessingPass, Renderer};
+use crate::types::Mat4;
+use crate::shader::ShaderStructUniform;
+use crate::texture::Texture;
+
+pub use crate::game_object::{GameObject, GOTransformUniform};
+pub use camera::CameraComponent;
+pub use visual::MeshVisual;
+pub use light::Light;
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+/// Структура для передачи данных шейдерной программе
+pub struct ProjectionUniformData
+{
+    pub transform : [f32; 16],
+    pub transform_prev : [f32; 16],
+    pub transform_inverted : [f32; 16],
+    pub transform_prev_inverted : [f32; 16],
+    pub projection : [f32; 16],
+    pub projection_inverted : [f32; 16],
+}
+
+
+impl Default for ProjectionUniformData
+{
+    fn default() -> Self
+    {
+        let proj = nalgebra::Perspective3::new(1.0, 80.0 * 3.1415926535 / 180.0, 0.1, 100.0).as_matrix().clone();
+        Self {
+            transform : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_prev : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_inverted : Mat4::identity().as_slice().try_into().unwrap(),
+            transform_prev_inverted : Mat4::identity().as_slice().try_into().unwrap(),
+            projection : proj.as_slice().try_into().unwrap(),
+            projection_inverted : proj.try_inverse().unwrap().as_slice().try_into().unwrap(),
+        }
+    }
+}
+
+impl ShaderStructUniform for ProjectionUniformData
+{
+    fn glsl_type_name() -> String
+    {
+        String::from("Camera")
+    }
+
+    fn structure() -> String
+    {
+        String::from("{
+            mat4 transform;
+            mat4 transform_prev;
+            mat4 transform_inverted;
+            mat4 transform_prev_inverted;
+            mat4 projection;
+            mat4 projection_inverted;
+        }")
+    }
+    
+    fn texture(&self) -> Option<&Texture>
+    {
+        None
+    }
+}
+
+//impl std::any::Any for &dyn Component {}
+
+pub trait Component: 'static
 {
     fn on_start(&mut self, _owner: &GameObject) -> Result<(), ()>
     {
@@ -19,24 +89,59 @@ pub trait Component: std::any::Any + Clone
         Err(())
     }
 
-    fn on_render_init(&mut self, _owner: &GameObject, _renderer: &mut Renderer) -> Result<(), ()>
+    fn on_geometry_pass_init(&mut self, _owner: &GameObject, _renderer: &mut Renderer) -> Result<ProjectionUniformData, ()>
+    {
+        Err(())
+    }
+
+    fn on_shadow_map_pass_init(&mut self, _owner: &GameObject, _renderer: &mut Renderer) -> Result<ProjectionUniformData, ()>
     {
         Err(())
     }
 
     fn on_geometry_pass(
         &mut self,
-        _owner: &GameObject,
-        _renderer: &mut Renderer,
+        _transform: GOTransformUniform,
+        _camera_data: ProjectionUniformData,
+        _subpass: Subpass,
         _acbb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        _last_mesh_and_material: (i32, i32)) -> Result<(i32, i32), String>
-    {
-        Err(format!("Объект {} не может быть использован на геометрической стадии рендеринга", std::any::type_name::<Self>()))
+        _new_mesh: bool,
+        _new_material: bool
+    ) -> Result<(), String>
+    { 
+        Err(format!("Объект {} не поддерживает отображение", std::any::type_name::<Self>()))
     }
 
-    fn on_postprocess(&mut self, _owner: &GameObject, _postprocessor: &mut Postprocessor) -> Result<(), ()>
+    fn on_shadowmap_pass(
+        &mut self,
+        _transform: GOTransformUniform,
+        _camera_data: ProjectionUniformData,
+        _subpass: Subpass,
+        _acbb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
+        _new_mesh: bool,
+        _new_material: bool
+    ) -> Result<(), String>
+    { 
+        Err(format!("Объект {} не поддерживает отбрасывание теней", std::any::type_name::<Self>()))
+    }
+
+    fn material_id(&self) -> i32
+    {
+        -1
+    }
+
+    fn mesh_id(&self) -> i32
+    {
+        -1
+    }
+
+    fn as_any(&self) -> &dyn Any;
+
+    fn on_postprocess(&mut self, _owner: &GameObject, _postprocessor: &mut PostprocessingPass) -> Result<(), ()>
     {
         Err(())
     }
 }
+
+//pub trait DynamicComponent: Any + Component + 'static {}
 
