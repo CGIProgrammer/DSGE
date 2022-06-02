@@ -1,5 +1,5 @@
 use crate::shader::ShaderStructUniform;
-use crate::texture::TextureRef;
+use crate::texture::Texture;
 use bytemuck::{Zeroable, Pod};
 use std::time::{SystemTime, /*Duration*/};
 
@@ -36,7 +36,7 @@ impl ShaderStructUniform for UniformTime
         String::from("Time")
     }
 
-    fn texture(&self) -> Option<&TextureRef>
+    fn texture(&self) -> Option<&Texture>
     {
         None
     }
