@@ -8,7 +8,6 @@ use crate::texture::Texture;
 use crate::references::*;
 use bytemuck::{Zeroable, Pod};
 
-#[allow(dead_code)]
 pub type GameObjectRef = RcBox<GameObject>;
 
 #[derive(Clone)]
@@ -18,9 +17,9 @@ pub struct GOTransform
     pub global : Mat4,
     pub global_for_render: Mat4,
     pub global_for_render_prev: Mat4,
-    _owner : Option<RcBox<GameObject>>,
-    _parent : Option<RcBox<GameObject>>,
-    _children : Vec::<RcBox<GameObject>>
+    _owner : Option<GameObjectRef>,
+    _parent : Option<GameObjectRef>,
+    _children : Vec::<GameObjectRef>
 }
 
 #[repr(C)]
