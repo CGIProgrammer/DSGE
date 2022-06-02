@@ -61,7 +61,7 @@ enum RenderStageOutput
         filtering: TextureFilter
     },
     Accumulator {
-        buffer: TextureRef,
+        buffer: Texture,
         pix_fmt: TexturePixelFormat,
         filtering: TextureFilter
     }
@@ -70,23 +70,21 @@ enum RenderStageOutput
 impl RenderStageOutput
 {
     #[inline]
-    pub fn buffer(&self) -> Option<TextureRef>
+    pub fn buffer(&self) -> Option<&Texture>
     {
         match self {
-            Self::Accumulator{buffer,..} => Some(buffer.clone()),
+            Self::Accumulator{ref buffer,..} => Some(buffer),
             _ => None
         }
     }
 
     #[inline]
-    pub fn new_accumulator(texture: TextureRef) -> Self
+    pub fn new_accumulator(tex: Texture) -> Self
     {
-        let tex = texture.take();
         let pix_fmt = tex.pix_fmt();
         let filtering = tex.mag_filter();
-        drop(tex);
         Self::Accumulator {
-            buffer: texture.clone(),
+            buffer: tex,
             pix_fmt: pix_fmt,
             filtering: filtering,
         }
@@ -162,19 +160,19 @@ impl RenderStage
     }
 
     /// Возвращает накопительный буфер
-    fn get_accumulator_buffer(&self, output: StageOutputIndex) -> TextureRef
+    fn get_accumulator_buffer(&self, output: StageOutputIndex) -> &Texture
     {
-        self._outputs.get(output as usize).unwrap().buffer().unwrap().clone()
+        self._outputs.get(output as usize).unwrap().buffer().unwrap()
         //self._accumulators.get(&output).unwrap().clone()
     }
 
     /// Меняет накопительный буфер на `new_buff` и возвращает предыдущий
-    fn swap_accumulator_buffer(&mut self, output: StageOutputIndex, new_buff: &TextureRef) -> TextureRef
+    fn swap_accumulator_buffer(&mut self, output: StageOutputIndex, new_buff: &Texture) -> Texture
     {
         let rs_output = self._outputs.remove(output as usize);
         let texture = rs_output.buffer().clone().unwrap();
         self._outputs.insert(output as usize, RenderStageOutput::new_accumulator(new_buff.clone()));
-        texture
+        texture.clone()
     }
 
     /*pub fn uniform<T>(&mut self, data: &T)
@@ -209,8 +207,8 @@ impl RenderStageBuilder
 
     pub fn input(&mut self, name: &str) -> &mut Self
     {
-        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, TextureType::Dim2d).unwrap();
-        //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureType::Dim2d).unwrap();
+        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, TextureView::Dim2d).unwrap();
+        //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureView::Dim2d).unwrap();
         self._inputs += 1;
         self
     }
@@ -235,7 +233,7 @@ impl RenderStageBuilder
         self
     }
 
-    pub fn build(mut self, pp_graph: &mut Postprocessor) -> Result<StageIndex, String>
+    pub fn build(mut self, pp_graph: &mut PostprocessingPass) -> Result<StageIndex, String>
     {
         let device = pp_graph._device.clone();
         let queue = pp_graph._queue.clone();
@@ -258,7 +256,6 @@ impl RenderStageBuilder
                     buffer.set_vertical_address(TextureRepeatMode::ClampToEdge);
                     buffer.set_horizontal_address(TextureRepeatMode::ClampToEdge);
                     buffer.update_sampler();
-                    let buffer = RcBox::construct(buffer);
 
                     RenderStageOutput::Accumulator {
                         pix_fmt: *pix_fmt,
@@ -338,7 +335,7 @@ impl RenderStageBuilder
 /// Память под буферы выделяется автоматически по мере необходимости.
 /// Для перед вызовом функции выполнения, следует назначить входные
 /// и выходные изображения.
-pub struct Postprocessor
+pub struct PostprocessingPass
 {
     /// Счётчик ID
     _render_stage_id_counter: StageIndex,
@@ -347,17 +344,17 @@ pub struct Postprocessor
     /// Связи
     _links: Vec<RenderStageLink>,
     /// Буферы для нод
-    _buffers: Vec<TextureRef>,
+    _buffers: Vec<Texture>,
     /// Занятые буферы
-    _busy_buffers: HashMap<RenderStageLink, TextureRef>,
+    _busy_buffers: HashMap<RenderStageLink, Texture>,
     /// Входящие текстуры
-    _image_inputs: HashMap<RenderStageInputSocket, TextureRef>,
+    _image_inputs: HashMap<RenderStageInputSocket, Texture>,
     // Входящие значения (uniform-переменные)
     //_uniform_inputs: String,
     /// Текстуры на выходе
-    _outputs: HashMap<StageInputIndex, TextureRef>,
+    _outputs: HashMap<StageInputIndex, Texture>,
     /// Буфер кадра
-    _framebuffer : FramebufferRef,
+    _framebuffer : Framebuffer,
     /// Плоскость для вывода изображений
     _screen_plane : MeshRef,
 
@@ -380,13 +377,13 @@ pub enum NumericInput
 }
 
 #[allow(dead_code)]
-impl Postprocessor
+impl PostprocessingPass
 {
     pub fn new(queue: Arc<Queue>, width: u16, height: u16) -> Self
     {
         let device = queue.device();
         
-        Postprocessor {
+        PostprocessingPass {
             _render_stage_id_counter: 1,
             _stages: HashMap::new(),
             _links: Vec::new(),
@@ -420,14 +417,14 @@ impl Postprocessor
         };
     }
 
-    pub fn image_to_all(&mut self, name: &String, data: &TextureRef)
+    pub fn image_to_all(&mut self, name: &String, data: &Texture)
     {
         for (_, rs) in &mut self._stages {
             rs._uniform_buffer.uniform_sampler_by_name(data, name).unwrap();
         }
     }
 
-    pub fn image_to_stage(&mut self, stage_id: StageIndex, name: &String, data: &TextureRef)
+    pub fn image_to_stage(&mut self, stage_id: StageIndex, name: &String, data: &Texture)
     {
         match self._stages.get_mut(&stage_id) {
             Some(stage) => drop(stage._uniform_buffer.uniform_sampler_by_name(data, name)),
@@ -446,7 +443,7 @@ impl Postprocessor
                         RenderStageOutput::Accumulator{buffer, pix_fmt, filtering} => 
                         {
                             RenderStageOutput::Accumulator{
-                                buffer: Texture::new_empty_mutex(buffer.take().name(), stage._resolution, *pix_fmt, self._device.clone()).unwrap(),
+                                buffer: Texture::new_empty(buffer.name(), stage._resolution, *pix_fmt, self._device.clone()).unwrap(),
                                 pix_fmt: *pix_fmt,
                                 filtering: *filtering
                             }
@@ -496,7 +493,7 @@ impl Postprocessor
     }
 
     /// Подать текстуру на вход узла постобработчика
-    pub fn set_input(&mut self, stage: StageIndex, input: StageInputIndex, tex: &TextureRef)
+    pub fn set_input(&mut self, stage: StageIndex, input: StageInputIndex, tex: &Texture)
     {
         self._image_inputs.insert(RenderStageInputSocket {render_stage_id: stage, input: input}, tex.clone());
     }
@@ -504,21 +501,16 @@ impl Postprocessor
     /// Получение текстуры-выхода
     /// Input потому, что это вход для нулевой ноды, являющейся выходом дерева
     #[allow(dead_code)]
-    pub fn get_output(&self, name: StageInputIndex) -> Option<TextureRef>
+    pub fn get_output(&self, name: StageInputIndex) -> Option<&Texture>
     {
-        let result = self._outputs.get(&name);
-        if result.is_some() {
-            Some(result.unwrap().clone())
-        } else {
-            None
-        }
+        self._outputs.get(&name)
     }
 
     /// Закрепление текстуры за входом нулевой ноды.
     /// Для всех входов, которым не назначены изображения создадутся новые.
     /// Если требуется выводить результат уже в существующее изображение,
     /// например swapchain-изображение, это то, что нужно.
-    pub fn set_output(&mut self, name: StageInputIndex, texture: TextureRef)
+    pub fn set_output(&mut self, name: StageInputIndex, texture: Texture)
     {
         self._outputs.insert(name, texture);
     }
@@ -569,10 +561,10 @@ impl Postprocessor
     }
 
     /// Запрос свободного изображения
-    fn request_texture(&mut self, link: &RenderStageLink, pix_fmt: TexturePixelFormat, filtering: TextureFilter) -> TextureRef
+    fn request_texture(&mut self, link: &RenderStageLink, pix_fmt: TexturePixelFormat, filtering: TextureFilter) -> &Texture
     {
         let resolution = self._stages.get(&link._from.render_stage_id).unwrap()._resolution;
-        let mut texture: Option<TextureRef> = None;
+        let mut texture: Option<Texture> = None;
 
         // Находим свободное изображение
         for tex in &self._buffers {
@@ -582,7 +574,7 @@ impl Postprocessor
                     busy = true;
                 };
             });
-            let buff = tex.take();
+            let buff = tex;
             if !busy &&
                 buff.width() == resolution.width() as u32 &&
                 buff.height() == resolution.height() as u32 &&
@@ -603,15 +595,14 @@ impl Postprocessor
                 link._from.render_stage_id, link._from.output,
                 link._to.render_stage_id, link._to.input);
             //println!("Создание текстуры {} {}x{}", buffer_name, resolution.0, resolution.1);
-            let mut _tex = Texture::new_empty(buffer_name.as_str(), resolution, pix_fmt, self._device.clone()).unwrap();
-            _tex.clear_color(self._queue.clone());
-            _tex.set_horizontal_address(TextureRepeatMode::ClampToEdge);
-            _tex.set_vertical_address(TextureRepeatMode::ClampToEdge);
-            _tex.set_mag_filter(filtering);
-            _tex.set_min_filter(filtering);
-            _tex.update_sampler();
+            let mut tex = Texture::new_empty(buffer_name.as_str(), resolution, pix_fmt, self._device.clone()).unwrap();
+            tex.clear_color(self._queue.clone());
+            tex.set_horizontal_address(TextureRepeatMode::ClampToEdge);
+            tex.set_vertical_address(TextureRepeatMode::ClampToEdge);
+            tex.set_mag_filter(filtering);
+            tex.set_min_filter(filtering);
+            tex.update_sampler();
 
-            let tex = RcBox::construct(_tex);
             self._buffers.push(tex.clone());
             texture = Some(tex.clone());
             self._busy_buffers.insert(link.clone(), tex.clone());
@@ -622,13 +613,14 @@ impl Postprocessor
             if output_has_texture {
                 // Возвращаем изображение, закреплённое за выходом, если оно назначено
                 //println!("На выход {} назначено изображение. Берём его.", link._to.input);
-                return self._outputs.get(&link._to.input).unwrap().clone();
+                return self._outputs.get(&link._to.input).unwrap();
             }
             // Назначаем его, если оно не назначено.
-                //println!("На выход {} не назначено изображение. Назначаем его.", link._to.input);
-                self._outputs.insert(link._to.input.clone(), texture.clone().unwrap());
+            //println!("На выход {} не назначено изображение. Назначаем его.", link._to.input);
+            self._outputs.insert(link._to.input.clone(), texture.clone().unwrap());
+            return self._outputs.get(&link._to.input).unwrap();
         }
-        texture.unwrap()
+        return self._busy_buffers.get(link).unwrap();
     }
 
     /// Освобождение выделенного изображения
@@ -699,13 +691,13 @@ impl Postprocessor
         }
         //let stage = self.stage_by_id(id);
         let render_pass = self.stage_by_id(id)._render_pass.clone();
-        let mut render_targets = HashMap::<StageOutputIndex, TextureRef>::new();
+        let mut render_targets = HashMap::<StageOutputIndex, Texture>::new();
         for link in &links {
             if link._to.render_stage_id == id {
                 let from_stage = self.stage_by_id(link._from.render_stage_id);
                 if from_stage.is_output_acc(link._from.output) {
                     //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
-                    let acc = from_stage.get_accumulator_buffer(link._from.output);
+                    let acc = from_stage.get_accumulator_buffer(link._from.output).clone();
                     self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&acc, &link._to.input).unwrap();
                 } else {
                     //println!("Принимается входящий буфер {} на вход", link._to.input);
@@ -718,12 +710,12 @@ impl Postprocessor
                 //println!("Запрос буфера для записи в слот {}.", link._from.output);
                 let output = self.stage_by_id(id)._outputs.get(link._from.output as usize).unwrap().clone();
                 let _tex = self.request_texture(link, output.pix_fmt(), output.filtering());
-                let __tex = _tex.take_mut();
+                //let __tex = _tex.take_mut();
                 render_targets.insert(link._from.output, _tex.clone());
             }
         }
         {
-            let mut fb = self._framebuffer.take_mut();
+            let fb = &mut self._framebuffer;
             fb.reset_attachments();
             for ind in 0..render_targets.len() {
                 let tex = 
@@ -731,7 +723,7 @@ impl Postprocessor
                     Some(tex) => tex,
                     None => panic!("Нода {} имеет неиспользованный выход {}.", id, ind)
                 };
-                fb.add_color_attachment(tex.clone(), [0.0, 0.0, 0.0, 1.0].into()).unwrap();
+                fb.add_color_attachment(tex, [0.0, 0.0, 0.0, 1.0].into()).unwrap();
             }
             fb.view_port(resolution.width() as _, resolution.height() as _);
 
@@ -821,7 +813,7 @@ impl ShaderStructUniform for RenderResolution
         "Resolution".to_string()
     }
 
-    fn texture(&self) -> Option<&TextureRef>
+    fn texture(&self) -> Option<&Texture>
     {
         None
     }
