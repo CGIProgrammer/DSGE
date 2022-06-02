@@ -12,7 +12,7 @@ use vulkano::buffer::{CpuBufferPool, CpuAccessibleBuffer, BufferUsage};
 use vulkano::pipeline::PipelineBindPoint;
 
 use crate::references::*;
-use crate::texture::{TextureType, TextureTypeGlsl, TextureRef};
+use crate::texture::{TextureView, TextureViewGlsl, Texture};
 use crate::vulkano::pipeline::Pipeline as VkPipeline;
 use vulkano::device::Device;
 use bytemuck::Pod;
@@ -31,7 +31,7 @@ pub trait ShaderStructUniform
 {
     fn structure() -> String;       // Должна возвращать текстовое представление структуры типа для GLSL
     fn glsl_type_name() -> String;  // Должна возвращать название типа
-    fn texture(&self) -> Option<&crate::texture::TextureRef>; // Позволяет получить текстуру, если структура является таковой
+    fn texture(&self) -> Option<&crate::texture::Texture>; // Позволяет получить текстуру, если структура является таковой
 }
 
 #[derive(Clone)]
@@ -247,7 +247,7 @@ impl Shader
         self.uniform_structure(name, _type, structure, set, binding)
     }
 
-    pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureType) -> Result<&mut Self, String>
+    pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureView) -> Result<&mut Self, String>
     {
         let name = name.to_string();
         if self.uniforms.contains_key(&name) {
@@ -266,7 +266,7 @@ impl Shader
         Ok(self)
     }
 
-    pub fn uniform_sampler_autoincrement(&mut self, name: &str, set: usize, dims: TextureType) -> Result<&mut Self, String>
+    pub fn uniform_sampler_autoincrement(&mut self, name: &str, set: usize, dims: TextureView) -> Result<&mut Self, String>
     {
         let binding = self.last_set_index(set);
         self.uniform_sampler(name, set, binding, dims)
@@ -758,9 +758,8 @@ impl ShaderProgramUniformBuffer
         self.uniform_structure(sas.to_vec(), set_num, binding_num);
     }
 
-    pub fn uniform_sampler(&mut self, texture: &TextureRef, set_num: usize, binding_num: usize)
+    pub fn uniform_sampler(&mut self, texture: &Texture, set_num: usize, binding_num: usize)
     {
-        let texture = texture.take();
         let wds = WriteDescriptorSet::image_view_sampler(binding_num as u32, texture.image_view().clone(), texture.sampler().clone());
         match self.write_set_descriptors.get_mut(&set_num)
         {
@@ -798,7 +797,7 @@ impl ShaderProgramUniformBuffer
         Ok(())
     }
 
-    pub fn uniform_sampler_by_name(&mut self, texture: &TextureRef, name: &String) -> Result<(usize, usize), String>
+    pub fn uniform_sampler_by_name(&mut self, texture: &Texture, name: &String) -> Result<(usize, usize), String>
     {
         
         let (set_num, binding_num) = *match self.uniforms_locations.get(name)
