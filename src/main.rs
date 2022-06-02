@@ -16,6 +16,9 @@ use winit::event::{Event, WindowEvent, DeviceEvent};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
 use winit::window::{WindowBuilder, Fullscreen};
 
+use mesh::*;
+use game_object::*;
+
 #[macro_use]
 mod shader;
 mod mesh;
@@ -30,10 +33,9 @@ mod material;
 mod game_object;
 mod renderer;
 mod components;
+mod scene_loader;
 
-use mesh::*;
-use texture::*;
-use game_object::*;
+use scene_loader::read_scene;
 
 trait Radian
 {
@@ -47,6 +49,7 @@ impl Radian for f32
         self*3.1415926535/180.0
     }
 }
+
 
 /// Базовый пример приложения
 pub struct Application {
@@ -78,9 +81,13 @@ impl Application {
         // Инициализация рендера
         let mut renderer = renderer::Renderer::winit(vk_instance, surface, _vsync);
         //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
-        
-        // Создание камеры
-        let camera = GameObject::new_camera("camera", 1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
+        let (objects, camera) = read_scene("data/scenes/Scene.scene", renderer.queue().clone());
+        println!("camera -> {}", camera.as_ref().unwrap().take().name());
+        renderer.set_camera(camera.unwrap());
+        renderer.update_swapchain();
+        /*// Создание камеры
+        let camera = GameObject::new("camera");
+        camera.take_mut().add_component(CameraComponent::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0));
         renderer.set_camera(camera);
         renderer.update_swapchain();
 
@@ -94,15 +101,15 @@ impl Application {
 
         // Загрузка полисеток
         let mut monkey = Mesh::builder("monkey");
-        monkey.push_from_file("data/mesh/cube.mesh");
+        monkey.push_from_file("data/mesh/cube.mesh").unwrap();
         //monkey.push_from_file("data/mesh/monkey.mesh");
         let monkey = monkey.build_mutex(renderer.queue().clone()).unwrap();
         
         // Создание материала
-        let mut material = material::MaterialBuilder::start(renderer.device().clone());
+        let mut material = material::MaterialBuilder::start("default", renderer.device().clone());
         material
-            .define("diffuse_map", "")
-            .add_texture("fDiffuseMap", RcBox::construct(texture))
+            .define("diffuse_map", "fDiffuseMap")
+            .add_texture("fDiffuseMap", &texture)
             .add_numeric_parameter("diffuse", [1.0, 1.0, 1.0, 1.0].into())
             .add_numeric_parameter("roughness", 1.0.into())
             .add_numeric_parameter("glow", 1.0.into())
@@ -110,7 +117,8 @@ impl Application {
         let material = material.build_mutex(renderer.device().clone());
 
         // Создание объектов
-        let ob = GameObject::new_mesh("model", monkey.clone(), material.clone());
+        let ob = GameObject::new("model");
+        ob.take_mut().add_component(MeshVisual::new(monkey.clone(), material.clone(), true));
         let mut objects = Vec::new();
         for row in -7..=7 {
             for col in -12..=12 {
@@ -130,7 +138,7 @@ impl Application {
                 drop(_ob);
                 objects.push(ob);
             }
-        }
+        }*/
 
         Ok(Self {
             renderer: renderer,
@@ -168,17 +176,21 @@ impl Application {
                         0: input
                     }, ..
                 } => {
-                    match input.virtual_keycode.as_ref().unwrap() {
-                        winit::event::VirtualKeyCode::F12 => {
-                            match input.state {
-                                winit::event::ElementState::Pressed => {
-                                    println!("Скриншот");
-                                    take_screenshot = true;
-                                },
-                                _ => {}
-                            };
+                    match input.virtual_keycode {
+                        Some(ref key_code) => 
+                        match key_code {
+                            winit::event::VirtualKeyCode::F12 => {
+                                match input.state {
+                                    winit::event::ElementState::Pressed => {
+                                        println!("Скриншот");
+                                        take_screenshot = true;
+                                    },
+                                    _ => {}
+                                };
+                            },
+                            _ => {}
                         },
-                        _ => {}
+                        None => {}
                     };
                 }
                 ,
@@ -199,8 +211,8 @@ impl Application {
                     if take_screenshot {
                         self.renderer.wait();
                         take_screenshot = false;
-                        let img = self.renderer.postprocessor().get_output("swapchain_out".to_string()).unwrap();
-                        img.take().save(self.renderer.queue().clone(), "./screenshot.png");
+                        let img = self.renderer.postprocessor().get_output("swapchain_out".to_string()).unwrap().clone();
+                        img.save(self.renderer.queue().clone(), "./screenshot.png");
                     }
                     self.renderer.execute(std::collections::HashMap::new());
                     let postprocess_time = postprocess_timer.elapsed().unwrap().as_secs_f64();
@@ -232,6 +244,6 @@ impl Application {
 }
 
 fn main() {
-    let app = Application::new("DSGE VK", 640, 360, false, false).unwrap();
+    let app = Application::new("DSGE VK", 1280, 720, false, false).unwrap();
     app.event_loop();
 }
