@@ -150,6 +150,7 @@ impl MaterialBuilder
 
         builder.vertex_base
             .default_vertex_attributes()
+            .output("world_position", AttribType::FVec3)
             .output("position_prev", AttribType::FVec4)
             .output("position", AttribType::FVec4)
             .output("texture_uv", AttribType::FVec2)
@@ -163,6 +164,7 @@ impl MaterialBuilder
         // TODO сделать нормальную реализацию. Сейчас это просто копия базового вершинного шейдера материала
         builder.vertex_deformed
             .default_vertex_attributes()
+            .output("world_position", AttribType::FVec3)
             .output("position_prev", AttribType::FVec4)
             .output("position", AttribType::FVec4)
             .output("texture_uv", AttribType::FVec2)
@@ -173,6 +175,7 @@ impl MaterialBuilder
             .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
 
         builder.fragment_base
+            .input("world_position", AttribType::FVec3)
             .input("position_prev", AttribType::FVec4)
             .input("position", AttribType::FVec4)
             .input("texture_uv", AttribType::FVec2)
@@ -187,6 +190,7 @@ impl MaterialBuilder
             .code("vec3 mNormal, mAmbient;\n");
 
         builder.fragment_shadowmap
+            .input("world_position", AttribType::FVec3)
             .input("position_prev", AttribType::FVec4)
             .input("position", AttribType::FVec4)
             .input("texture_uv", AttribType::FVec2)
@@ -194,7 +198,9 @@ impl MaterialBuilder
             .input("TBN", AttribType::FMat3)
             .code("vec4 mDiffuse;\n")
             .code("float mSpecular, mRoughness, mMetallic;\n")
-            .code("vec3 mNormal, mAmbient;\n");
+            .code("vec3 mNormal, mAmbient;\n")
+            .uniform_constant::<GOTransformUniform>("object").unwrap()
+            .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
         builder
     }
 
@@ -250,7 +256,7 @@ impl MaterialBuilder
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
             .unwrap()
-            .code(MESH_DEFAULT_TEMPLATE)
+            .code("#include \"data/shaders/geometry_pass.vert.glsl\"")
             .build().unwrap();
         
         self.vertex_deformed
@@ -259,7 +265,7 @@ impl MaterialBuilder
             .code("\n")
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
             .unwrap()
-            .code(MESH_DEFAULT_TEMPLATE)
+            .code("#include \"data/shaders/geometry_pass.vert.glsl\"")
             .build().unwrap();
 
         self.fragment_base
@@ -269,7 +275,7 @@ impl MaterialBuilder
             .uniform_structure("material", "Material", format!("{{\n{}}}\n", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
             .unwrap()
             .code(self.pbr_code.as_str())
-            .code(format!("void main() {{\n{}\n}}\n", PBR_FULL_TEMPLATE).as_str())
+            .code("#include \"data/shaders/geometry_pass.frag.glsl\"")
             .build().unwrap();
 
         self.fragment_shadowmap
@@ -279,7 +285,7 @@ impl MaterialBuilder
             .uniform_structure("material", "Material", format!("{{\n{}}}", self.uniform_structure).as_str(), SHADER_MATERIAL_DATA_SET, 0)
             .unwrap()
             .code(self.pbr_code.as_str())
-            .code(format!("void main() {{\n{}\n}}\n", PBR_SHADOWMAP_TEMPLATE).as_str())
+            .code("#include \"data/shaders/shadowmap.frag.glsl\"")
             .build().unwrap();
         
         let mut base_builder = ShaderProgram::builder();
@@ -407,7 +413,7 @@ impl Material
         for (name, tex) in &material.texture_slots {
             uniform_buffer.uniform_sampler_by_name(tex, name).unwrap();
         }
-        while numeric_data.len()%(64/4) != 0 {
+        while numeric_data.len()%(16/4) != 0 {
             numeric_data.push(0.0);
         }
         uniform_buffer.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);
@@ -469,55 +475,5 @@ static DEFAULT_PBR : &str = "void principled() {
     mRoughness *= mRoughness;
 }";
 
-static PBR_SHADOWMAP_TEMPLATE : &str = "
-    mat3 tbn = TBN;
-    tbn[0] = normalize(tbn[0]);
-    tbn[1] = normalize(tbn[1]);
-    tbn[2] = normalize(tbn[2]);
-    mNormal = tbn[2];
-    //tbn = transpose(tbn);
-    principled();
-    mDiffuse.rgb = pow(mDiffuse.rgb, vec3(2.2));
-    if (mDiffuse.a < 0.5)
-    {
-        mDiffuse.a = 1.0;
-        discard;
-    }
-    ";
-
-static PBR_FULL_TEMPLATE : &str = "
-    mat3 tbn = TBN;
-    tbn[0] = normalize(tbn[0]);
-    tbn[1] = normalize(tbn[1]);
-    tbn[2] = normalize(tbn[2]);
-    mNormal = tbn[2];
-    //tbn = transpose(tbn);
-    principled();
-    mDiffuse.rgb = pow(mDiffuse.rgb, vec3(2.2));
-    if (mDiffuse.a < 0.5)
-    {
-        mDiffuse.a = 1.0;
-        //discard;
-    }
-    vec2 velocity_vector = (position.xy/position.w*0.5+0.5) - (position_prev.xy/position_prev.w*0.5+0.5);
-    gAlbedo.rgb = mDiffuse.rgb;
-    gAlbedo.a = 1.0;
-    gNormals = vec3(mNormal*0.5+0.5);
-    gMasks = vec3(mSpecular, mRoughness, mMetallic);
-    gVectors = vec4(velocity_vector, 0.0, 1.0);
-";
-
-static MESH_DEFAULT_TEMPLATE : &str = "void main()
-{
-    float nLength = length(v_nor);
-    vec3 nnor = normalize(v_nor);
-    mat4 model = camera.transform * object.transform;
-    TBN = mat3(v_tan, normalize(cross(v_nor, v_tan)), v_nor);
-    TBN = mat3(model[0].xyz, model[1].xyz, model[2].xyz) * TBN;
-    //nnor = camera.transform * object.transform * vec4(v_nor, 0.0);
-    position = camera.projection * camera.transform * object.transform * vec4(v_pos, 1.0);
-    position_prev = camera.projection * camera.transform_prev * object.transform_prev * vec4(v_pos, 1.0);
-    texture_uv = vec2(v_tex1.x, 1.0-v_tex1.y);
-    view_vector = (camera.transform * position).xyz;
-    gl_Position = position;
-}";
+/*float frag_coord = (2.0 * distance - znear - zfar) / (zfar - znear); */
+/*frag_coord * (zfar - znear) + znear + zfar / 2.0 = distance; */

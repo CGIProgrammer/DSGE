@@ -17,7 +17,7 @@ pub struct UniformTime
     pub uptime: f32,
     pub delta: f32,
     pub frame: u32,
-    _dummy: [u32; 13]
+    _dummy: u32
 }
 
 impl ShaderStructUniform for UniformTime

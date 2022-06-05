@@ -75,30 +75,22 @@ impl ShaderStructUniform for ProjectionUniformData
     }
 }
 
-//impl std::any::Any for &dyn Component {}
-
+/// Component описывает поведение объекта
 pub trait Component: 'static
 {
-    fn on_start(&mut self, _owner: &GameObject) -> Result<(), ()>
+    /// Выполняется при зарождении объекта на сцене
+    fn on_start(&mut self, _owner: &mut GameObject)
     {
-        Err(())
+        
     }
 
-    fn on_loop(&mut self, _owner: &GameObject) -> Result<(), ()>
+    /// Выполняется на каждой итерации игры
+    fn on_loop(&mut self, _owner: &mut GameObject)
     {
-        Err(())
+        
     }
 
-    fn on_geometry_pass_init(&mut self, _owner: &GameObject, _renderer: &mut Renderer) -> Result<ProjectionUniformData, ()>
-    {
-        Err(())
-    }
-
-    fn on_shadow_map_pass_init(&mut self, _owner: &GameObject, _renderer: &mut Renderer) -> Result<ProjectionUniformData, ()>
-    {
-        Err(())
-    }
-
+    /// Выполняется при рендеринге на стадии геометрии
     fn on_geometry_pass(
         &mut self,
         _transform: GOTransformUniform,
@@ -112,6 +104,7 @@ pub trait Component: 'static
         Err(format!("Объект {} не поддерживает отображение", std::any::type_name::<Self>()))
     }
 
+    /// Выполняется при рендеринге на стадии карт теней
     fn on_shadowmap_pass(
         &mut self,
         _transform: GOTransformUniform,
@@ -125,16 +118,19 @@ pub trait Component: 'static
         Err(format!("Объект {} не поддерживает отбрасывание теней", std::any::type_name::<Self>()))
     }
 
+    /// Должно возвращать уникальный номер материала (необходимо для оптимизации)
     fn material_id(&self) -> i32
     {
         -1
     }
 
+    /// Должно возвращать уникальный номер полисетки (необходимо для оптимизации)
     fn mesh_id(&self) -> i32
     {
         -1
     }
 
+    /// Должно возвращать ссылку на самого себя в динамическом типе
     fn as_any(&self) -> &dyn Any;
 
     fn on_postprocess(&mut self, _owner: &GameObject, _postprocessor: &mut PostprocessingPass) -> Result<(), ()>

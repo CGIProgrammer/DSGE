@@ -60,7 +60,7 @@ fn read_texture(reader: &mut std::fs::File, queue: Arc<vulkano::device::Queue>) 
     println!("Текстура \"{}\"", name);
     let filepath = read_string(reader);
     let mut texture = Texture::from_file(queue, filepath).unwrap();
-    texture.set_anisotropy(Some(16.0));
+    texture.set_anisotropy(None);
     texture.set_horizontal_address(TextureRepeatMode::Repeat);
     texture.set_vertical_address(TextureRepeatMode::Repeat);
     texture.update_sampler();
@@ -135,8 +135,7 @@ fn read_object(
         obj.add_component(mesh_component);
     };
     if has_camera {
-        let camera_component = CameraComponent::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0);
-        transform = transform.try_inverse().unwrap();
+        let camera_component = CameraComponent::new(1.0, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
         println!("Тип: камера");
         obj.add_component(camera_component);
     };
@@ -157,9 +156,9 @@ fn read_object(
             )),
             _ => panic!("Неподдерживаемый источник света")
         };
-        println!("Тип: свет ({})", light.ty());
-        //obj.add_component(light);
-
+        let zfar = light_struct.zfar;
+        println!("Тип: свет ({}), zNear {}, zFar {}", light.ty(), 0.1, zfar);
+        obj.add_component(light);
     };
     println!("Location {}, {}, {}", transform[12], transform[13], transform[14]);
     let obj_transform = obj.transform_mut();

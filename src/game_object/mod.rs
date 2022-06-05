@@ -7,16 +7,18 @@ use crate::shader::{ShaderStructUniform};
 use crate::texture::Texture;
 use crate::references::*;
 use bytemuck::{Zeroable, Pod};
+use nalgebra::Transform3;
 
 pub type GameObjectRef = RcBox<GameObject>;
+pub type Transform = Mat4;
 
 #[derive(Clone)]
 pub struct GOTransform
 {
-    pub local : Mat4,
-    pub global : Mat4,
-    pub global_for_render: Mat4,
-    pub global_for_render_prev: Mat4,
+    pub local : Transform,
+    pub global : Transform,
+    pub global_for_render: Transform,
+    pub global_for_render_prev: Transform,
     _owner : Option<GameObjectRef>,
     _parent : Option<GameObjectRef>,
     _children : Vec::<GameObjectRef>
@@ -62,10 +64,10 @@ impl GOTransform
     pub fn identity() -> Self
     {
         Self {
-            local : Mat4::identity(),
-            global : Mat4::identity(),
-            global_for_render : Mat4::identity(),
-            global_for_render_prev : Mat4::identity(),
+            local : Transform::identity(),
+            global : Transform::identity(),
+            global_for_render : Transform::identity(),
+            global_for_render_prev : Transform::identity(),
             _parent: None,
             _children: Vec::new(),
             _owner: None
@@ -87,9 +89,9 @@ pub struct GameObject
 {
     transform: GOTransform,
     name: String,
-    camera: Option<RcBox<CameraComponent>>,
-    mesh_visual: Option<RcBox<MeshVisual>>,
-    light: Option<RcBox<Light>>,
+    camera: Option<CameraComponent>,
+    mesh_visual: Option<MeshVisual>,
+    light: Option<Light>,
     components: Vec<RcBox<dyn Component>>
 }
 
@@ -102,17 +104,22 @@ impl GameObject
         &self.name
     }
 
-    pub fn camera(&self) -> Option<&RcBox<CameraComponent>>
+    pub fn camera(&self) -> Option<&CameraComponent>
     {
         self.camera.as_ref()
     }
+
+    pub fn camera_mut(&mut self) -> Option<&mut CameraComponent>
+    {
+        self.camera.as_mut()
+    }
     
-    pub fn visual(&self) -> Option<&RcBox<MeshVisual>>
+    pub fn visual(&self) -> Option<&MeshVisual>
     {
         self.mesh_visual.as_ref()
     }
     
-    pub fn light(&self) -> Option<&RcBox<Light>>
+    pub fn light(&self) -> Option<&Light>
     {
         self.light.as_ref()
     }
@@ -165,11 +172,15 @@ impl GameObject
     {
         let cmp_dyn = (&component) as &dyn std::any::Any;
         if cmp_dyn.is::<CameraComponent>() {
-            self.camera = Some(RcBox::construct(cmp_dyn.downcast_ref::<CameraComponent>().unwrap().clone()));
+            self.camera = Some(cmp_dyn.downcast_ref::<CameraComponent>().unwrap().clone());
             return;
         }
         if cmp_dyn.is::<MeshVisual>() {
-            self.mesh_visual = Some(RcBox::construct(cmp_dyn.downcast_ref::<MeshVisual>().unwrap().clone()));
+            self.mesh_visual = Some(cmp_dyn.downcast_ref::<MeshVisual>().unwrap().clone());
+            return;
+        }
+        if cmp_dyn.is::<Light>() {
+            self.light = Some(cmp_dyn.downcast_ref::<Light>().unwrap().clone());
             return;
         }
         self.components.push(RcBox::construct(component));

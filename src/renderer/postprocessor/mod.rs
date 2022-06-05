@@ -420,7 +420,7 @@ impl PostprocessingPass
     pub fn image_to_all(&mut self, name: &String, data: &Texture)
     {
         for (_, rs) in &mut self._stages {
-            rs._uniform_buffer.uniform_sampler_by_name(data, name).unwrap();
+            drop(rs._uniform_buffer.uniform_sampler_by_name(data, name));
         }
     }
 
@@ -536,7 +536,6 @@ impl PostprocessingPass
     /// Выполнить граф потобработки.
     /// TODO: сделать проверку неуказанных циклов, иначе при наличии циклов без
     /// накопительных буферов будет переполняться стек.
-    #[allow(dead_code)]
     pub fn execute_graph(&mut self) -> AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
     {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
@@ -715,6 +714,7 @@ impl PostprocessingPass
             }
         }
         {
+            let _ub = &self.stage_by_id(id)._uniform_buffer;
             let fb = &mut self._framebuffer;
             fb.reset_attachments();
             for ind in 0..render_targets.len() {
@@ -728,7 +728,6 @@ impl PostprocessingPass
             fb.view_port(resolution.width() as _, resolution.height() as _);
 
             let prog = &mut *stage_shader.take();
-
             command_buffer_builder
                 .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
                 .bind_shader_program(prog).unwrap()
@@ -796,7 +795,6 @@ struct RenderResolution
 {
     pub width : f32,
     pub height : f32,
-    _dummy : [f32; 14]
 }
 
 impl ShaderStructUniform for RenderResolution

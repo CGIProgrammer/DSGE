@@ -533,14 +533,14 @@ impl ShaderProgramBuilder
         for (name, _type) in &uniforms_types {
             self.uniforms_types.insert(name.clone(), _type.clone());
         }
-        match self.uniform_constant {
+        /*match self.uniform_constant {
             Some(_) => return Err(format!("Uniform-константу можно объявить только в одном шейдере.")),
             None => self.uniform_constant =
             match &shader.push_constants {
                 Some(pc) => Some((pc.1.name.to_string(), pc.1.type_name.to_string())),
                 None => None
             }
-        }
+        }*/
         Ok(self)
     }
 
