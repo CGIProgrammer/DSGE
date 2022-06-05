@@ -1,7 +1,6 @@
 extern crate winit;
 extern crate vulkano;
 extern crate bytemuck;
-extern crate half;
 
 mod teapot;
 mod time;
@@ -11,14 +10,17 @@ use std::time::SystemTime;
 
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::Version;
+use vulkano::swapchain::Surface;
 use vulkano_win::VkSurfaceBuild;
-use winit::event::{Event, WindowEvent, DeviceEvent};
+use winit::event::{Event, WindowEvent, DeviceEvent, KeyboardInput};
 use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
-use winit::window::{WindowBuilder, Fullscreen};
+use winit::window::{WindowBuilder, Fullscreen, Window};
+use winit::event::*;
 
-use mesh::*;
 use game_object::*;
+use references::*;
 
+mod game_logic;
 #[macro_use]
 mod shader;
 mod mesh;
@@ -53,9 +55,11 @@ impl Radian for f32
 
 /// Базовый пример приложения
 pub struct Application {
+    surface: Arc<Surface<Window>>,
     renderer: renderer::Renderer,
     event_pump: EventLoop<()>,
     root_objects: Vec<RcBox<GameObject>>,
+    cusor_delta: [f32; 2],
     counter: f32
 }
 
@@ -79,76 +83,34 @@ impl Application {
             .unwrap();
 
         // Инициализация рендера
-        let mut renderer = renderer::Renderer::winit(vk_instance, surface, _vsync);
+        let mut renderer = renderer::Renderer::winit(vk_instance, surface.clone(), _vsync);
         //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
         let (objects, camera) = read_scene("data/scenes/Scene.scene", renderer.queue().clone());
-        println!("camera -> {}", camera.as_ref().unwrap().take().name());
+        let monkey = objects.iter().find(|obj| obj.take().name() == "monkey").unwrap().clone();
+        let motion = game_logic::motion_example::MotionExample::default();
+        monkey.take().add_component(motion);
+        for obj in &objects
+        {
+            let mut _obj = obj.take_mut();
+            let components = _obj.get_all_components().clone();
+            for comp in components {
+                let mut _comp = comp.lock().unwrap();
+                _comp.on_start(&mut *_obj);
+            }
+        }
         renderer.set_camera(camera.unwrap());
         renderer.update_swapchain();
-        /*// Создание камеры
-        let camera = GameObject::new("camera");
-        camera.take_mut().add_component(CameraComponent::new(1.0, 85.0 * 3.1415926535 / 180.0, 0.1, 100.0));
-        renderer.set_camera(camera);
-        renderer.update_swapchain();
-
-        // Загрузка теустуры
-        let mut texture = Texture::from_file(renderer.queue().clone(), "data/texture/image_img.dds").unwrap();
-        texture.set_anisotropy(Some(16.0));
-        texture.set_mipmap(MipmapMode::Linear);
-        texture.set_mag_filter(TextureFilter::Linear);
-        texture.update_sampler();
-        //texture.save(renderer.queue().clone(), "./dds_to.png");
-
-        // Загрузка полисеток
-        let mut monkey = Mesh::builder("monkey");
-        monkey.push_from_file("data/mesh/cube.mesh").unwrap();
-        //monkey.push_from_file("data/mesh/monkey.mesh");
-        let monkey = monkey.build_mutex(renderer.queue().clone()).unwrap();
-        
-        // Создание материала
-        let mut material = material::MaterialBuilder::start("default", renderer.device().clone());
-        material
-            .define("diffuse_map", "fDiffuseMap")
-            .add_texture("fDiffuseMap", &texture)
-            .add_numeric_parameter("diffuse", [1.0, 1.0, 1.0, 1.0].into())
-            .add_numeric_parameter("roughness", 1.0.into())
-            .add_numeric_parameter("glow", 1.0.into())
-            .add_numeric_parameter("metallic", 0.0.into());
-        let material = material.build_mutex(renderer.device().clone());
-
-        // Создание объектов
-        let ob = GameObject::new("model");
-        ob.take_mut().add_component(MeshVisual::new(monkey.clone(), material.clone(), true));
-        let mut objects = Vec::new();
-        for row in -7..=7 {
-            for col in -12..=12 {
-        //for row in -1..=1 {
-        //    for col in -1..=1 {
-                let ob = ob.take().fork();
-                let mut _ob = ob.take();
-                let transform = _ob.transform_mut();
-                transform.local = nalgebra::Matrix4::from_euler_angles(0.0, 0.0, std::f32::consts::PI);
-                for i in 0..15 {
-                    transform.local[i] *= 0.05;
-                }
-                transform.local[12] = (col as f32) / 5.0;
-                transform.local[13] = (row as f32) / 5.0;
-                transform.local[14] = -3.0;
-                drop(transform);
-                drop(_ob);
-                objects.push(ob);
-            }
-        }*/
-
         Ok(Self {
+            surface: surface,
             renderer: renderer,
             event_pump: event_loop,
             root_objects: objects,
+            cusor_delta: [0.0, 0.0],
             counter: 0.0
         })
     }
 
-    pub fn event_loop(mut self) -> Arc<EventLoop<()>>
+    pub fn event_loop(mut self) /*-> Arc<EventLoop<()>>*/
     {
         let mut timer = time::Timer::new();
 		let mut fps_timer = SystemTime::now();
@@ -157,41 +119,43 @@ impl Application {
         let mut ppt = 0.0f64;
         let mut ft = 0.0f64;
         let mut take_screenshot = false;
+        //surface.window().set_cursor_grab(true);
         self.event_pump.run(move |event: Event<()>, _wtar: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow| {
             match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested,
-                    ..
-                } => {
+                Event::WindowEvent {event: WindowEvent::CloseRequested, ..} => {
                     *control_flow = ControlFlow::Exit;
                 }
-                Event::WindowEvent {
-                    event: WindowEvent::Resized(_),
-                    ..
-                } => {
+                Event::WindowEvent {event: WindowEvent::Resized(_), ..} => {
                     self.renderer.update_swapchain()
                 }
-                Event::DeviceEvent {
-                    event: DeviceEvent::Key {
-                        0: input
-                    }, ..
-                } => {
-                    match input.virtual_keycode {
-                        Some(ref key_code) => 
-                        match key_code {
-                            winit::event::VirtualKeyCode::F12 => {
-                                match input.state {
-                                    winit::event::ElementState::Pressed => {
-                                        println!("Скриншот");
-                                        take_screenshot = true;
-                                    },
-                                    _ => {}
-                                };
-                            },
-                            _ => {}
+                Event::DeviceEvent { event, .. } => {
+                    match event {
+                        DeviceEvent::Key(input) => {
+                            match input {
+                                KeyboardInput { virtual_keycode: Some(VirtualKeyCode::F12), state: ElementState::Pressed, .. } => {
+                                    take_screenshot = true;
+                                },
+                                _ => ()
+                            }
                         },
-                        None => {}
-                    };
+                        DeviceEvent::Button { button, state } => {
+                            println!("Кнопка {}", button);
+                            match (button, state) {
+                                (1, ElementState::Pressed) => {
+                                    drop(self.surface.window().set_cursor_grab(true));
+                                },
+                                (1, ElementState::Released) => {
+                                    drop(self.surface.window().set_cursor_grab(false).unwrap());
+                                },
+                                _ => ()
+                            }
+                        },
+                        DeviceEvent::MouseMotion { delta: (x, y) } => {
+                            self.cusor_delta = [x as _, y as _];
+                            println!("Мышь {}; {}", x, y);
+                        }
+                        _ => ()
+                    }
                 }
                 ,
                 Event::RedrawEventsCleared => {
@@ -202,7 +166,8 @@ impl Application {
                     self.renderer.update_timer(tu);
                     let renderpass_timer = SystemTime::now();
                     self.renderer.begin_geametry_pass();
-                    for obj in &self.root_objects{
+                    for obj in &self.root_objects
+                    {
                         obj.take().next_frame();
                         self.renderer.draw(obj.clone());
                     }
@@ -244,6 +209,6 @@ impl Application {
 }
 
 fn main() {
-    let app = Application::new("DSGE VK", 1280, 720, false, false).unwrap();
+    let app = Application::new("DSGE VK", 1280, 720, false, true).unwrap();
     app.event_loop();
 }

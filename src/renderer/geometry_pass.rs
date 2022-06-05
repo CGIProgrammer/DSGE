@@ -34,7 +34,7 @@ impl GeometryPass
         //println!("Создание нового G-буфера {}x{}", width, height);
         let device = queue.device();
         let formats = [
-            TexturePixelFormat::R8G8B8A8_UNORM,
+            TexturePixelFormat::R8G8B8A8_SRGB,
             TexturePixelFormat::R8G8B8A8_UNORM,
             TexturePixelFormat::R8G8B8A8_UNORM,
             TexturePixelFormat::R16G16B16A16_SFLOAT,
@@ -95,7 +95,11 @@ impl GeometryPass
                     Some(AttachmentReference{attachment: 2, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()}),
                     Some(AttachmentReference{attachment: 3, layout: ImageLayout::ColorAttachmentOptimal, ..Default::default()})
                 ],
-                depth_stencil_attachment: Some(AttachmentReference{attachment: 4, layout: ImageLayout::DepthStencilAttachmentOptimal, ..Default::default()}),
+                depth_stencil_attachment: Some(AttachmentReference{
+                    attachment: 4,
+                    layout: ImageLayout::DepthStencilAttachmentOptimal,
+                    ..Default::default()
+                }),
                 ..Default::default()
             }],
             ..Default::default()

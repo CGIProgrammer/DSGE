@@ -219,7 +219,8 @@ pub struct Renderer
     
     _geometry_pass : GeometryPass,
     _postprocessor : PostprocessingPass,
-    //_shadowmap_pass: ShadowmapPass,
+    _shadowmap_pass: ShadowMapPass,
+    _screen_font : Texture,
     
     _timer : UniformTime
 }
@@ -282,7 +283,7 @@ impl Renderer
             .min_by_key(|(p, _)| {
                 match p.properties().device_type {
                     PhysicalDeviceType::DiscreteGpu => 1,
-                    PhysicalDeviceType::IntegratedGpu => 2,
+                    PhysicalDeviceType::IntegratedGpu => 0,
                     PhysicalDeviceType::VirtualGpu => 3,
                     PhysicalDeviceType::Cpu => 4,
                     PhysicalDeviceType::Other => 5,
@@ -301,6 +302,8 @@ impl Renderer
                 .union(&device_extensions),
             ..Default::default()
         };
+        
+        println!("Используется {}", physical_device.properties().device_name);
         Device::new(physical_device, dev_info)
     }
 
@@ -325,6 +328,8 @@ impl Renderer
             _camera : None,
             _camera_data : ProjectionUniformData::default(),
             _postprocessor : PostprocessingPass::new(queue.clone(), dimensions[0], dimensions[1]),
+            _shadowmap_pass : ShadowMapPass::new(queue.clone()),
+            _screen_font : Texture::from_file(queue.clone(), "data/texture/shadertoy_font.png").unwrap(),
             _timer : Default::default()
         };
         result
@@ -345,14 +350,16 @@ impl Renderer
             _device : device.clone(),
             _queue : queue.clone(),
             _screen_plane : Mesh::make_screen_plane(queue.clone()).unwrap(),
-            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
             _lights_list : Vec::new(),
             _camera : None,
             _camera_data : ProjectionUniformData::default(),
+            _shadowmap_pass : ShadowMapPass::new(queue.clone()),
+            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone()),
             _postprocessor : PostprocessingPass::new(queue.clone(), dimensions[0], dimensions[1]),
+            _screen_font : Texture::from_file(queue.clone(), "data/texture/shadertoy_font.png").unwrap(),
             _timer : Default::default()
         };
         result
@@ -377,10 +384,9 @@ impl Renderer
         match self_camera {
             Some(ref camera) => {
                 let mut _camera = camera.take();
-                let cam_component_mutex = _camera.camera().unwrap().clone();
-                let mut cam_component = cam_component_mutex.take_mut();
-                cam_component.set_projection(width as f32 / height as f32, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
-                self._camera_data = cam_component.on_geometry_pass_init(&mut *_camera, self).unwrap();
+                _camera.camera_mut().unwrap().set_aspect_dimenstions(width, height);
+                let cam_component = _camera.camera().unwrap();
+                self._camera_data = cam_component.uniform_data(&*_camera);
             },
             None => ()
         }
@@ -428,25 +434,25 @@ impl Renderer
     /// Передаёт объект для растеризации
     pub fn draw(&mut self, obj: RcBox<GameObject>)
     {
-        let owner = obj.take();
+        let mut owner = obj.take();
         match owner.visual() {
             Some(visual) => {
-                self.add_renderable_component(owner.transform().uniform_value(), &*visual.take());
+                self.add_renderable_component(owner.transform().uniform_value(), visual);
             },
             None => ()
         }
         match owner.light() {
-            Some(light) => {
-                let _light = light.take();
+            Some(_light) => {
                 let light = (_light.clone(), _light.framebuffers(&*owner));
                 self._lights_list.push(light);
             },
             None => ()
         }
-        for component in owner.get_all_components() {
-            component.lock().unwrap().on_geometry_pass_init(&*owner, self).unwrap();
+        for component in owner.get_all_components().clone()
+        {
+            let mut cmp = component.lock().unwrap();
+            cmp.on_loop(&mut *owner);
         }
-        
         for child in owner.children()
         {
             self.draw(child);
@@ -477,6 +483,21 @@ impl Renderer
             self._need_to_update_sc = true;
             return;
         }
+
+        // Проход карт теней
+        let mut sm_command_buffers = Vec::new();
+        for (_, frame_buffers) in &self._lights_list
+        {
+            for (shadow_buffer, projection_data) in frame_buffers {
+                let command_buffer = self._shadowmap_pass.build_shadow_map_pass(
+                    &mut shadow_buffer.clone(),
+                    *projection_data,
+                    self._draw_list.clone()
+                );
+                sm_command_buffers.push(command_buffer);
+            }
+        }
+
         // Построение прохода геометрии
         let gp_command_buffer = self._geometry_pass.build_geometry_pass(self._camera_data, self._draw_list.clone());
         //let geom_pass_time = timer.elapsed().unwrap().as_secs_f64();
@@ -484,6 +505,14 @@ impl Renderer
         // Построение прохода постобработки
         // Передача входов в постобработку
         self._postprocessor.image_to_all(&"albedo".to_string(),   self._geometry_pass.albedo());
+        self._postprocessor.image_to_all(&"font".to_string(), &self._screen_font);
+        self._postprocessor.uniform_to_all(&"camera".to_string(), self._camera_data);
+        self._postprocessor.uniform_to_all(&"light".to_string(), self._lights_list[0].1[0].1);
+        let fb = &self._lights_list[0].0;
+        match fb.shadowmap() {
+            Some(sm_buffer) => self._postprocessor.image_to_all(&"shadowmap".to_string(), sm_buffer),
+            None => ()
+        };
         //self._postprocessor.image_to_all(&format!("normals"),   &self._gbuffer._normals);
         //self._postprocessor.image_to_all(&format!("specromet"),   &self._gbuffer._specromet);
         //self._postprocessor.image_to_all(&format!("vectors"),   &self._gbuffer._vectors);
@@ -509,13 +538,49 @@ impl Renderer
         };
         let pp_command_buffer = pp_command_buffer.build().unwrap();
         
-        
+        let mut future = self._frame_finish_event
+            .take().unwrap()
+            .then_execute(self._queue.clone(), gp_command_buffer).unwrap().boxed();
+        for cb in sm_command_buffers {
+            future = future.then_execute_same_queue(cb).unwrap().boxed();
+        }
+        match self._vk_surface {
+            RenderSurface::Winit { .. } => {
+                future = future.join(acquire_future.unwrap()).boxed();
+            },
+            _ => ()
+        }
+        future = future.then_execute_same_queue(pp_command_buffer).unwrap().boxed();
         match self._vk_surface {
             RenderSurface::Winit { ref swapchain, .. } => {
-                let future = self._frame_finish_event
+                future = future.then_swapchain_present(self._queue.clone(), swapchain.clone(), image_num as _).boxed();
+            },
+            _ => ()
+        };
+        let future = future.then_signal_fence_and_flush();
+        match future {
+            Ok(future) => {
+                self._frame_finish_event = Some(future.boxed());
+            }
+            Err(FlushError::OutOfDate) => {
+                self._need_to_update_sc = true;
+                self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+            }
+            Err(e) => {
+                println!("Failed to flush future: {:?}", e);
+                self._frame_finish_event = Some(sync::now(self._device.clone()).boxed());
+            }
+        };
+
+        /*match self._vk_surface {
+            RenderSurface::Winit { ref swapchain, .. } => {
+                let mut future = self._frame_finish_event
                     .take().unwrap()
-                    .then_execute(self._queue.clone(), gp_command_buffer).unwrap()
-                    .join(acquire_future.unwrap())
+                    .then_execute(self._queue.clone(), gp_command_buffer).unwrap().boxed();
+                for cb in sm_command_buffers {
+                    future = future.then_execute(self._queue.clone(), cb).unwrap().boxed();
+                }
+                let future = future.join(acquire_future.unwrap())
                     .then_execute_same_queue(pp_command_buffer).unwrap()
                     .then_swapchain_present(self._queue.clone(), swapchain.clone(), image_num as _)
                     .then_signal_fence_and_flush();
@@ -553,7 +618,7 @@ impl Renderer
                     }
                 };
             }
-        };
+        };*/
     }
 
     pub fn queue(&self) -> &Arc<Queue>

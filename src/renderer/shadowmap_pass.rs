@@ -21,12 +21,12 @@ pub struct ShadowMapPass
 
 impl ShadowMapPass
 {
-    fn new(queue : Arc<Queue>) -> Self
+    pub fn new(queue : Arc<Queue>) -> Self
     {
         let desc = RenderPassCreateInfo {
             attachments: vec![
                 AttachmentDescription {
-                    format: Some(TexturePixelFormat::D16_UNORM_S8_UINT),
+                    format: Some(TexturePixelFormat::D16_UNORM),
                     samples: SampleCount::Sample1,
                     load_op: vulkano::render_pass::LoadOp::Clear,
                     store_op: vulkano::render_pass::StoreOp::Store,
@@ -57,7 +57,7 @@ impl ShadowMapPass
     }
 
     pub fn build_shadow_map_pass(
-        &mut self,
+        &self,
         shadow_map: &mut Framebuffer,
         light_projection_data: ProjectionUniformData,
         draw_list: Vec<(GOTransformUniform, RcBox<dyn Component>)>

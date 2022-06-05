@@ -1,7 +1,7 @@
 /// Псевдонимы для типов `nalgebra`
 
 use crate::texture::TexturePixelFormat;
-use nalgebra;
+use nalgebra::{self, Rotation3, RealField};
 
 pub trait NalgebraPixelType
 {
@@ -59,8 +59,48 @@ pub type UMat3 = nalgebra::Matrix3<u32>;
 #[allow(dead_code)]
 pub type UMat4 = nalgebra::Matrix4<u32>;
 
-/*unsafe impl VertexMember for Vec2
+pub trait Transform3
 {
-	
-}*/
+    type T: RealField;
+    fn rotation(&self) -> Rotation3<Self::T>;
+    fn set_rotation(&mut self, rot: &Rotation3<Self::T>);
+    fn rotate(&mut self, rot: &Rotation3<Self::T>);
+    fn rotate_local(&mut self, rot: &Rotation3<Self::T>);
+}
+
+impl Transform3 for Mat4
+{
+    type T = f32;
+    fn rotation(&self) -> Rotation3<Self::T>
+    {
+        Rotation3::from_matrix(&Mat3::new(
+            self[0], self[4], self[8],
+            self[1], self[5], self[9],
+            self[2], self[6], self[10]
+        ))
+    }
+
+    fn set_rotation(&mut self, rot: &Rotation3<Self::T>)
+    {
+        self[(0, 0)] = rot[(0, 0)];
+        self[(0, 1)] = rot[(0, 1)];
+        self[(0, 2)] = rot[(0, 2)];
+        self[(1, 0)] = rot[(1, 0)];
+        self[(1, 1)] = rot[(1, 1)];
+        self[(1, 2)] = rot[(1, 2)];
+        self[(2, 0)] = rot[(2, 0)];
+        self[(2, 1)] = rot[(2, 1)];
+        self[(2, 2)] = rot[(2, 2)];
+    }
+
+    fn rotate(&mut self, rot: &Rotation3<Self::T>)
+    {
+        self.set_rotation(&(rot * self.rotation()));
+    }
+    
+    fn rotate_local(&mut self, rot: &Rotation3<Self::T>)
+    {
+        self.set_rotation(&(self.rotation() * rot));
+    }
+}
 

@@ -1,6 +1,7 @@
 use super::PostprocessingPass;
 use super::{StageIndex};
 use crate::texture::{TexturePixelFormat, TextureFilter};
+use crate::components::ProjectionUniformData;
 
 #[allow(dead_code)]
 impl PostprocessingPass
@@ -11,12 +12,11 @@ impl PostprocessingPass
         stage_builder
             .dimenstions(width, height)
             .input("albedo")
+            .input("shadowmap")
+            .input("font")
+            .uniform::<ProjectionUniformData>("light")
             .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
-            .code("
-            void main()
-            {
-                swapchain_out = texture(albedo, fragCoordWp * vec2(1.0, -1.0) + vec2(0.0, 1.0));
-            }");
+            .code("#include \"data/shaders/testing_node.glsl\"");
         
         let result = stage_builder.build(self);
         result

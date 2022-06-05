@@ -1,7 +1,5 @@
-extern crate winit;
 extern crate vulkano;
 extern crate bytemuck;
-extern crate half;
 
 mod teapot;
 mod time;

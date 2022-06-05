@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use vulkano::device::Device;
@@ -6,10 +7,14 @@ use crate::framebuffer::Framebuffer;
 use crate::types::{Vec3};
 use crate::texture::{Texture, TextureDimensions, TexturePixelFormat};
 use crate::game_object::GameObject;
-use crate::components::ProjectionUniformData;
+use crate::components::{ProjectionUniformData, Component};
 
 #[derive(Clone)]
-struct ShadowBuffer(Texture);
+struct ShadowBuffer
+{
+    buffer: Texture,
+    frame_buffers: Vec<Framebuffer>
+}
 
 impl ShadowBuffer
 {
@@ -25,21 +30,23 @@ impl ShadowBuffer
             TexturePixelFormat::D16_UNORM,
             device
         ).unwrap();
-        Self(buffer)
-    }
-
-    fn shadow_map_framebuffers(&self) -> Vec<Framebuffer>
-    {
-        let width = self.0.width() as u16;
-        let height = self.0.height() as u16;
-        (0..self.0.array_layers()).map(
+        let frame_buffers = (0..buffer.array_layers()).map(
             |layer| {
-                let mut fb = Framebuffer::new(width, height);
-                let subbuffer = self.0.array_layer_as_texture(layer).unwrap();
+                let mut fb = Framebuffer::new(resolution, resolution);
+                let subbuffer = buffer.array_layer_as_texture(layer).unwrap();
                 fb.set_depth_attachment(&subbuffer, 1.0.into());
                 fb
             }
-        ).collect::<Vec<_>>()
+        ).collect::<Vec<_>>();
+        Self{
+            buffer,
+            frame_buffers
+        }
+    }
+
+    fn shadow_map_framebuffers(&self) -> &Vec<Framebuffer>
+    {
+        return &self.frame_buffers;
     }
 }
 
@@ -87,7 +94,7 @@ impl SpotLight
     {
         match self.dynamic_shadow_buffer {
             Some(ref shadow_buffer) => {
-                Some((shadow_buffer.shadow_map_framebuffers().remove(0), self.projection_data(owner)))
+                Some((shadow_buffer.shadow_map_framebuffers()[0].clone(), self.projection_data(owner)))
             },
             None => None
         }
@@ -160,6 +167,27 @@ impl Light
         }
     }
 
+    pub fn shadowmap(&self) -> Option<&Texture>
+    {
+        match self {
+            Self::Spot(ref light) => 
+                match light.dynamic_shadow_buffer {
+                    Some(ref sm_buff) => Some(&sm_buff.buffer),
+                    None => None
+                },
+            Self::Point(ref light) => 
+                match light.shadow_buffer {
+                    Some(ref sm_buff) => Some(&sm_buff.buffer),
+                    None => None
+                },
+            Self::Sun(ref light) => 
+                match light.shadow_buffer {
+                    Some(ref sm_buff) => Some(&sm_buff.buffer),
+                    None => None
+                },
+        }
+    }
+
     pub fn ty(&self) -> &str
     {
         match self
@@ -168,5 +196,13 @@ impl Light
             Self::Point(_) => "PointLight",
             Self::Sun(_) => "SunLight",
         }
+    }
+}
+
+impl Component for Light
+{
+    fn as_any(&self) -> &dyn Any
+    {
+        self
     }
 }

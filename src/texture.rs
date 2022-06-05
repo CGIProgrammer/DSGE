@@ -191,6 +191,7 @@ impl Texture
                 self._vk_image_access.clone(),
                 ImageViewCreateInfo {
                     view_type: view_type,
+                    aspects: self._vk_image_view.aspects().clone(),
                     format: Some(self._pix_fmt),
                     array_layers: layer..(layer+1),
                     ..Default::default()
@@ -420,7 +421,7 @@ impl Texture
         }).unwrap();
 
         let pix_fmt = TexturePixelFormat::from_vk_format(img.image().format())?;
-        println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
+        //println!("from_vk_image_view: {}x{}", img_dims.width(), img_dims.height());
         
         //TextureDimensions{width: img_dims[0], }
         Ok(Self{

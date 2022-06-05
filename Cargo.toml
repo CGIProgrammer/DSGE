@@ -8,12 +8,14 @@ edition = "2021"
 [dependencies]
 vulkano = "0.29.0"
 vulkano-win = "0.29.0"
+#vulkano-glfw-v2 = "0.2.0"
 winit = "0.26.1"
 nalgebra = "0.28.0"
+#glfw = "0.45.0"
 image = "0.24.1"
 bytemuck = { version = "1.7", features = ["derive", "extern_crate_std", "min_const_generics"] }
 byteorder = { version = "1.3", default-features = false }
-half = "1.8.2"
+#half = "1.8.2"
 
 [profile.release.package."*"] # +
 #opt-level = "z" # +
