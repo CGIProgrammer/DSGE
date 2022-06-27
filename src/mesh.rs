@@ -80,10 +80,10 @@ vulkano::impl_vertex!(VkVertex,
     v_grp);
 
 /// Псевдоним для вершинного буфера
-type VertexBufferRef = Arc<ImmutableBuffer<[VkVertex]>>;
+pub type VertexBufferRef = Arc<ImmutableBuffer<[VkVertex]>>;
 
 /// Псевдоним для индексного буфера
-type IndexBufferRef = Arc<ImmutableBuffer<[u32]>>;
+pub type IndexBufferRef = Arc<ImmutableBuffer<[u32]>>;
 
 #[allow(dead_code)]
 impl Vertex {
