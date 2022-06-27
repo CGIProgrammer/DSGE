@@ -31,6 +31,10 @@ lto = true
 panic = 'abort'
 overflow-checks = false
 
+[lib]
+name = "dsge_vk"
+path = "src/lib.rs"
+
 [[bin]]
-name = "process_frames"
-path = "src/process_frames.rs"
+name = "base_example"
+path = "src/main.rs"
