@@ -1,23 +1,18 @@
 /// Компоненты для `GameObject`
 /// Пока в зачаточном состоянии
-use std::any::Any;
 use bytemuck::{Pod, Zeroable};
-
-use vulkano::render_pass::Subpass;
-use vulkano::command_buffer::{AutoCommandBufferBuilder, PrimaryAutoCommandBuffer};
 
 pub mod camera;
 pub mod visual;
 pub mod light;
 
-use crate::renderer::{PostprocessingPass, Renderer};
 use crate::types::Mat4;
 use crate::shader::ShaderStructUniform;
 use crate::texture::Texture;
 
-pub use crate::game_object::{GameObject, GOTransformUniform};
+pub use crate::game_object::{GameObject, GameObjectRef, GOTransformUniform};
 pub use camera::CameraComponent;
-pub use visual::MeshVisual;
+pub use visual::{MeshVisual, AbstractVisual};
 pub use light::Light;
 
 #[repr(C)]
@@ -33,6 +28,30 @@ pub struct ProjectionUniformData
     pub projection_inverted : [f32; 16],
 }
 
+impl ProjectionUniformData
+{
+    pub fn full_matrix(&self) -> Mat4
+    {
+        let transform = Mat4::new(
+            self.transform[0],  self.transform[1],  self.transform[2],  self.transform[3],
+            self.transform[4],  self.transform[5],  self.transform[6],  self.transform[7],
+            self.transform[8],  self.transform[9],  self.transform[10], self.transform[11],
+            self.transform[12], self.transform[13], self.transform[14], self.transform[15],
+        ).transpose();
+        let projection = Mat4::new(
+            self.projection[0],  self.projection[1],  self.projection[2],  self.projection[3],
+            self.projection[4],  self.projection[5],  self.projection[6],  self.projection[7],
+            self.projection[8],  self.projection[9],  self.projection[10], self.projection[11],
+            self.projection[12], self.projection[13], self.projection[14], self.projection[15],
+        ).transpose();
+        projection * transform.try_inverse().unwrap()
+    }
+
+    pub fn full_matrix_inverted(&self) -> Mat4
+    {
+        self.full_matrix().try_inverse().unwrap()
+    }
+}
 
 impl Default for ProjectionUniformData
 {
@@ -74,70 +93,3 @@ impl ShaderStructUniform for ProjectionUniformData
         None
     }
 }
-
-/// Component описывает поведение объекта
-pub trait Component: 'static
-{
-    /// Выполняется при зарождении объекта на сцене
-    fn on_start(&mut self, _owner: &mut GameObject)
-    {
-        
-    }
-
-    /// Выполняется на каждой итерации игры
-    fn on_loop(&mut self, _owner: &mut GameObject)
-    {
-        
-    }
-
-    /// Выполняется при рендеринге на стадии геометрии
-    fn on_geometry_pass(
-        &mut self,
-        _transform: GOTransformUniform,
-        _camera_data: ProjectionUniformData,
-        _subpass: Subpass,
-        _acbb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        _new_mesh: bool,
-        _new_material: bool
-    ) -> Result<(), String>
-    { 
-        Err(format!("Объект {} не поддерживает отображение", std::any::type_name::<Self>()))
-    }
-
-    /// Выполняется при рендеринге на стадии карт теней
-    fn on_shadowmap_pass(
-        &mut self,
-        _transform: GOTransformUniform,
-        _camera_data: ProjectionUniformData,
-        _subpass: Subpass,
-        _acbb: &mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>,
-        _new_mesh: bool,
-        _new_material: bool
-    ) -> Result<(), String>
-    { 
-        Err(format!("Объект {} не поддерживает отбрасывание теней", std::any::type_name::<Self>()))
-    }
-
-    /// Должно возвращать уникальный номер материала (необходимо для оптимизации)
-    fn material_id(&self) -> i32
-    {
-        -1
-    }
-
-    /// Должно возвращать уникальный номер полисетки (необходимо для оптимизации)
-    fn mesh_id(&self) -> i32
-    {
-        -1
-    }
-
-    /// Должно возвращать ссылку на самого себя в динамическом типе
-    fn as_any(&self) -> &dyn Any;
-
-    fn on_postprocess(&mut self, _owner: &GameObject, _postprocessor: &mut PostprocessingPass) -> Result<(), ()>
-    {
-        Err(())
-    }
-}
-
-//pub trait DynamicComponent: Any + Component + 'static {}
-

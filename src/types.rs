@@ -1,7 +1,7 @@
 /// Псевдонимы для типов `nalgebra`
 
 use crate::texture::TexturePixelFormat;
-use nalgebra::{self, Rotation3, RealField};
+use nalgebra::{self, Rotation3, RealField, Perspective3, Matrix4};
 
 pub trait NalgebraPixelType
 {
@@ -66,6 +66,8 @@ pub trait Transform3
     fn set_rotation(&mut self, rot: &Rotation3<Self::T>);
     fn rotate(&mut self, rot: &Rotation3<Self::T>);
     fn rotate_local(&mut self, rot: &Rotation3<Self::T>);
+    fn rotated(&self, rot: &Rotation3<Self::T>) -> Self;
+    fn rotated_local(&self, rot: &Rotation3<Self::T>) -> Self;
 }
 
 impl Transform3 for Mat4
@@ -102,5 +104,121 @@ impl Transform3 for Mat4
     {
         self.set_rotation(&(self.rotation() * rot));
     }
+
+    fn rotated(&self, rot: &Rotation3<Self::T>) -> Self
+    {
+        let mut result = *self;
+        result.rotate(rot);
+        result
+    }
+
+    fn rotated_local(&self, rot: &Rotation3<Self::T>) -> Self
+    {
+        let mut result = *self;
+        result.rotate_local(rot);
+        result
+    }
 }
 
+pub trait FastProjection<T: RealField>
+{
+    fn z_near(&self) -> T;
+    fn z_far(&self) -> T;
+    fn inv_z_near(&self) -> T;
+    fn inv_z_far(&self) -> T;
+    fn aspect_ratio(&self) -> T;
+    fn fov_x(&self) -> T;
+    fn fov_y(&self) -> T;
+}
+
+impl <T: RealField + Copy>FastProjection<T> for Perspective3<T>
+{
+    fn z_far(&self) -> T
+    {
+        let mat = self.as_matrix();
+        let i = mat[(2, 2)];
+        let k = mat[(2, 3)];
+        k/(i + T::one())
+    }
+
+    fn z_near(&self) -> T
+    {
+        let mat = self.as_matrix();
+        let i = mat[(2, 2)];
+        let k = mat[(2, 3)];
+        k/(i - T::one())
+    }
+
+    fn inv_z_far(&self) -> T
+    {
+        self.z_far()
+    }
+
+    fn inv_z_near(&self) -> T
+    {
+        self.z_near()
+    }
+
+    fn aspect_ratio(&self) -> T {
+        let mat = self.as_matrix();
+        mat[(1, 1)] / mat[(0, 0)]
+    }
+
+    fn fov_x(&self) -> T {
+        let mat = self.as_matrix();
+        let result = (T::one() / mat[(0, 0)]).atan();
+        result + result
+    }
+
+    fn fov_y(&self) -> T {
+        let mat = self.as_matrix();
+        let result = (T::one() / mat[(1, 1)]).atan();
+        result + result
+    }
+}
+
+
+impl <T: RealField + Copy>FastProjection<T> for Matrix4<T>
+{
+    fn z_near(&self) -> T
+    {
+        let i = self[(2, 2)];
+        let k = self[(2, 3)];
+        k/(i + T::one())
+    }
+
+    fn z_far(&self) -> T
+    {
+        let i = self[(2, 2)];
+        let k = self[(2, 3)];
+        k/(i - T::one())
+    }
+
+    fn inv_z_near(&self) -> T
+    {
+        let i = self[(3, 2)];
+        let k = self[(3, 3)];
+        -T::one()/(i - k)
+    }
+
+    fn inv_z_far(&self) -> T
+    {
+        let i = self[(3, 2)];
+        let k = self[(3, 3)];
+        T::one()/(i + k)
+    }
+
+    fn aspect_ratio(&self) -> T {
+        self[(1, 1)] / self[(0, 0)]
+    }
+
+    fn fov_x(&self) -> T {
+        let result = (T::one() / self[(0, 0)]).atan();
+        result + result
+    }
+
+    fn fov_y(&self) -> T {
+        let result = (T::one() / self[(1, 1)]).atan();
+        result + result
+    }
+}

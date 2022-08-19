@@ -1,0 +1,191 @@
+Используется AMD Radeon Vega 8 Graphics (RADV RAVEN)
+queues_count 1, supports_graphics true
+B8G8R8A8_SRGB: SrgbNonLinear
+B8G8R8A8_UNORM: SrgbNonLinear
+Загрузка текстур (2)
+Текстура "cross_grid"
+Загрузка mip-уровня 0 (1024x1024)
+Загрузка mip-уровня 1 (512x512)
+Загрузка mip-уровня 2 (256x256)
+Загрузка mip-уровня 3 (128x128)
+Загрузка mip-уровня 4 (64x64)
+Загрузка mip-уровня 5 (32x32)
+Загрузка mip-уровня 6 (16x16)
+Загрузка mip-уровня 7 (8x8)
+Загрузка mip-уровня 8 (4x4)
+Загрузка mip-уровня 9 (2x2)
+Загрузка mip-уровня 10 (1x1)
+Текстура "color_grid"
+Загрузка mip-уровня 0 (1024x1024)
+Загрузка mip-уровня 1 (512x512)
+Загрузка mip-уровня 2 (256x256)
+Загрузка mip-уровня 3 (128x128)
+Загрузка mip-уровня 4 (64x64)
+Загрузка mip-уровня 5 (32x32)
+Загрузка mip-уровня 6 (16x16)
+Загрузка mip-уровня 7 (8x8)
+Загрузка mip-уровня 8 (4x4)
+Загрузка mip-уровня 9 (2x2)
+Загрузка mip-уровня 10 (1x1)
+Загрузка материалов (3)
+Материал "default"
+Материал "Материал"
+Материал "Материал.001"
+Загрузка мешей (4)
+Меш Ploskost.001.mesh
+Меш Ploskost.mesh
+Меш Tsilindr.mesh
+Меш Suzanna.mesh
+Загрузка объектов (6)
+Объект "Light"
+Тип: свет (SpotLight), zNear 0.05, zFar 40
+Location 0.9940085, -0.18300202, 1.5793608
+Объект "Camera"
+Тип: камера
+Location 0.9636668, -4.05118, 1.7526631
+Объект "plane"
+Тип: полисетка
+Location 0, 0, -0.7446185
+Объект "monkey"
+Тип: полисетка
+Location -0.0035425276, -0.53868866, -0.41554815
+Объект "arrow"
+Тип: полисетка
+Location 2.0999343, 0.24343583, 3.1310205
+Объект "Плоскость"
+Тип: полисетка
+Location 0.25769663, -0.46690634, 0.5462862
+name: monkey
+name: Camera
+Исользуется новый subpass (115374144, 0)
+Исользуется новый subpass (115256032, 0)
+Исользуется новый subpass (115417776, 0)
+Исользуется новый subpass (106376256, 0)
+Сборка uniform буфера для материала
+Исользуется новый subpass (106376256, 0)
+Сборка uniform буфера для материала
+Исользуется новый subpass (116193440, 0)
+Сборка uniform буфера для материала
+Исользуется новый subpass (116193440, 0)
+Сборка uniform буфера для материала
+fps 508
+fps 587
+fps 467
+fps 460
+fps 556
+fps 542
+fps 517
+fps 584
+fps 560
+fps 583
+fps 567
+fps 562
+fps 587
+fps 589
+fps 528
+fps 526
+fps 577
+fps 557
+fps 627
+fps 608
+fps 526
+fps 590
+fps 563
+fps 574
+fps 569
+fps 551
+fps 587
+fps 599
+fps 561
+fps 573
+fps 532
+fps 545
+fps 550
+fps 565
+fps 539
+fps 542
+fps 563
+fps 584
+fps 547
+fps 560
+fps 562
+fps 600
+fps 600
+fps 594
+fps 546
+fps 490
+fps 574
+fps 542
+fps 581
+fps 583
+fps 557
+fps 571
+fps 568
+fps 588
+fps 583
+fps 488
+fps 551
+fps 546
+fps 556
+fps 534
+fps 555
+fps 545
+fps 556
+fps 507
+fps 556
+fps 552
+fps 541
+fps 534
+fps 553
+fps 556
+fps 545
+fps 517
+fps 595
+fps 558
+fps 583
+fps 531
+fps 599
+fps 607
+fps 603
+fps 555
+fps 529
+fps 563
+fps 571
+fps 578
+fps 495
+fps 576
+fps 560
+fps 518
+fps 556
+fps 556
+fps 528
+fps 595
+fps 585
+fps 579
+fps 515
+fps 518
+fps 563
+fps 547
+fps 566
+fps 577
+fps 539
+fps 560
+fps 572
+fps 544
+fps 572
+fps 556
+fps 536
+fps 492
+fps 557
+fps 575
+fps 477
+fps 454
+fps 442
+fps 597
+fps 552
+fps 541
+fps 544
+fps 588
+fps 591
+fps 517
+fps 511

@@ -1,27 +1,55 @@
+use std::collections::HashMap;
+
 use crate::components::*;
 pub use crate::components::visual::*;
 pub use crate::components::camera::*;
+use crate::game_logic::Behaviour;
+use crate::game_logic::behaviour::DynBehaviour;
 
 use crate::types::*;
 use crate::shader::{ShaderStructUniform};
 use crate::texture::Texture;
+use crate::scene::SceneRef;
 use crate::references::*;
 use bytemuck::{Zeroable, Pod};
-use nalgebra::Transform3;
 
 pub type GameObjectRef = RcBox<GameObject>;
 pub type Transform = Mat4;
+
+#[derive(Clone)]
+pub enum GOParent
+{
+    Object(GameObjectRef),
+    Scene(SceneRef),
+    None
+}
+
+impl GOParent
+{
+    pub fn is_some(&self) -> bool
+    {
+        match self
+        {
+            Self::Object(_) | Self::Scene(_) => true,
+            Self::None => false
+        }
+    }
+
+    pub fn is_none(&self) -> bool
+    {
+        match self {Self::None => true, _ => false}
+    }
+}
 
 #[derive(Clone)]
 pub struct GOTransform
 {
     pub local : Transform,
     pub global : Transform,
-    pub global_for_render: Transform,
-    pub global_for_render_prev: Transform,
-    _owner : Option<GameObjectRef>,
-    _parent : Option<GameObjectRef>,
-    _children : Vec::<GameObjectRef>
+    pub global_prev: Transform,
+    pub(crate) _owner : Option<GameObjectRef>,
+    pub(crate) _parent : GOParent,
+    pub(crate) _children : HashMap::<i32, GameObjectRef>
 }
 
 #[repr(C)]
@@ -56,6 +84,7 @@ impl ShaderStructUniform for GOTransformUniform
 #[allow(dead_code)]
 impl GOTransform
 {
+
     fn set_owner(&mut self, owner: RcBox<GameObject>)
     {
         self._owner = Some(owner);
@@ -66,19 +95,18 @@ impl GOTransform
         Self {
             local : Transform::identity(),
             global : Transform::identity(),
-            global_for_render : Transform::identity(),
-            global_for_render_prev : Transform::identity(),
-            _parent: None,
-            _children: Vec::new(),
-            _owner: None
+            global_prev : Transform::identity(),
+            _parent: GOParent::None,
+            _children: HashMap::new(),
+            _owner: None,
         }
     }
 
     pub fn uniform_value(&self) -> GOTransformUniform
     {
         GOTransformUniform {
-            transform: self.global_for_render.as_slice().try_into().unwrap(),
-            transform_prev: self.global_for_render_prev.as_slice().try_into().unwrap()
+            transform: self.global.as_slice().try_into().unwrap(),
+            transform_prev: self.global_prev.as_slice().try_into().unwrap()
         }
     }
 }
@@ -87,17 +115,30 @@ impl GOTransform
 #[derive(Clone)]
 pub struct GameObject
 {
-    transform: GOTransform,
+    pub(crate) scene: Option<SceneRef>,
+    pub(crate) transform: GOTransform,
     name: String,
     camera: Option<CameraComponent>,
     mesh_visual: Option<MeshVisual>,
     light: Option<Light>,
-    components: Vec<RcBox<dyn Component>>
+    components: Vec<DynBehaviour>,
+    //scene: Option<SceneRef>
+}
+
+impl Drop for GameObject {
+    fn drop(&mut self) {
+        println!("GameObject dropped");
+    }
 }
 
 #[allow(dead_code)]
 impl GameObject
 {
+    /*pub fn set_scene(&mut self, scene: SceneRef)
+    {
+        self.scene = Some(scene);
+    }*/
+
     #[inline]
     pub fn name(&self) -> &String
     {
@@ -124,6 +165,11 @@ impl GameObject
         self.light.as_ref()
     }
     
+    pub fn light_mut(&mut self) -> Option<&mut Light>
+    {
+        self.light.as_mut()
+    }
+    
     pub fn new<T: ToString>(name: T) -> RcBox<Self>
     {
         let obj = RcBox::construct(Self {
@@ -132,75 +178,98 @@ impl GameObject
             camera: None,
             mesh_visual: None,
             light: None,
-            components: Vec::new()
+            components: Vec::new(),
+            scene: None
         });
-        obj.take_mut().transform._owner = Some(obj.clone());
+        obj.lock_write().transform._owner = Some(obj.clone());
         obj
+    }
+
+    pub fn parent_object(&self) -> Option<&GameObjectRef>
+    {
+        if let GOParent::Object(ref parent) = self.transform._parent {
+            Some(parent)
+        }
+        else {
+            None
+        }
+    }
+
+    pub fn is_root(&self) -> bool 
+    {
+        if let GOParent::Scene(ref _s) = self.transform._parent {
+            return true;
+        } else {
+            return false;
+        }
     }
 
     pub fn set_parent(&mut self, parent: RcBox<GameObject>)
     {
         self.remove_parent();
-        let owner = self.transform._owner.clone().unwrap();
-        let owner_id = owner.box_id();
-        let mut _par = Some(parent.clone());
+        let mut _par = GOParent::Object(parent.clone());
+        let parent_id = parent.box_id();
         loop {
             match _par {
-                Some(par) => {
-                    let parent_id = par.box_id();
-                    if parent_id==owner_id {
+                GOParent::Object(ref par) => {
+                    if parent_id == par.box_id() {
                         panic!("Обнаружена циклическая зависимость объектов.");
                     }
-                    _par = par.take().transform()._parent.clone();
                 },
-                None => {
+                _ => {
                     break;
                 }
             }
         };
-        self.transform._parent = Some(parent.clone());
-        parent.take().transform_mut()._children.push(self.transform._owner.clone().unwrap());
+        self.transform._parent = GOParent::Object(parent.clone());
+        let owner = self.transform._owner.clone().unwrap();
+        parent.lock().transform_mut()._children.insert(owner.box_id(), owner);
     }
 
     pub fn add_child(&mut self, child: RcBox<GameObject>)
     {
-        child.take().transform_mut()._parent = self.transform._owner.clone();
-        self.transform._children.push(child.clone());
+        child.lock().set_parent(self.transform._owner.clone().unwrap());
     }
 
-    pub fn add_component<T: Component>(&mut self, component: T)
+    /// Добавляет компонент и возвращает RcBox с этим компонентом
+    pub fn add_component<T: Behaviour>(&mut self, component: T) -> Option<RcBox<T>>
     {
         let cmp_dyn = (&component) as &dyn std::any::Any;
         if cmp_dyn.is::<CameraComponent>() {
             self.camera = Some(cmp_dyn.downcast_ref::<CameraComponent>().unwrap().clone());
-            return;
+            return None;
         }
         if cmp_dyn.is::<MeshVisual>() {
             self.mesh_visual = Some(cmp_dyn.downcast_ref::<MeshVisual>().unwrap().clone());
-            return;
+            return None;
         }
         if cmp_dyn.is::<Light>() {
             self.light = Some(cmp_dyn.downcast_ref::<Light>().unwrap().clone());
-            return;
+            return None;
         }
-        self.components.push(RcBox::construct(component));
+        let result = RcBox::construct(component);
+        self.components.push(result.clone());
+        if let Some(ref scene) = self.scene {
+            scene.lock().event_processor.update_object(self);
+        };
+        Some(result)
     }
 
-    pub fn get_component<T: Component>(&self) -> Option<&RcBox<(dyn Component)>>
+    pub fn get_component<T: Behaviour>(&self) -> Option<&DynBehaviour>
     {
         self.components.iter().find(|b| {
             (*b).lock().unwrap().as_any().downcast_ref::<T>().is_some()
         })
     }
 
-    pub fn get_components<T: Component>(&self) -> Vec<&RcBox<(dyn Component)>>
+    pub fn get_components<T: Behaviour>(&self) -> Vec<&DynBehaviour>
     {
         self.components.iter().filter(|b| {
             (*b).lock().unwrap().as_any().downcast_ref::<T>().is_some()
         }).collect::<Vec<_>>()
     }
 
-    pub fn get_all_components(&self) -> &Vec<RcBox<(dyn Component)>>
+    pub fn get_all_components(&self) -> &Vec<DynBehaviour>
     {
         &self.components
     }
@@ -210,27 +279,26 @@ impl GameObject
         if self.transform._parent.is_none() {
             return;
         }
-        let _parent = self.transform._parent.clone().unwrap();
-        let mut parent = _parent.take();
-        let owner = self.transform._owner.clone().unwrap();
-        let owner_id : usize = owner.box_id() as _;
-        let mut index = usize::MAX;
-        for (i, child) in parent.transform()._children.iter().enumerate() {
-            let child_id : usize = child.box_id() as _;
-            if child_id == owner_id {
-                index = i;
-                break;
-            }
+        match self.transform._parent {
+            GOParent::Scene(ref scene) => {
+                scene.lock_write().root_objects.remove(&(self as *const Self as usize as i32));
+            },
+            GOParent::Object(ref object) => {
+                object.lock_write().transform._children.remove(&(self as *const Self as usize as i32));
+            },
+            GOParent::None => ()
         }
-        if index < usize::MAX {
-            parent.transform_mut()._children.remove(index);
-        }
-        self.transform._parent = None;
+        match self.scene {
+            Some(ref scene) => 
+                self.transform._parent = GOParent::Scene(scene.clone()),
+            None => 
+                self.transform._parent = GOParent::None,
+        };
     }
 
     pub fn children(&self) -> Vec<RcBox<GameObject>>
     {
-        return self.transform._children.clone();
+        self.transform._children.iter().map(|(_,v)| v.clone()).collect()
     }
 
     pub fn transform(&self) -> &GOTransform
@@ -243,20 +311,20 @@ impl GameObject
         &mut self.transform
     }
     
-    pub fn apply_transform(&mut self)
+    pub(crate) fn step(&mut self)
     {
         match &self.transform._parent {
-            Some(parent) => {
-                let par = parent.take();
+            GOParent::Object(parent) => {
+                let par = parent.lock();
                 self.transform.global = par.transform().global * self.transform.local;
             },
-            None => {
+            _ => {
                 self.transform.global = self.transform.local;
             }
         };
         fn apply_transform_closure(obj: &mut GameObject) {
             for child in obj.children() {
-                let mut ch = child.take();
+                let mut ch = child.lock();
                 {
                     let ch_transform = ch.transform_mut();
                     ch_transform.global = obj.transform().global * ch_transform.local;
@@ -270,20 +338,20 @@ impl GameObject
     pub fn next_frame(&mut self)
     {
         match &self.transform._parent {
-            Some(parent) => {
-                let par = parent.take();
+            GOParent::Object(parent) => {
+                let par = parent.lock();
                 self.transform.global = par.transform().global * self.transform.local;
             },
-            None => {
+            _ => {
                 self.transform.global = self.transform.local;
             }
         };
         fn next_frame_closure(obj: &mut GameObject) {
             let mut transform = obj.transform_mut();
-            transform.global_for_render_prev = transform.global_for_render;
-            transform.global_for_render = transform.global;
+            transform.global_prev = transform.global;
+            transform.global = transform.global;
             for child in obj.children() {
-                let mut ch = child.take();
+                let mut ch = child.lock();
                 {
                     let ch_transform = ch.transform_mut();
                     ch_transform.global = obj.transform().global * ch_transform.local;

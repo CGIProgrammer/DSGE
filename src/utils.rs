@@ -26,3 +26,26 @@ pub fn read_struct<T, R: Read>(read: &mut R) -> Result<T> {
         }
     }
 }
+
+pub(crate) trait UnsafeCopy {
+    unsafe fn copy(&self) -> Self
+    where Self: Sized
+    {
+        let mut _cbb = MaybeUninit::<Self>::uninit();
+                
+        std::ptr::copy(
+            self as *const Self as *const Self,
+            &mut _cbb as *mut MaybeUninit<Self> as *mut Self,
+            1
+        );
+        _cbb.assume_init()
+    }
+}
+
+pub(crate) trait RefId
+{
+    fn box_id(&self) -> usize
+    {
+        self as *const Self as *const usize as usize
+    }
+}

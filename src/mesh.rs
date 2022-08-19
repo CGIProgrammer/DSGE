@@ -375,7 +375,7 @@ impl Mesh {
     pub fn builder(name: &str) -> MeshBuilder
     {
         let mut res = MeshBuilder::default();
-        res._name = name.to_string();
+        res._name = name.to_owned();
         res
     }
 
@@ -449,7 +449,7 @@ impl Mesh {
     }
 }
 
-pub trait MeshBinder
+pub trait MeshCommandSet
 {
     fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
     fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
@@ -458,7 +458,7 @@ pub trait MeshBinder
 use vulkano::command_buffer::validity::*;
 use vulkano::command_buffer::DrawIndexedError;
 
-impl <T>MeshBinder for AutoCommandBufferBuilder<T>
+impl <T>MeshCommandSet for AutoCommandBufferBuilder<T>
 {
     fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
     {

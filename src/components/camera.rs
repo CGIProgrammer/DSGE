@@ -1,9 +1,7 @@
-use std::any::Any;
-
 use crate::{
     types::Mat4,
 };
-use super::{GameObject, Component, ProjectionUniformData};
+use super::{GameObject, ProjectionUniformData};
 
 #[derive(Clone)]
 pub struct CameraComponent
@@ -44,20 +42,16 @@ impl CameraComponent
         let transform = obj.transform();
         let projection = self.projection.as_matrix();
         ProjectionUniformData {
-            transform : transform.global_for_render.as_slice().try_into().unwrap(),
-            transform_prev : transform.global_for_render_prev.as_slice().try_into().unwrap(),
-            transform_inverted : transform.global_for_render.try_inverse().unwrap().as_slice().try_into().unwrap(),
-            transform_prev_inverted : transform.global_for_render_prev.try_inverse().unwrap().as_slice().try_into().unwrap(),
+            transform : transform.global.as_slice().try_into().unwrap(),
+            transform_prev : transform.global_prev.as_slice().try_into().unwrap(),
+            transform_inverted : transform.global.try_inverse().unwrap().as_slice().try_into().unwrap(),
+            transform_prev_inverted : transform.global_prev.try_inverse().unwrap().as_slice().try_into().unwrap(),
             projection : projection.as_slice().try_into().unwrap(),
             projection_inverted : projection.try_inverse().unwrap().as_slice().try_into().unwrap(),
         }
     }
 }
 
-impl Component for CameraComponent
-{
-    fn as_any(&self) -> &dyn Any
-    {
-        self
-    }
-}
+crate::impl_behaviour!(
+    CameraComponent { }
+);

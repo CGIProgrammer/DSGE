@@ -7,7 +7,8 @@ use vulkano::image::{ImageLayout, SampleCount};
 use vulkano::command_buffer::CommandBufferUsage;
 
 use crate::components::ProjectionUniformData;
-use crate::components::{GOTransformUniform, Component};
+use crate::components::GOTransformUniform;
+use crate::game_object::AbstractVisual;
 use crate::mesh::RcBox;
 use crate::texture::TexturePixelFormat;
 use crate::framebuffer::{FramebufferBinder, Framebuffer};
@@ -60,7 +61,7 @@ impl ShadowMapPass
         &self,
         shadow_map: &mut Framebuffer,
         light_projection_data: ProjectionUniformData,
-        draw_list: Vec<(GOTransformUniform, RcBox<dyn Component>)>
+        draw_list: Vec<(GOTransformUniform, RcBox<dyn AbstractVisual>)>
     ) -> PrimaryAutoCommandBuffer
     {
         let mut command_buffer_builder = AutoCommandBufferBuilder::primary(

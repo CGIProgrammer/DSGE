@@ -152,7 +152,7 @@ impl Shader
     /// Объявляет буфер-хранилище
     pub fn storage_buffer<T: ShaderStructUniform>(&mut self, name: &str, set: usize, binding : usize) -> Result<&mut Self, String>
     {
-        let name = name.to_string();
+        let name = name.to_owned();
         if self.uniforms.contains_key(&name) {
             return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
         }
@@ -181,7 +181,7 @@ impl Shader
     /// Объявление uniform-структуры
     pub fn uniform<T: ShaderStructUniform>(&mut self, name: &str, set: usize, binding : usize) -> Result<&mut Self, String>
     {
-        let name = name.to_string();
+        let name = name.to_owned();
         if self.uniforms.contains_key(&name) {
             return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
         }
@@ -202,7 +202,7 @@ impl Shader
         if self.push_constants.is_some() {
             return Err(format!("Можно объявить только одну константу."));
         }
-        let name = name.to_string();
+        let name = name.to_owned();
         
         let uniform_source = ShaderSourceUniform{
             name: name.clone(),
@@ -225,18 +225,18 @@ impl Shader
     /// Объявление uniform-структуры с явной передачей кода структуры
     pub fn uniform_structure(&mut self, name: &str, _type: &str, structure: &str, set: usize, binding: usize) -> Result<&mut Self, String>
     {
-        let name = name.to_string();
+        let name = name.to_owned();
         if self.uniforms.contains_key(&name) {
             return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
         }
         let uniform_source = ShaderSourceUniform{
             name: name.clone(),
-            type_name: _type.to_string(),
+            type_name: _type.to_owned(),
             set: set,
             binding: binding
         };
         self.source += format!("layout (std140, set = {}, binding = {}) uniform {} {} {};\n", set, binding, _type, structure, name).as_str();
-        self.uniforms.insert(name.to_string(), uniform_source);
+        self.uniforms.insert(name.to_owned(), uniform_source);
         Ok(self)
     }
 
@@ -249,12 +249,12 @@ impl Shader
 
     pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureView) -> Result<&mut Self, String>
     {
-        let name = name.to_string();
+        let name = name.to_owned();
         if self.uniforms.contains_key(&name) {
             return Err(format!("Переменная {} уже объявлена в этом шейдере.", name));
         }
         
-        let utype = dims.glsl_sampler_name().to_string();
+        let utype = dims.glsl_sampler_name().to_owned();
         let uniform_source = ShaderSourceUniform{
             name: name.clone(),
             type_name: utype.clone(),
@@ -277,11 +277,11 @@ impl Shader
     {
         let layout_location = 
             if self.glsl_version.have_explicit_attri_location() {
-                format!("layout (location = {}) ", self.outputs.len()).to_string()
+                format!("layout (location = {}) ", self.outputs.len()).to_owned()
             } else {
                 String::new()
             };
-        self.outputs.insert(name.to_string(), type_);
+        self.outputs.insert(name.to_owned(), type_);
         self.source += format!("{}out {} {};\n", layout_location, type_.get_glsl_name(), name).as_str();
         self
     }
@@ -291,11 +291,11 @@ impl Shader
     {
         let layout_location = 
             if self.glsl_version.have_explicit_attri_location() {
-                format!("layout (location = {}) ", self.inputs.len()).to_string()
+                format!("layout (location = {}) ", self.inputs.len()).to_owned()
             } else {
                 String::new()
             };
-        self.inputs.insert(name.to_string(), type_);
+        self.inputs.insert(name.to_owned(), type_);
         self.source += format!("{}in {} {};\n", layout_location, type_.get_glsl_name(), name).as_str();
         self
     }
@@ -497,7 +497,7 @@ impl ShaderProgramBuilder
             Some(_) => return Err(format!("Uniform-константу можно объявить только в одном шейдере.")),
             None => self.uniform_constant =
             match &shader.push_constants {
-                Some(pc) => Some((pc.1.name.to_string(), pc.1.type_name.to_string())),
+                Some(pc) => Some((pc.1.name.to_owned(), pc.1.type_name.to_owned())),
                 None => None
             }
         }
@@ -537,7 +537,7 @@ impl ShaderProgramBuilder
             Some(_) => return Err(format!("Uniform-константу можно объявить только в одном шейдере.")),
             None => self.uniform_constant =
             match &shader.push_constants {
-                Some(pc) => Some((pc.1.name.to_string(), pc.1.type_name.to_string())),
+                Some(pc) => Some((pc.1.name.to_owned(), pc.1.type_name.to_owned())),
                 None => None
             }
         }*/
@@ -601,7 +601,7 @@ impl ShaderProgramBuilder
             Some(_) => return Err(format!("Uniform-константу можно объявить только в одном шейдере.")),
             None => self.uniform_constant =
             match &eval.push_constants {
-                Some(pc) => Some((pc.1.name.to_string(), pc.1.type_name.to_string())),
+                Some(pc) => Some((pc.1.name.to_owned(), pc.1.type_name.to_owned())),
                 None => None
             }
         }
@@ -609,7 +609,7 @@ impl ShaderProgramBuilder
             Some(_) => return Err(format!("Uniform-константу можно объявить только в одном шейдере.")),
             None => self.uniform_constant =
             match &control.push_constants {
-                Some(pc) => Some((pc.1.name.to_string(), pc.1.type_name.to_string())),
+                Some(pc) => Some((pc.1.name.to_owned(), pc.1.type_name.to_owned())),
                 None => None
             }
         }
@@ -728,20 +728,10 @@ impl ShaderProgramUniformBuffer
         match self.write_set_descriptors.get_mut(&set_num)
         {
             Some(set_buffer) => {
-                if binding_num >= set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                } else {
-                    set_buffer.remove(binding_num);
-                }
-                set_buffer.insert(binding_num, uniform_buffer);
+                set_buffer.push(uniform_buffer);
             },
             None => {
                 let mut uniform_set = Vec::new();
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
                 uniform_set.push(uniform_buffer);
                 self.write_set_descriptors.insert(set_num, uniform_set);
             }
@@ -764,20 +754,31 @@ impl ShaderProgramUniformBuffer
         match self.write_set_descriptors.get_mut(&set_num)
         {
             Some(set_buffer) => {
-                if binding_num >= set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                } else {
-                    set_buffer.remove(binding_num);
-                }
-                set_buffer.insert(binding_num, wds);
+                set_buffer.push(wds);
             },
             None => {
                 let mut uniform_set = Vec::new();
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
+                uniform_set.push(wds);
+                self.write_set_descriptors.insert(set_num, uniform_set);
+            }
+        };
+    }
+
+    pub fn uniform_sampler_array(&mut self, textures: &[&Texture], first_index: usize, set_num: usize, binding_num: usize)
+    {
+        let _textures = textures.iter().map(|texture| (texture.image_view().clone(), texture.sampler().clone())).collect::<Vec<_>>();
+        let wds = WriteDescriptorSet::image_view_sampler_array(
+            binding_num as _,
+            first_index as _,
+            _textures
+        );
+        match self.write_set_descriptors.get_mut(&set_num)
+        {
+            Some(set_buffer) => {
+                set_buffer.push(wds);
+            },
+            None => {
+                let mut uniform_set = Vec::new();
                 uniform_set.push(wds);
                 self.write_set_descriptors.insert(set_num, uniform_set);
             }
@@ -803,16 +804,28 @@ impl ShaderProgramUniformBuffer
         let (set_num, binding_num) = *match self.uniforms_locations.get(name)
         {
             Some(val) => {
-                //println!("uniform (set={}, binding={}) {}", val.0, val.1, name);
                 val
             },
             None => {
-                //println!("Uniform-переменная {} не объявлена в этом шейдере.", name);
                 return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name));
             }
         };
-        //println!("{}", self.fragment_shader_source());
         self.uniform_sampler(texture, set_num, binding_num);
+        Ok((set_num, binding_num))
+    }
+
+    pub fn uniform_sampler_array_by_name(&mut self, textures: &[&Texture], first_index: usize, name: &String) -> Result<(usize, usize), String>
+    {
+        let (set_num, binding_num) = *match self.uniforms_locations.get(name)
+        {
+            Some(val) => {
+                val
+            },
+            None => {
+                return Err(format!("Uniform-переменная {} не объявлена в этом шейдере.", name));
+            }
+        };
+        self.uniform_sampler_array(textures, first_index, set_num, binding_num);
         Ok((set_num, binding_num))
     }
     
@@ -828,19 +841,11 @@ impl ShaderProgramUniformBuffer
         match self.write_set_descriptors.get_mut(&set_num)
         {
             Some(set_buffer) => {
-                if binding_num > set_buffer.len() {
-                    for binding in set_buffer.len()..binding_num {
-                        set_buffer.push(WriteDescriptorSet::none(binding as u32));
-                    }
-                }
-                set_buffer.insert(binding_num, ub);
+                set_buffer.push(ub);
             },
             None => {
                 let mut uniform_set = vec![];
-                for binding in 0..binding_num {
-                    uniform_set.push(WriteDescriptorSet::none(binding as u32));
-                }
-                uniform_set.insert(binding_num, ub);
+                uniform_set.push(ub);
                 self.write_set_descriptors.insert(set_num, uniform_set);
             }
         };
@@ -1042,7 +1047,7 @@ impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
         match shader.pipeline() {
             PipelineType::Graphics(pipeline) => Ok(self.bind_pipeline_graphics(pipeline)),
             PipelineType::Compute(pipeline) => Ok(self.bind_pipeline_compute(pipeline)),
-            PipelineType::None => Err("Не установлен Subpass".to_string())
+            PipelineType::None => Err("Не установлен Subpass".to_owned())
         }
     }
 

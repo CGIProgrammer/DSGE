@@ -22,19 +22,19 @@ impl GLSLVersion
     pub fn stringify(&self) -> String
     {
         match self {
-            Self::V140 => "#version 140".to_string(),
-            Self::V150 => "#version 150".to_string(),
-            Self::V330 => "#version 330".to_string(),
-            Self::V400 => "#version 400".to_string(),
-            Self::V410 => "#version 410".to_string(),
-            Self::V420 => "#version 420".to_string(),
-            Self::V430 => "#version 430".to_string(),
-            Self::V440 => "#version 440".to_string(),
-            Self::V450 => "#version 450".to_string(),
-            Self::V460 => "#version 460".to_string(),
-            Self::V300ES => "#version 300 es".to_string(),
-            Self::V310ES => "#version 310 es".to_string(),
-            Self::V320ES => "#version 320 es".to_string()
+            Self::V140 => "#version 140".to_owned(),
+            Self::V150 => "#version 150".to_owned(),
+            Self::V330 => "#version 330".to_owned(),
+            Self::V400 => "#version 400".to_owned(),
+            Self::V410 => "#version 410".to_owned(),
+            Self::V420 => "#version 420".to_owned(),
+            Self::V430 => "#version 430".to_owned(),
+            Self::V440 => "#version 440".to_owned(),
+            Self::V450 => "#version 450".to_owned(),
+            Self::V460 => "#version 460".to_owned(),
+            Self::V300ES => "#version 300 es".to_owned(),
+            Self::V310ES => "#version 310 es".to_owned(),
+            Self::V320ES => "#version 320 es".to_owned()
         }
     }
 
