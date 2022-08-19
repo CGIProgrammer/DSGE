@@ -8,16 +8,19 @@ pub use crate::shader::ShaderStructUniform;
 //pub type TextureRef = RcBox<Texture>;
 pub use pixel_format::TexturePixelFormatFeatures;
 pub use types::*;
+use vulkano::device::DeviceOwned;
+use vulkano::image::SampleCount;
 
 use std::ffi::c_void;
+use std::fmt::Formatter;
 use std::io::{Read, Seek, BufRead};
 use image::io::Reader as ImageReader;
 use image::EncodableLayout;
-
 use vulkano::format::{Format};
 
 #[allow(dead_code)]
 use vulkano::device::{Queue, Device};
+//use vulkano::buffer::BufferContents;
 
 #[allow(dead_code)]
 use vulkano::image::{
@@ -64,11 +67,11 @@ pub struct Texture
 {
     name: String,
 
-    _vk_image_dims: TextureDimensions,
-    _vk_image_view: Arc<dyn ImageViewAbstract + 'static>,
-    _vk_image_access: Arc<dyn ImageAccess + 'static>,
-    _vk_sampler: Arc<TextureSampler>,
-    _vk_device: Arc<Device>,
+    pub(crate) _vk_image_dims: TextureDimensions,
+    pub(crate) _vk_image_view: Arc<dyn ImageViewAbstract + 'static>,
+    pub(crate) _vk_image_access: Arc<dyn ImageAccess + 'static>,
+    pub(crate) _vk_sampler: Arc<TextureSampler>,
+    pub(crate) _vk_device: Arc<Device>,
 
     _pix_fmt: TexturePixelFormat,
 
@@ -86,15 +89,28 @@ pub struct Texture
     min_lod: f32,
     max_lod: f32,
 }
-/*
-impl std::hash::Hash for Texture
+
+impl std::fmt::Debug for Texture
 {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self._vk_image_view.hash(state);
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error>
+    {
+        f.debug_struct("Texture")
+        .field("_vk_image_dims", &self._vk_image_dims)
+        .field("_pix_fmt", &self._pix_fmt)
+        .field("is_cubemap", &self.is_cubemap)
+        .field("is_array", &self.is_array)
+        .field("min_filter", &self.min_filter)
+        .field("mip_mode", &self.mip_mode)
+        .field("u_repeat", &self.u_repeat)
+        .field("v_repeat", &self.v_repeat)
+        .field("w_repeat", &self.w_repeat)
+        .field("max_anisotropy", &self.max_anisotropy)
+        .field("min_lod", &self.min_lod)
+        .field("max_lod", &self.max_lod);
+        Ok(())
     }
 }
-*/
+
 impl ShaderStructUniform for Texture
 {
     fn glsl_type_name() -> String
@@ -112,7 +128,7 @@ impl ShaderStructUniform for Texture
         Some(self)
     }
 }
-
+use vulkano::command_buffer::{BlitImageError, CopyBufferImageError};
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer, PrimaryAutoCommandBuffer, CommandBufferExecFuture};
 use vulkano::sync::NowFuture;
 use vulkano::image::{sys::{ImageCreationError, UnsafeImage}, ImageAccess, ImageUsage, ImageCreateFlags, immutable::SubImage, ImageLayout};
@@ -146,7 +162,7 @@ impl Texture
     pub fn builder() -> TextureBuilder
     {
         TextureBuilder {
-            name: "".to_string(),
+            name: "".to_owned(),
             _vk_image_dims: None,
             min_filter: TextureFilter::Nearest,
             mag_filter: TextureFilter::Nearest,
@@ -213,57 +229,11 @@ impl Texture
         self._pix_fmt
     }
 
-    pub fn copy(from: &Texture, to: &Texture, cbb: Option<&mut AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>>, queue: Option<Arc<Queue>>)
-    {
-        let execute = cbb.is_none();
-        let mut _cbb = None;
-        
-        let cbb = match cbb {
-            Some(builder) => builder,
-            None => {
-                let queue = queue.as_ref().unwrap().clone();
-                _cbb = Some(AutoCommandBufferBuilder::primary(
-                    queue.device().clone(),
-                    queue.family(),
-                    CommandBufferUsage::OneTimeSubmit
-                ).unwrap());
-                _cbb.as_mut().unwrap()
-            }
-        };
-        let (from_dims, from_array_layers) = match from._vk_image_dims {
-            TextureDimensions::Dim1d { width, array_layers } => 
-                ([width as _, 1, 1], array_layers),
-            TextureDimensions::Dim2d { width, height, array_layers} =>
-                ([width as _, height as _, 1], array_layers),
-            TextureDimensions::Dim3d { width, height, depth} =>
-                ([width as _, height as _, depth as _], 1),
-        };
-        let (to_dims, to_array_layers) = match to._vk_image_dims {
-            TextureDimensions::Dim1d { width, array_layers } => 
-                ([width as _, 1, 1], array_layers),
-            TextureDimensions::Dim2d { width, height, array_layers} =>
-                ([width as _, height as _, 1], array_layers),
-            TextureDimensions::Dim3d { width, height, depth} =>
-                ([width as _, height as _, depth as _], 1),
-        };
-        cbb.blit_image(
-            from._vk_image_access.clone(), [0,0,0], from_dims,
-            0, 0,
-            to._vk_image_access.clone(), [0,0,0], to_dims,
-            0,0, from_array_layers.min(to_array_layers),
-            TextureFilter::Nearest
-        ).unwrap();
-        if execute {
-            let cb = _cbb.unwrap().build().unwrap();
-            drop(cb.execute(queue.unwrap()).unwrap());
-        }
-    }
-
     pub fn load_data<P : AsRef<std::path::Path> + ToString>(&self, queue: Arc<Queue>, path: P) -> Result<(), String>
     {
         let extension = path.as_ref().extension();
         //let mut texture_builder = Texture::builder();
-        //texture_builder.name(path.to_string().as_str());
+        //texture_builder.name(path.to_owned().as_str());
         match extension {
             None => Err(String::from("Неизвестный формат изображения")),
             Some(os_str) => {
@@ -282,7 +252,7 @@ impl Texture
                 
                 match os_str.to_str() {
                     Some("dds") | Some("ktx") => {
-                        Err("load_data не поддерживает обновление сжатых текстур".to_string())
+                        Err("load_data не поддерживает обновление сжатых текстур".to_owned())
                     },
                     _ => {
                         let mut cbb = AutoCommandBufferBuilder::primary(
@@ -290,23 +260,9 @@ impl Texture
                             queue.family(),
                             CommandBufferUsage::OneTimeSubmit
                         ).unwrap();
-                        //let mut data = Vec::new();
-                        //buf_reader.read_to_end(&mut data).unwrap();
                         let data = image.as_raw().clone();
+                        cbb.update_data(self, data).unwrap();
                         
-                        let cpuab = CpuAccessibleBuffer::from_iter(
-                            self._vk_device.clone(), BufferUsage::transfer_source(), false, data
-                        ).unwrap();
-                        cbb.copy_buffer_to_image(cpuab, self._vk_image_access.clone()).unwrap();
-                        /*self._vk_image_view = ImageView::new(self._vk_image_access.clone(), ImageViewCreateInfo{
-                            format: Some(TexturePixelFormat::R8G8B8A8_SRGB),
-                            view_type: self._vk_image_view.view_type(),
-                            component_mapping: self._vk_image_view.component_mapping(),
-                            aspects: self._vk_image_view.aspects().clone(),
-                            array_layers: self._vk_image_view.array_layers(),
-                            mip_levels: self._vk_image_view.mip_levels(),
-                            ..Default::default()
-                        }).unwrap();*/
                         drop(cbb.build().unwrap().execute(queue).unwrap());
                         Ok(())
                     }
@@ -315,44 +271,7 @@ impl Texture
         }
     }
 
-    pub fn to_pixel_format(&self, queue: Arc<Queue>, pix_fmt: TexturePixelFormat) -> Texture
-    {
-        let tex = Texture::new_empty(self.name.as_str(), self._vk_image_dims, pix_fmt, self._vk_device.clone()).unwrap();
-        let mut cbb = AutoCommandBufferBuilder::primary(
-            self._vk_image_view.device().clone(),
-            queue.family(),
-            CommandBufferUsage::OneTimeSubmit
-        ).unwrap();
-        let (dims, array_layers) = match self._vk_image_dims {
-            TextureDimensions::Dim1d { width, array_layers } => {
-                ([width as i32, 1, 1], array_layers)
-            },
-            TextureDimensions::Dim2d { width, height, array_layers } => {
-                ([width as i32, height as i32, 1], array_layers)
-            },
-            TextureDimensions::Dim3d { width, height, depth } => {
-                ([width as i32, height as i32, depth as i32], 1)
-            }
-        };
-        cbb.blit_image(
-            self._vk_image_access.clone(),
-            [0, 0, 0],
-            dims,
-            0,
-            0,
-            tex._vk_image_access.clone(),
-            [0, 0, 0],
-            dims,
-            0,
-            0,
-            array_layers,
-            TextureFilter::Nearest
-        ).unwrap();
-        let future = cbb.build().unwrap().execute(queue.clone()).unwrap();
-        drop(future);
-        tex
-    }
-
+    /// Сохраняет текстуру в синхронном режиме (после возврата результата).
     pub fn save<P : AsRef<std::path::Path> + ToString>(&self, queue: Arc<Queue>, path: P)
     {
         //if self._pix_fmt.compression().is_some() || self._pix_fmt.block_extent() != [1,1,1] {
@@ -367,7 +286,13 @@ impl Texture
             4 => TexturePixelFormat::R8G8B8A8_SRGB,
             _ => panic!("Текстуры с {} компонентами не поддерживаются", subpix_count)
         };
-        let img = self.to_pixel_format(queue.clone(), pix_fmt);
+        let img = Texture::new_empty(
+            "convertion_texture",
+            self._vk_image_dims,
+            pix_fmt,
+            self._vk_device.clone()
+        ).unwrap();
+        //let img = self.to_pixel_format(queue.clone(), pix_fmt);
         let mut cbb = AutoCommandBufferBuilder::primary(
             self._vk_image_view.device().clone(),
             queue.family(),
@@ -381,8 +306,12 @@ impl Texture
             false
         ).unwrap() };
         
-        cbb.copy_image_to_buffer(img._vk_image_access.clone(), cpuab.clone()).unwrap();
+        cbb
+            .copy_texture(self, &img).unwrap()
+            .copy_image_to_buffer(img._vk_image_access.clone(), cpuab.clone()).unwrap();
+
         drop(cbb.build().unwrap().execute(queue).unwrap());
+        
         let buf = cpuab.read().unwrap().to_vec();
         match subpix_count {
             1 => {
@@ -425,7 +354,7 @@ impl Texture
         
         //TextureDimensions{width: img_dims[0], }
         Ok(Self{
-            name : "".to_string(),
+            name : "".to_owned(),
 
             _vk_image_dims: img_dims.into(),
             _vk_image_access: img.image(),
@@ -730,7 +659,7 @@ impl TextureBuilder
     /// Задаёт имя
     pub fn name(&mut self, name: &str) -> &mut Self
     {
-        self.name = name.to_string();
+        self.name = name.to_owned();
         self
     }
 
@@ -804,9 +733,11 @@ impl TextureBuilder
             input_attachment: false,
         };
         
-        let texture = AttachmentImage::with_usage(
+        let texture = AttachmentImage::multisampled_with_usage_with_layers(
             device.clone(),
             [dimensions.width(), dimensions.height()],
+            dimensions.array_layers(),
+            SampleCount::Sample1,
             pix_fmt.vk_format(),
             usage
         ).unwrap();
@@ -825,7 +756,7 @@ impl TextureBuilder
         let image_view = ImageView::new_default(texture.clone()).unwrap();
 
         Ok(Texture {
-            name: self.name.to_string(),
+            name: self.name.to_owned(),
             _vk_image_dims: dimensions,
             _vk_image_view: image_view.clone(),
             _vk_image_access: texture.clone(),
@@ -1205,5 +1136,54 @@ impl CompressedFormat for KTXHeader {
     {
         let size = self.pixel_format().block_size().unwrap();
         size as _
+    }
+}
+
+pub(crate) trait TextureCommandSet
+{
+    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, CopyBufferImageError>
+        where [T]: vulkano::buffer::BufferContents;
+    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, BlitImageError>;
+}
+
+impl <Cbbt>TextureCommandSet for AutoCommandBufferBuilder<Cbbt>
+{
+    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, CopyBufferImageError>
+        where [T]: vulkano::buffer::BufferContents
+    {
+        let cpuab = CpuAccessibleBuffer::from_iter(
+            texture._vk_device.clone(), BufferUsage::transfer_source(), false, data
+        ).unwrap();
+        
+        self.copy_buffer_to_image(cpuab, texture._vk_image_access.clone())
+    }
+    
+    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, BlitImageError>
+    {
+        let (dims, array_layers) = match from._vk_image_dims {
+            TextureDimensions::Dim1d { width, array_layers } => {
+                ([width as i32, 1, 1], array_layers)
+            },
+            TextureDimensions::Dim2d { width, height, array_layers } => {
+                ([width as i32, height as i32, 1], array_layers)
+            },
+            TextureDimensions::Dim3d { width, height, depth } => {
+                ([width as i32, height as i32, depth as i32], 1)
+            }
+        };
+        self.blit_image(
+            from._vk_image_access.clone(),
+            [0, 0, 0],
+            dims,
+            0,
+            0,
+            to._vk_image_access.clone(),
+            [0, 0, 0],
+            dims,
+            0,
+            0,
+            array_layers,
+            TextureFilter::Nearest
+        )
     }
 }

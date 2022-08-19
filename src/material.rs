@@ -136,7 +136,7 @@ impl MaterialBuilder
     pub fn start(name: &str, device : Arc<Device>) -> MaterialBuilder
     {
         let mut builder = MaterialBuilder {
-            name : name.to_string(),
+            name : name.to_owned(),
             texture_slots : HashMap::new(),
             numeric_slots : Vec::new(),
             vertex_base : Shader::builder(ShaderType::Vertex, device.clone()),
@@ -145,7 +145,7 @@ impl MaterialBuilder
             fragment_shadowmap : Shader::builder(ShaderType::Fragment, device.clone()),
             uniform_structure : String::new(),
             defines : String::new(),
-            pbr_code : DEFAULT_PBR.to_string()
+            pbr_code : DEFAULT_PBR.to_owned()
         };
 
         builder.vertex_base
@@ -206,9 +206,9 @@ impl MaterialBuilder
 
     /// Меняет код, описывающий повержность материала.
     /// Если нужен процедурный материал, то это то, что нужно
-    pub fn set_pbr_code<T: ToString>(&mut self, code: T) -> &mut Self
+    pub fn set_pbr_code(&mut self, code: &str) -> &mut Self
     {
-        self.pbr_code = code.to_string();
+        self.pbr_code = code.to_owned();
         self
     }
 
@@ -218,7 +218,7 @@ impl MaterialBuilder
         let ty = texture.ty();
         self.fragment_base.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
         self.fragment_shadowmap.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
-        self.texture_slots.insert(name.to_string(), texture.clone());
+        self.texture_slots.insert(name.to_owned(), texture.clone());
         self
     }
 
@@ -413,7 +413,7 @@ impl Material
         for (name, tex) in &material.texture_slots {
             uniform_buffer.uniform_sampler_by_name(tex, name).unwrap();
         }
-        while numeric_data.len()%(16/4) != 0 {
+        while numeric_data.len()%(64/4) != 0 {
             numeric_data.push(0.0);
         }
         uniform_buffer.uniform_structure(numeric_data, SHADER_MATERIAL_DATA_SET, 0);

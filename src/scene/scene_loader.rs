@@ -13,6 +13,7 @@ use crate::types::Mat4;
 use crate::components::{CameraComponent, MeshVisual, light::*};
 use crate::utils::read_struct;
 
+#[allow(dead_code)]
 struct MaterialStruct
 {
     diffuse_value: [f32; 3],
@@ -25,16 +26,17 @@ struct MaterialStruct
 }
 
 #[repr(packed)]
+#[allow(dead_code)]
 struct LightStruct
 {
-    color: [f32; 3],
     energy : f32,
+    color: [f32; 3],
     typenum : u8,
     shadow : bool,
     znear : f32,
     zfar : f32,
-    angle : f32,
     inner_angle : f32,
+    angle : f32,
 }
 
 fn read_string(reader: &mut std::fs::File) -> String
@@ -47,10 +49,7 @@ fn read_string(reader: &mut std::fs::File) -> String
             Err(_) => break
         }
     };
-
     let result = String::from_utf8_lossy(bytes.as_slice()).to_string();
-    //let r = result.as_str();
-    //println!("{}", r);
     return result;
 }
 
@@ -107,10 +106,10 @@ fn read_object(
     let _pbname = read_string(reader);
     //println!("pname: \"{}\", pbname: \"{}\"", _pname, _pbname);
     let obj_mutex = GameObject::new(name);
-    let mut obj = obj_mutex.take_mut();
+    let mut obj = obj_mutex.lock_write();
     let mut transform = read_struct::<[f32; 12], std::fs::File>(reader).unwrap().to_vec();
     transform.extend([0.0, 0.0, 0.0, 1.0]);
-    let mut transform = Mat4::from_vec(transform.to_vec()).transpose();
+    let transform = Mat4::from_vec(transform.to_vec()).transpose();
     let _hidden: bool = reader.read_u8().unwrap() != 0;
     let has_mesh: bool = reader.read_u8().unwrap() != 0;
     let has_camera: bool = reader.read_u8().unwrap() != 0;
@@ -118,7 +117,6 @@ fn read_object(
     let _has_skeleton: bool = reader.read_u8().unwrap() != 0;
     let _has_physics: bool = reader.read_u8().unwrap() != 0;
 
-    //println!("has_mesh {}, has_camera {}, has_light {}", has_mesh, has_camera, has_light);
     if has_mesh {
         let mesh_name = read_string(reader);
         let material_name = read_string(reader);
@@ -144,12 +142,13 @@ fn read_object(
         let resolution: u16 = if light_struct.shadow {512} else {0};
         let light = match light_struct.typenum {
             0 => Light::Point(PointLight::new(light_struct.energy, light_struct.color, resolution, device.clone())),
-            1 => Light::Sun(SunLight::new(light_struct.energy, light_struct.color, resolution, device.clone())),
+            1 => Light::Sun(SunLight::new(10.0, light_struct.energy, light_struct.color, resolution, device.clone())),
             2 => Light::Spot(SpotLight::new(
                 light_struct.energy,
                 light_struct.color,
                 light_struct.angle,
                 light_struct.inner_angle,
+                light_struct.znear,
                 light_struct.zfar,
                 resolution,
                 device.clone()
@@ -157,20 +156,21 @@ fn read_object(
             _ => panic!("Неподдерживаемый источник света")
         };
         let zfar = light_struct.zfar;
-        println!("Тип: свет ({}), zNear {}, zFar {}", light.ty(), 0.1, zfar);
+        let znear = light_struct.znear;
+        println!("Тип: свет ({}), zNear {}, zFar {}", light.ty(), znear, zfar);
         obj.add_component(light);
     };
     println!("Location {}, {}, {}", transform[12], transform[13], transform[14]);
     let obj_transform = obj.transform_mut();
     obj_transform.local = transform;
     obj_transform.global = transform;
-    obj_transform.global_for_render = transform;
-    obj_transform.global_for_render_prev = transform;
+    obj_transform.global = transform;
+    obj_transform.global_prev = transform;
     drop(obj);
     obj_mutex
 }
 
-pub fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano::device::Queue>) -> (Vec<GameObjectRef>, Option<GameObjectRef>)
+pub(super) fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano::device::Queue>) -> (Vec<GameObjectRef>, Option<GameObjectRef>)
 {
     let mut reader = std::fs::File::open(path).unwrap();
     let device = queue.device();
@@ -183,7 +183,7 @@ pub fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano::devic
     let materials: HashMap<String, MaterialRef> = (0..materials_count).map(
         |_| {
             let material = read_material(&mut reader, queue.clone(), &textures);
-            let name = material.take().name().clone();
+            let name = material.lock().name().clone();
             (name, material)
         }
     ).collect();
@@ -204,7 +204,7 @@ pub fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano::devic
     let objects_count : u32 = read_struct(&mut reader).unwrap();
     println!("Загрузка объектов ({})", objects_count);
     let objects: Vec<GameObjectRef> = (0..objects_count).map(|_| read_object(&mut reader, &materials, &meshes, device.clone())).collect();
-    let camera = match objects.iter().find(|obj| (*obj).take_mut().camera().is_some())
+    let camera = match objects.iter().find(|obj| (*obj).lock_write().camera().is_some())
     {
         Some(cam) => Some(cam.clone()),
         None => None

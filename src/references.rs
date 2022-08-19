@@ -19,8 +19,8 @@ pub trait MutexLockBox<T>
 {
     fn box_id(&self) -> i32;
     fn construct(obj: T) -> Self;
-    fn take(&self) -> MutexGuard<T>;
-    fn take_mut(&self) -> MutexGuard<T>;
+    fn lock(&self) -> MutexGuard<T>;
+    fn lock_write(&self) -> MutexGuard<T>;
 }
 
 impl <T>RwLockBox<T> for RwBox<T>
@@ -61,14 +61,14 @@ impl <T>MutexLockBox<T> for MutexBox<T>
         Arc::new(Mutex::new(obj))
     }
     
-    fn take(&self) -> MutexGuard<T>
+    fn lock(&self) -> MutexGuard<T>
     {
-        self.lock().unwrap()
+        Mutex::<T>::lock(self).unwrap()
     }
 
-    fn take_mut(&self) -> MutexGuard<T>
+    fn lock_write(&self) -> MutexGuard<T>
     {
-        self.lock().unwrap()
+        Mutex::<T>::lock(self).unwrap()
     }
 }
 /*

@@ -21,5 +21,4 @@ pub mod game_object;
 pub mod renderer;
 #[macro_use]
 pub mod components;
-pub mod scene_loader;
-//pub mod scene;
+pub mod scene;

@@ -4,6 +4,14 @@ extern crate vulkano;
 extern crate bytemuck;
 
 use dsge_vk::*;
+use dsge_vk::game_logic::AbstractEvent;
+use dsge_vk::game_logic::events::{*};
+use dsge_vk::scene::{SceneRef,Scene};
+
+use dsge_vk::types::FastProjection;
+use game_logic::motion_example::*;
+use game_logic::mouse_look::*;
+use nalgebra::Perspective3;
 
 trait Radian
 {
@@ -19,7 +27,6 @@ impl Radian for f32
 }
 
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::Version;
@@ -31,10 +38,8 @@ use winit::event_loop::{ControlFlow, EventLoop, EventLoopWindowTarget};
 use winit::window::{WindowBuilder, Fullscreen, Window};
 use winit::event::*;
 
-use game_object::*;
 use references::*;
 use renderer::Renderer;
-use scene_loader::read_scene;
 
 #[derive(Clone)]
 pub struct Mouse
@@ -138,10 +143,9 @@ impl Time
 
 /// Базовый пример приложения
 pub struct App {
-    surface: Arc<Surface<Window>>,
     renderer: Renderer,
+    scene: SceneRef,
     event_pump: Option<EventLoop<()>>,
-    root_objects: Vec<RcBox<GameObject>>,
     mouse: RcBox<Mouse>,
     time: Time,
 }
@@ -177,56 +181,44 @@ impl App {
             .with_inner_size(wsize)
             .build_vk_surface(&event_loop, vk_instance.clone())
             .unwrap();
-        //glfw::Window
         
         // Инициализация рендера
-        let mut renderer = Renderer::winit(vk_instance, surface.clone(), _vsync, true);
+        let mut renderer = Renderer::winit(vk_instance, surface.clone(), _vsync, false);
         //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
-        let (objects, camera) = read_scene("data/scenes/cubes_fps_test.scene", renderer.queue().clone());
-        let monkey = objects.iter().find(|obj| obj.take().name() == "monkey");
-        match monkey {
-            Some(monkey) => {
-                let motion = game_logic::motion_example::MotionExample::default();
-                monkey.take().add_component(motion);
-            },
-            None => ()
-        }
-        for obj in &objects
-        {
-            let components = obj.take_mut().get_all_components().clone();
-            for comp in components {
-                let mut _comp = comp.lock().unwrap();
-                _comp.on_start(obj.clone());
-            }
-        }
-        /*let ml = game_logic::mouse_look::MouseLook::default();
-        camera.clone().unwrap().take().add_component(ml);*/
-        renderer.set_camera(camera.unwrap());
+        let (scene, camera) = Scene::from_file("data/scenes/Scene.scene", renderer.queue().clone());
+        let objects = scene.lock().root_objects();
+        let monkey = objects.iter().find(|obj| obj.lock().name()=="monkey");
+        let light = objects.iter().find(|obj| obj.lock().name()=="light");
+        
+        if let Some(monkey) = monkey {
+            println!("name: {}", monkey.lock().name());
+            let motion = Spinning::default();
+            monkey.lock().add_component(motion);
+
+        };
+        //let camera = objects.iter().find(|obj| obj.lock().name()=="Camera");
+        if let Some(camera) = camera.clone() {
+            println!("name: {}", camera.lock().name());
+            let motion = MouseLook::new(0.0025);
+            camera.lock().add_component(motion);
+
+        };
+
+        if let Some(light) = light.clone() {
+            println!("name: {}", light.lock().name());
+            let spinning = Spinning::default();
+            light.lock().add_component(spinning);
+
+        };
+        renderer.set_camera(camera.unwrap().clone());
         renderer.update_swapchain();
         Ok(Self {
-            surface: surface.clone(),
+            scene: scene,
             renderer: renderer,
             event_pump: Some(event_loop),
-            root_objects: objects,
             mouse: RcBox::construct(Mouse::new_with_surface(surface)),
             time: Time::default()
         })
-    }
-
-    fn objects_behaviour_iteration(slf: &Self, obj: GameObjectRef)
-    {
-        let mut components = obj.take().get_all_components().clone();
-        let children = obj.take().children().clone();
-        for component in components
-        {
-            let mut cmp = component.lock().unwrap();
-            cmp.on_loop(obj.clone());
-        }
-        
-        for child in children
-        {
-            Self::objects_behaviour_iteration(slf, child.clone());
-        }
     }
 
     fn event_loop(mut self) /*-> Arc<EventLoop<()>>*/
@@ -237,18 +229,13 @@ impl App {
         //surface.window().set_cursor_grab(true);
         let event_pump;
         (event_pump, self.event_pump) = (self.event_pump, None);
+        
+        let event_processor = self.scene.lock().event_processor().clone();
+
         let app = RcBox::construct(self);
         let app2 = app.clone();
-        let object_events_func = move || {
-            let root_objects = app2.take().root_objects.clone();
-            let camera = app2.take().renderer.camera().clone().unwrap();
-            for obj in root_objects
-            {
-                Self::objects_behaviour_iteration(&*app2.take(), obj);
-            }
-            Self::objects_behaviour_iteration(&*app2.take(), camera);
 
-        };
+        let mut fps_timer = time::Timer::new();
         event_pump.unwrap().run(move |event: Event<()>, _wtar: &EventLoopWindowTarget<()>, control_flow: &mut ControlFlow| {
             //*control_flow = ControlFlow::Wait;
             let a = app.clone();
@@ -257,26 +244,63 @@ impl App {
                     *control_flow = ControlFlow::Exit;
                 }
                 Event::WindowEvent {event: WindowEvent::Resized(_), ..} => {
-                    a.take().renderer.update_swapchain()
+                    a.lock().renderer.update_swapchain()
                 }
                 Event::WindowEvent {event: WindowEvent::CursorMoved{position, ..}, ..} => {
-                    a.take().mouse.take().cursor_position = [position.x as _, position.y as _]
+                    a.lock().mouse.lock().cursor_position = [position.x as _, position.y as _]
                 }
                 Event::DeviceEvent { event, .. } => {
                     match event {
-                        DeviceEvent::Key(input) => {
-                            match input {
-                                KeyboardInput { virtual_keycode: Some(VirtualKeyCode::F12), state: ElementState::Pressed, .. } => {
-                                    take_screenshot = true;
+                        DeviceEvent::Key(KeyboardInput { virtual_keycode: Some(VirtualKeyCode::F12), state: ElementState::Pressed, .. }) => {
+                            take_screenshot = true;
+                        },
+                        DeviceEvent::Key(KeyboardInput { virtual_keycode: Some(virtual_keycode), state, ..} ) => {
+                            let state = match state {
+                                ElementState::Pressed => 1,
+                                ElementState::Released => -1,
+                            };
+                            event_processor.send_event(AbstractEvent::Keyboard(KeyboardEvent{ key_id: virtual_keycode, state }));
+                        },
+                        DeviceEvent::MouseWheel { delta } => {
+                            let (mwdx, mwdy): (i32, i32) = match delta {
+                                MouseScrollDelta::LineDelta(x, y) => {
+                                    (x as _, y as _)
                                 },
-                                _ => ()
-                            }
+                                MouseScrollDelta::PixelDelta(PhysicalPosition { x, y }) => {
+                                    (x as _, y as _)
+                                },
+                            };
+                            let mwdx = match mwdx {
+                                0 => 0,
+                                (1..) => 1,
+                                _ => -1
+                            };
+                            let mwdy = match mwdy {
+                                0 => 0,
+                                (1..) => 1,
+                                _ => -1
+                            };
+                            event_processor.send_event(AbstractEvent::MouseClick(MouseClickEvent{ wheel: (mwdx, mwdy), ..Default::default()}));
                         },
                         DeviceEvent::Button { button, state } => {
+                            let dstate = match state {
+                                ElementState::Pressed => {
+                                    1
+                                },
+                                ElementState::Released => {
+                                    -1
+                                },
+                            };
+                            event_processor.send_event(AbstractEvent::MouseClick(MouseClickEvent{ 
+                                lmb: if button==1 {dstate} else {0},
+                                mmb: if button==2 {dstate} else {0},
+                                rmb: if button==3 {dstate} else {0},
+                                ..Default::default()
+                            }));
                             match (button, state) {
                                 (1, ElementState::Pressed) => {
-                                    let slf = a.take();
-                                    let mut mouse = slf.mouse.take();
+                                    let slf = a.lock();
+                                    let mut mouse = slf.mouse.lock();
                                     grab_coords = mouse.cursor_position;
                                     match mouse.set_cursor_grab(true) {
                                         Ok(_)  => {
@@ -286,8 +310,8 @@ impl App {
                                     };
                                 },
                                 (1, ElementState::Released) => {
-                                    let slf = a.take();
-                                    let mut mouse = slf.mouse.take();
+                                    let slf = a.lock();
+                                    let mut mouse = slf.mouse.lock();
                                     if mouse.cursor_grab() {
                                         match mouse.set_cursor_grab(false) {
                                             Ok(_)  => {
@@ -302,45 +326,56 @@ impl App {
                             }
                         },
                         DeviceEvent::MouseMotion { delta: (x, y) } => {
-                            a.take().mouse.take().mouse_delta = [x as _, y as _];
+                            a.lock().mouse.lock().mouse_delta = [x as _, y as _];
+                            event_processor.send_event(AbstractEvent::MouseMove(MouseMoveEvent{dx: x as _, dy: y as _}));
                         }
                         _ => ()
                     }
-                }
-                ,
+                },
                 Event::RedrawEventsCleared => {
-                    //println!("{}", frames);
                     let tu = timer.next_frame();
-                    let mut slf = a.take();
+                    let mut slf = a.lock();
                     slf.time.up_time = tu.uptime as _;
                     slf.time.frame_time = tu.delta as _;
                     slf.renderer.update_timer(tu);
                     slf.renderer.begin_geametry_pass();
                     drop(slf);
-                    object_events_func();
-                    let objects = a.take().root_objects.clone();
+                    let scene = app2.lock().scene.clone();
+                    scene.lock().step();
+                    let objects = a.lock().scene.lock().root_objects();
                     for obj in objects
                     {
-                        obj.take().next_frame();
-                        a.take().renderer.draw(obj);
+                        obj.lock().next_frame();
+                        a.lock().renderer.draw(obj.clone());
                     }
+                    let event_processor = a.lock().scene.lock().event_processor().clone();
+                    let game_logic_thread = std::thread::spawn(move || {
+                        event_processor.execute();
+                    });
                     if take_screenshot {
-                        let mut slf = a.take();
+                        let mut slf = a.lock();
                         slf.renderer.wait();
                         take_screenshot = false;
-                        let img = slf.renderer.postprocessor().get_output("swapchain_out".to_string()).unwrap().clone();
+                        let img = slf.renderer.postprocessor().get_output("accumulator_out".to_owned()).unwrap().clone();
                         img.save(slf.renderer.queue().clone(), "./screenshot.png");
                     }
-                    a.take().renderer.execute(std::collections::HashMap::new());
-                    a.take().mouse.take().mouse_delta = [0, 0];
+                    a.lock().renderer.execute(std::collections::HashMap::new());
+                    game_logic_thread.join().unwrap();
+                    a.lock().mouse.lock().mouse_delta = [0, 0];
+
+                    let fps_time = fps_timer.next_frame();
+                    if fps_time.uptime > 1.0 {
+                        println!("fps {}", fps_time.frame);
+                        fps_timer = time::Timer::new();
+                    };
                 },
                 _ => { }
             }
-        })
+        });
     }
 }
 
 fn main() {
-    let app = App::new("DSGE VK", 640, 360, false, false).unwrap();
+    let app = App::new("DSGE VK", 960, 720, false, false).unwrap();
     app.event_loop();
 }

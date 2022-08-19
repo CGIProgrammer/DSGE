@@ -1,5 +1,5 @@
 
-use crate::mesh::{Mesh, MeshRef, MeshBinder};
+use crate::mesh::{Mesh, MeshRef, MeshCommandSet};
 use crate::references::*;
 use crate::framebuffer::*;
 use crate::shader::*;
@@ -22,6 +22,7 @@ mod accumulator_test;
 mod rolling_hills;
 mod copy;
 mod fsr;
+mod lighting_pass;
 
 /// Выход ноды постобработки.
 /// Задаётся:
@@ -205,9 +206,21 @@ impl RenderStageBuilder
         self
     }
 
-    pub fn input(&mut self, name: &str) -> &mut Self
+    pub fn uniform_named_type<T: ShaderStructUniform>(&mut self, name: &str, _type: &str) -> &mut Self
     {
-        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, TextureView::Dim2d).unwrap();
+        self._fragment_shader.uniform_structure_autoincrement(name, _type, T::structure().as_str(), 0).unwrap();
+        self
+    }
+
+    pub fn uniform_structure(&mut self, name: &str, _type: &str, structure: &str) -> &mut Self
+    {
+        self._fragment_shader.uniform_structure_autoincrement(name, _type, structure, 0).unwrap();
+        self
+    }
+
+    pub fn input(&mut self, name: &str, dims: TextureView) -> &mut Self
+    {
+        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, dims).unwrap();
         //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureView::Dim2d).unwrap();
         self._inputs += 1;
         self
@@ -415,6 +428,13 @@ impl PostprocessingPass
             Some(stage) => drop(stage._uniform_buffer.uniform_by_name(data, name)),
             None => ()
         };
+    }
+
+    pub fn image_array_to_all(&mut self, name: &String, texures: &[&Texture], first_index: usize)
+    {
+        for (_, rs) in &mut self._stages {
+            drop(rs._uniform_buffer.uniform_sampler_array_by_name(texures, first_index, name));
+        }
     }
 
     pub fn image_to_all(&mut self, name: &String, data: &Texture)
@@ -665,7 +685,7 @@ impl PostprocessingPass
             let image_inputs = self._image_inputs.clone();
             let stage = self.stage_by_id_mut(id);
             
-            let mut program = stage_shader.take_mut();
+            let mut program = stage_shader.lock_write();
             let render_pass = stage._render_pass.clone();
 
             program.use_subpass(render_pass.clone().first_subpass());
@@ -676,14 +696,14 @@ impl PostprocessingPass
                     height: resolution.height() as f32,
                     ..Default::default()
                 }, &format!("resolution")));
-            drop(stage._uniform_buffer.uniform_by_name(timer, &"timer".to_string()));
+            drop(stage._uniform_buffer.uniform_by_name(timer, &"timer".to_owned()));
 
             for (RenderStageInputSocket{render_stage_id, input}, tex) in &image_inputs {
                 if render_stage_id == &id {
                     //drop(program.uniform_sampler_by_name(tex, input));
                     match stage._uniform_buffer.uniform_sampler_by_name(tex, &input) {
-                        Ok(_) => ()/*println!("Принимается входящее изображение {} на вход", input)*/,
-                        Err(_) => ()/*println!("Для входящего изображения {} не назначена uniform-переменная", input)*/,
+                        Ok(_) => (), //println!("Принимается входящее изображение {} на вход", input),
+                        Err(_) => (), //println!("Для входящего изображения {} не назначена uniform-переменная", input),
                     };
                 }
             }
@@ -697,11 +717,11 @@ impl PostprocessingPass
                 if from_stage.is_output_acc(link._from.output) {
                     //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
                     let acc = from_stage.get_accumulator_buffer(link._from.output).clone();
-                    self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&acc, &link._to.input).unwrap();
+                    drop(self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&acc, &link._to.input));
                 } else {
                     //println!("Принимается входящий буфер {} на вход", link._to.input);
                     let free_tex = self._busy_buffers.get(link).unwrap().clone();
-                    self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&free_tex, &link._to.input).unwrap();
+                    drop(self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&free_tex, &link._to.input));
                 }
             }
             if link._from.render_stage_id == id {
@@ -727,13 +747,13 @@ impl PostprocessingPass
             }
             fb.view_port(resolution.width() as _, resolution.height() as _);
 
-            let prog = &mut *stage_shader.take();
+            let prog = &mut *stage_shader.lock();
             command_buffer_builder
                 .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
                 .bind_shader_program(prog).unwrap()
         }
             .bind_shader_uniforms(&mut self.stage_by_id_mut(id)._uniform_buffer, false).unwrap()
-            .bind_mesh(&*self._screen_plane.take()).unwrap()
+            .bind_mesh(&*self._screen_plane.lock()).unwrap()
             .end_render_pass().unwrap();
             
         for output in 0..16 {
@@ -795,6 +815,7 @@ struct RenderResolution
 {
     pub width : f32,
     pub height : f32,
+    dummy : [f32; 14]
 }
 
 impl ShaderStructUniform for RenderResolution
@@ -803,12 +824,12 @@ impl ShaderStructUniform for RenderResolution
     {
         "{
             vec2 dimensions;
-        }".to_string()
+        }".to_owned()
     }
 
     fn glsl_type_name() -> String
     {
-        "Resolution".to_string()
+        "Resolution".to_owned()
     }
 
     fn texture(&self) -> Option<&Texture>

@@ -3,11 +3,24 @@ use crate::texture::Texture;
 use bytemuck::{Zeroable, Pod};
 use std::time::{SystemTime, /*Duration*/};
 
+#[derive(Clone)]
 pub struct Timer
 {
     sys_time: SystemTime,
     last_time: SystemTime,
     frame: u32
+}
+
+impl Default for Timer
+{
+    fn default() -> Self
+    {
+        Self {
+            sys_time: SystemTime::now(),
+            last_time: SystemTime::now(),
+            frame: 0
+        }
+    }
 }
 
 #[repr(C)]
@@ -17,7 +30,7 @@ pub struct UniformTime
     pub uptime: f32,
     pub delta: f32,
     pub frame: u32,
-    _dummy: u32
+    _dummy: [u32; 13]
 }
 
 impl ShaderStructUniform for UniformTime
@@ -28,7 +41,7 @@ impl ShaderStructUniform for UniformTime
             float uptime;
             float delta;
             uint frame;
-        }".to_string()
+        }".to_owned()
     }
 
     fn glsl_type_name() -> String

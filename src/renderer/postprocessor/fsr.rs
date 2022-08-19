@@ -1,6 +1,5 @@
 use super::PostprocessingPass;
-use crate::texture::TexturePixelFormat;
-use crate::texture::TextureFilter;
+use crate::texture::{TexturePixelFormat, TextureFilter, TextureView};
 use super::{StageIndex, StageOutputIndex, StageInputIndex};
 
 #[allow(dead_code)]
@@ -11,8 +10,8 @@ impl PostprocessingPass
     {
         let easu = self.make_easu_stage(width, height).unwrap();
         let rcas = self.make_rcas_stage(width, height).unwrap();
-        self.link_stages(easu, 0, rcas, "EASU_pass".to_string());
-        ((easu, "albedo".to_string()), (rcas, 0))
+        self.link_stages(easu, 0, rcas, "EASU_pass".to_owned());
+        ((easu, "albedo".to_owned()), (rcas, 0))
     }
     
     fn make_easu_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String>
@@ -20,7 +19,7 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("albedo")
+            .input("albedo", TextureView::Dim2d)
             .output("EASU_pass", TexturePixelFormat::R8G8B8A8_UNORM, TextureFilter::Nearest, false)
             .code("
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
@@ -219,7 +218,7 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("EASU_pass")
+            .input("EASU_pass", TextureView::Dim2d)
             .output("fsr_out", TexturePixelFormat::B8G8R8A8_SRGB, TextureFilter::Nearest, false)
             .code("
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
