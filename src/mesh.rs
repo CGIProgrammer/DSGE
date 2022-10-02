@@ -1,4 +1,6 @@
 use nalgebra::{Vector2, Vector3};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hasher, Hash};
 use std::vec::Vec;
 use std::fs::{File};
 use super::utils::{read_struct};
@@ -8,11 +10,13 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use vulkano::buffer::{BufferUsage, TypedBufferAccess, ImmutableBuffer};
 use vulkano::device::{Device, Queue};
-use vulkano::command_buffer::{AutoCommandBufferBuilder};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, CheckDescriptorSetsValidityError, DrawIndirectCommand, DrawIndexedIndirectCommand};
 
 use super::teapot::{INDICES, NORMALS, VERTICES};
+use crate::game_object::GOTransformUniform;
 pub use crate::references::*;
-pub type MeshRef = RcBox<Mesh>;
+pub type MeshRef = Arc<dyn MeshView>;
+//pub type MeshRef = Arc<Mesh>;
 
 /// Структура вершины
 #[derive(Copy, Clone, Default)]
@@ -54,6 +58,24 @@ pub struct VkVertex {
     pub v_grp: [u32; 3],
 }
 
+impl Hash for VkVertex
+{
+    fn hash<H: Hasher>(&self, h: &mut H)
+    {
+        for i in 0..3 {
+            h.write_i128((self.v_pos[i]*1000.0) as _);
+            h.write_i128((self.v_nor[i]*1000.0) as _);
+            h.write_i128((self.v_bin[i]*1000.0) as _);
+            h.write_i128((self.v_tan[i]*1000.0) as _);
+            h.write_u32(self.v_grp[i] as _);
+            if i < 2 {
+                h.write_i128((self.v_tex1[i]*1000.0) as _);
+                h.write_i128((self.v_tex2[i]*1000.0) as _);
+            }
+        }
+    }
+}
+
 #[allow(dead_code)]
 impl VkVertex {
     pub fn to_vertex(&self) -> Vertex
@@ -77,7 +99,13 @@ vulkano::impl_vertex!(VkVertex,
     v_tan,
     v_tex1,
     v_tex2,
-    v_grp);
+    v_grp
+);
+
+vulkano::impl_vertex!(GOTransformUniform,
+    transform,
+    transform_prev
+);
 
 /// Псевдоним для вершинного буфера
 pub type VertexBufferRef = Arc<ImmutableBuffer<[VkVertex]>>;
@@ -115,6 +143,15 @@ pub struct MeshBuilder
     _vertices: Vec<VkVertex>,
     _vertex_buffer: Option<VertexBufferRef>,
     _index_buffer : Option<IndexBufferRef>
+}
+
+impl Hash for MeshBuilder
+{
+    fn hash<H: Hasher>(&self, hasher: &mut H)
+    {
+        self._vertices.hash(hasher);
+        self._indices.hash(hasher);
+    }
 }
 
 #[allow(dead_code)]
@@ -215,7 +252,7 @@ impl MeshBuilder
         self
     }
 
-    pub fn push_from_file(&mut self, fname: &str) -> Result<&mut Self, String>
+    pub fn push_from_file(&mut self, fname: &str) -> Result<(u32, u32), String>
     {
         let path = Path::new(fname);
         let mut file = match File::open(path)
@@ -227,14 +264,16 @@ impl MeshBuilder
         let deformed = read_struct::<bool, File>(&mut file).unwrap();
         let uv_count = (if read_struct::<bool, File>(&mut file).unwrap() {2} else {1}) as u8;
         let ind_count = read_struct::<u32, File>(&mut file).unwrap() as usize;
-        let self_ind_count = self._indices.len();
+        let base_index = self._indices.len();
+        let base_vertex = self._vertices.len();;
         for _ in 0..ind_count {
             let index = read_struct::<u32, File>(&mut file).unwrap();
-            self._indices.push(self_ind_count as u32 + index as u32);
+            self._indices.push(base_vertex as u32 + index as u32);
         }
         let vert_count = read_struct::<u32, File>(&mut file).unwrap() as usize;
         let mut bbox_begin = Vector3::<f32>::new(f32::INFINITY, f32::INFINITY, f32::INFINITY);
         let mut bbox_end = Vector3::<f32>::new(-f32::INFINITY, -f32::INFINITY, -f32::INFINITY);
+
         for _i in 0..(vert_count as usize) {
             //print!("\r                             \r{}", _i);
             let vertex = Vertex{
@@ -262,7 +301,7 @@ impl MeshBuilder
             if vertex.v_pos.z > bbox_end.z { bbox_end.z = vertex.v_pos.z; }
             self._vertices.push(vertex.to_vk_vertex());
         };
-        Ok(self)
+        Ok((base_index as _, ind_count as _))
     }
 
     /// Добавить чайник из Юты
@@ -321,22 +360,24 @@ impl MeshBuilder
         self.push_triangle_coords(
             &Vec3::new(-1.0, -1.0, 0.0),
             &Vec3::new(-1.0,  1.0, 0.0),
-            &Vec3::new( 1.0,  1.0, 0.0)
-        )
+            &Vec3::new( 1.0,  1.0, 0.0))
             .push_triangle_coords(
-                &Vec3::new(-1.0, -1.0, 0.0),
-                &Vec3::new( 1.0,  1.0, 0.0),
-                &Vec3::new( 1.0, -1.0, 0.0)
-            )
+            &Vec3::new(-1.0, -1.0, 0.0),
+            &Vec3::new( 1.0,  1.0, 0.0),
+            &Vec3::new( 1.0, -1.0, 0.0))
     }
 
     pub fn build_mutex(self, queue: Arc<Queue>) -> Result<MeshRef, String>
     {
-        Ok(MeshRef::construct(self.build(queue)?))
+        Ok(Arc::new(self.build(queue)?))
     }
 
     pub fn build(mut self, queue: Arc<Queue>) -> Result<Mesh, String>
     {
+        let mut hasher = DefaultHasher::default();
+        self._vertices.hash(&mut hasher);
+        self._indices.hash(&mut hasher);
+        let hash = hasher.finish();
         self._vertex_buffer = Some(ImmutableBuffer::from_iter(self._vertices.clone(), BufferUsage::vertex_buffer(), queue.clone()).unwrap().0);
         self._index_buffer  = Some(ImmutableBuffer::from_iter(self._indices.clone(), BufferUsage::index_buffer(), queue.clone()).unwrap().0);
 
@@ -346,9 +387,11 @@ impl MeshBuilder
             deformed: false,
             vertices: Vec::new(),
             indices: Vec::new(),
-            vertex_buffer : self._vertex_buffer.clone(),
-            index_buffer : self._index_buffer.clone(),
+            vertex_buffer : self._vertex_buffer.as_ref().unwrap().clone(),
+            index_buffer : self._index_buffer.as_ref().unwrap().clone(),
+            index_count: self._indices.len() as _,
             uv_count: 1,
+            hash: hash,
             bbox: BoundingBox::default()
         };
         Ok(mesh)
@@ -359,11 +402,13 @@ impl MeshBuilder
 #[derive(Clone)]
 pub struct Mesh {
     name: String,
+    hash: u64,
     indices: Vec<u32>,
     vertices: Vec<VkVertex>,
     device: Arc<Device>,
-    vertex_buffer: Option<VertexBufferRef>,
-    index_buffer : Option<IndexBufferRef>,
+    vertex_buffer: VertexBufferRef,
+    index_buffer : IndexBufferRef,
+    index_count : usize,
     pub bbox: BoundingBox,
     deformed: bool,
     uv_count: u8
@@ -372,6 +417,11 @@ pub struct Mesh {
 #[allow(dead_code)]
 impl Mesh {
     
+    pub fn name(&self) -> &String
+    {
+        &self.name
+    }
+
     pub fn builder(name: &str) -> MeshBuilder
     {
         let mut res = MeshBuilder::default();
@@ -438,36 +488,174 @@ impl Mesh {
         cube.build_mutex(queue)
     }
 
-    pub fn vertex_buffer(&self) -> Option<VertexBufferRef>
+    pub fn hash(&self) -> u64 {
+        self.hash
+    }
+}
+
+pub struct SubMesh
+{
+    name: String,
+    mesh: Arc<Mesh>,
+    base_index: u32,
+    index_count: u32,
+    index_offset: u32,
+}
+
+impl SubMesh { 
+    pub fn from_mesh(name : String, mesh : &Mesh, base : u32, count : u32, offset: u32) -> Arc<dyn MeshView> {
+        Arc::new(SubMesh {
+            name : name,
+            mesh : Arc::new(mesh.clone()),
+            base_index : base,
+            index_count : count,
+            index_offset : offset
+        })
+    }
+}
+
+unsafe impl Send for SubMesh {}
+unsafe impl Sync for SubMesh {}
+
+pub trait MeshView: Send + Sync + 'static
+{
+    fn name(&self) -> &String;
+    fn indirect_command(&self, first_instance: u32, instance_count: u32) -> DrawIndexedIndirectCommand;
+    fn vertex_buffer(&self) -> &VertexBufferRef;
+    fn index_buffer(&self) -> &IndexBufferRef;
+    fn base_index(&self) -> u32;
+    fn vertex_offset(&self) -> u32;
+    fn buffer_id(&self) -> u32;
+    fn as_buffer(&self) -> Option<&Mesh>;
+    #[inline(always)]
+    fn ref_id(&self) -> i32
     {
-        self.vertex_buffer.clone()
+        self as *const Self as *const i32 as _
+    }
+}
+
+impl MeshView for Mesh
+{
+    fn as_buffer(&self) -> Option<&Mesh> {
+        Some(self)
     }
 
-    pub fn index_buffer(&self) -> Option<IndexBufferRef>
+    #[inline(always)]
+    fn name(&self) -> &String {
+        &self.name
+    }
+
+    #[inline(always)]
+    fn indirect_command(&self, first_instance: u32, instance_count: u32) -> DrawIndexedIndirectCommand {
+        DrawIndexedIndirectCommand {
+            index_count : self.index_buffer.len() as _,
+            instance_count : instance_count,
+            first_index : 0,
+            vertex_offset : 0,
+            first_instance : first_instance
+        }
+    }
+
+    #[inline(always)]
+    fn vertex_buffer(&self) -> &VertexBufferRef
     {
-        self.index_buffer.clone()
+        &self.vertex_buffer
+    }
+
+    #[inline(always)]
+    fn index_buffer(&self) -> &IndexBufferRef
+    {
+        &self.index_buffer
+    }
+
+    #[inline(always)]
+    fn base_index(&self) -> u32 {
+        0
+    }
+
+    #[inline(always)]
+    fn vertex_offset(&self) -> u32 {
+        0
+    }
+
+    #[inline(always)]
+    fn buffer_id(&self) -> u32 {
+        let ib = self.index_buffer.as_ref() as *const _ as u32;
+        let vb = self.vertex_buffer.as_ref() as *const _ as u32;
+        vb ^ ib
+        
+    }
+}
+
+impl MeshView for SubMesh
+{
+    fn as_buffer(&self) -> Option<&Mesh> {
+        None
+    }
+
+    #[inline(always)]
+    fn name(&self) -> &String {
+        &self.name
+    }
+
+    #[inline(always)]
+    fn indirect_command(&self, first_instance: u32, instance_count: u32) -> DrawIndexedIndirectCommand {
+        DrawIndexedIndirectCommand {
+            index_count : self.index_count,
+            instance_count : instance_count,
+            first_index : self.base_index,
+            vertex_offset : self.index_offset,
+            first_instance : first_instance
+        }
+    }
+
+    #[inline(always)]
+    fn vertex_buffer(&self) -> &VertexBufferRef
+    {
+        &self.mesh.vertex_buffer
+    }
+
+    #[inline(always)]
+    fn index_buffer(&self) -> &IndexBufferRef
+    {
+        &self.mesh.index_buffer
+    }
+
+    #[inline(always)]
+    fn base_index(&self) -> u32 {
+        self.base_index
+    }
+
+    #[inline(always)]
+    fn vertex_offset(&self) -> u32 {
+        self.index_offset
+    }
+
+    #[inline(always)]
+    fn buffer_id(&self) -> u32 {
+        self.mesh.buffer_id()
     }
 }
 
 pub trait MeshCommandSet
 {
-    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
-    fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>;
+    fn bind_mesh(&mut self, mesh: &dyn MeshView) -> Result<&mut Self, String>;
+    fn draw_mesh(&mut self, mesh: &dyn MeshView) -> Result<&mut Self, String>;
 }
 
-use vulkano::command_buffer::validity::*;
 use vulkano::command_buffer::DrawIndexedError;
 
 impl <T>MeshCommandSet for AutoCommandBufferBuilder<T>
 {
-    fn bind_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+    #[inline(always)]
+    fn bind_mesh(&mut self, mesh: &dyn MeshView) -> Result<&mut Self, String>
     {
-        let vbo = mesh.vertex_buffer().unwrap();
-        let ibo = mesh.index_buffer().unwrap();
+        let vbo = mesh.vertex_buffer();
+        let ibo = mesh.index_buffer();
         let result = self
             .bind_vertex_buffers(0, vbo.clone())
             .bind_index_buffer(ibo.clone())
-            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+            .draw_indexed(ibo.len() as u32, 1, 0, 0, 0, true);
 
         match result {
             Ok(slf) => Ok(slf),
@@ -492,11 +680,11 @@ impl <T>MeshCommandSet for AutoCommandBufferBuilder<T>
         }
     }
 
-    fn draw_mesh(&mut self, mesh: &Mesh) -> Result<&mut Self, String>
+    #[inline(always)]
+    fn draw_mesh(&mut self, mesh: &dyn MeshView) -> Result<&mut Self, String>
     {
         //let vbo = mesh.vertex_buffer().unwrap();
-        let ibo = mesh.index_buffer().unwrap();
-        let result = self.draw_indexed(ibo.len() as u32, 1, 0, 0, 0);
+        let result = self.draw_indexed(mesh.index_buffer().len() as u32, 1, 0, 0, 0, false);
 
         match result {
             Ok(slf) => Ok(slf),

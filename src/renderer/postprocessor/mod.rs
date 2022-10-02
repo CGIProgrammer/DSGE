@@ -127,7 +127,14 @@ struct RenderStage
 
 impl RenderStage
 {
+    #[inline(always)]
+    fn uniform_buffer(&mut self) -> &mut ShaderProgramUniformBuffer
+    {
+        &mut self._uniform_buffer
+    }
+
     /// Возвращает true, если нода помечена как выполненная
+    #[inline]
     fn executed(&self) -> bool
     {
         self._executed
@@ -218,9 +225,9 @@ impl RenderStageBuilder
         self
     }
 
-    pub fn input(&mut self, name: &str, dims: TextureView) -> &mut Self
+    pub fn input(&mut self, name: &str, dims: TextureView, shadowmap: bool) -> &mut Self
     {
-        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, dims).unwrap();
+        self._fragment_shader.uniform_sampler(name, 1, self._inputs as _, dims, shadowmap).unwrap();
         //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureView::Dim2d).unwrap();
         self._inputs += 1;
         self
@@ -321,7 +328,7 @@ impl RenderStageBuilder
         //println!("{}", program.take().fragment_shader_source());
         let render_pass = RenderPass::new(device.clone(), render_pass_desc).unwrap();
         let mut program = program.build(device.clone())?;
-        program.use_subpass(render_pass.clone().first_subpass());
+        program.use_subpass(render_pass.clone().first_subpass(), None);
         let uniform_buffer = program.new_uniform_buffer();
         
         let stage = RenderStage {
@@ -417,7 +424,7 @@ impl PostprocessingPass
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         for (_, rs) in &mut self._stages {
-            drop(rs._uniform_buffer.uniform_by_name(data, name));
+            drop(rs.uniform_buffer().uniform_by_name(data, name));
         }
     }
 
@@ -425,7 +432,7 @@ impl PostprocessingPass
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
         match self._stages.get_mut(&stage_id) {
-            Some(stage) => drop(stage._uniform_buffer.uniform_by_name(data, name)),
+            Some(stage) => drop(stage.uniform_buffer().uniform_by_name(data, name)),
             None => ()
         };
     }
@@ -433,21 +440,21 @@ impl PostprocessingPass
     pub fn image_array_to_all(&mut self, name: &String, texures: &[&Texture], first_index: usize)
     {
         for (_, rs) in &mut self._stages {
-            drop(rs._uniform_buffer.uniform_sampler_array_by_name(texures, first_index, name));
+            drop(rs.uniform_buffer().uniform_sampler_array_by_name(texures, first_index, name));
         }
     }
 
     pub fn image_to_all(&mut self, name: &String, data: &Texture)
     {
         for (_, rs) in &mut self._stages {
-            drop(rs._uniform_buffer.uniform_sampler_by_name(data, name));
+            drop(rs.uniform_buffer().uniform_sampler_by_name(data, name));
         }
     }
 
     pub fn image_to_stage(&mut self, stage_id: StageIndex, name: &String, data: &Texture)
     {
         match self._stages.get_mut(&stage_id) {
-            Some(stage) => drop(stage._uniform_buffer.uniform_sampler_by_name(data, name)),
+            Some(stage) => {stage.uniform_buffer().uniform_sampler_by_name(data, name).unwrap();},
             None => ()
         };
     }
@@ -486,9 +493,9 @@ impl PostprocessingPass
         let mut builder = Shader::builder(ShaderType::Fragment, device);
         builder
             .define("iResolution", "resolution.dimensions")
-            .input("position", AttribType::FVec2)
-            .input("fragCoordWp", AttribType::FVec2)
-            .input("fragCoord", AttribType::FVec2)
+            .input("position", AttribType::FVec2, FragmentInterpolation::NoPerspective)
+            .input("fragCoord", AttribType::FVec2, FragmentInterpolation::NoPerspective)
+            .input("pixelCoord", AttribType::FVec2, FragmentInterpolation::NoPerspective)
             .uniform_autoincrement::<RenderResolution>("resolution", 0).unwrap()
             .uniform_autoincrement::<UniformTime>("timer", 0).unwrap();
 
@@ -688,20 +695,20 @@ impl PostprocessingPass
             let mut program = stage_shader.lock_write();
             let render_pass = stage._render_pass.clone();
 
-            program.use_subpass(render_pass.clone().first_subpass());
+            program.use_subpass(render_pass.clone().first_subpass(), None);
             
-            drop(stage._uniform_buffer.uniform_by_name(
+            drop(stage.uniform_buffer().uniform_by_name(
                 RenderResolution{
                     width:  resolution.width() as f32,
                     height: resolution.height() as f32,
                     ..Default::default()
                 }, &format!("resolution")));
-            drop(stage._uniform_buffer.uniform_by_name(timer, &"timer".to_owned()));
+            drop(stage.uniform_buffer().uniform_by_name(timer, &"timer".to_owned()));
 
             for (RenderStageInputSocket{render_stage_id, input}, tex) in &image_inputs {
                 if render_stage_id == &id {
                     //drop(program.uniform_sampler_by_name(tex, input));
-                    match stage._uniform_buffer.uniform_sampler_by_name(tex, &input) {
+                    match stage.uniform_buffer().uniform_sampler_by_name(tex, &input) {
                         Ok(_) => (), //println!("Принимается входящее изображение {} на вход", input),
                         Err(_) => (), //println!("Для входящего изображения {} не назначена uniform-переменная", input),
                     };
@@ -717,11 +724,11 @@ impl PostprocessingPass
                 if from_stage.is_output_acc(link._from.output) {
                     //println!("Принимается входящий накопительный буфер {} на вход", link._to.input);
                     let acc = from_stage.get_accumulator_buffer(link._from.output).clone();
-                    drop(self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&acc, &link._to.input));
+                    drop(self.stage_by_id_mut(id).uniform_buffer().uniform_sampler_by_name(&acc, &link._to.input));
                 } else {
                     //println!("Принимается входящий буфер {} на вход", link._to.input);
                     let free_tex = self._busy_buffers.get(link).unwrap().clone();
-                    drop(self.stage_by_id_mut(id)._uniform_buffer.uniform_sampler_by_name(&free_tex, &link._to.input));
+                    drop(self.stage_by_id_mut(id).uniform_buffer().uniform_sampler_by_name(&free_tex, &link._to.input));
                 }
             }
             if link._from.render_stage_id == id {
@@ -734,7 +741,6 @@ impl PostprocessingPass
             }
         }
         {
-            let _ub = &self.stage_by_id(id)._uniform_buffer;
             let fb = &mut self._framebuffer;
             fb.reset_attachments();
             for ind in 0..render_targets.len() {
@@ -752,8 +758,8 @@ impl PostprocessingPass
                 .bind_framebuffer(&mut *fb, render_pass.clone(), false).unwrap()
                 .bind_shader_program(prog).unwrap()
         }
-            .bind_shader_uniforms(&mut self.stage_by_id_mut(id)._uniform_buffer, false).unwrap()
-            .bind_mesh(&*self._screen_plane.lock()).unwrap()
+            .bind_shader_uniforms(self.stage_by_id_mut(id).uniform_buffer(), false).unwrap()
+            .bind_mesh(&*self._screen_plane).unwrap()
             .end_render_pass().unwrap();
             
         for output in 0..16 {
@@ -794,13 +800,13 @@ impl PostprocessingPass
             .uniform_autoincrement::<RenderResolution>("resolution", 0).unwrap()
             .uniform_autoincrement::<UniformTime>("timer", 0).unwrap()
             .output("position", AttribType::FVec2)
-            .output("fragCoordWp", AttribType::FVec2)
             .output("fragCoord", AttribType::FVec2)
+            .output("pixelCoord", AttribType::FVec2)
             .code("void main()
 {
     position = v_pos.xy;
-    fragCoordWp = v_pos.xy*0.5+0.5;
-    fragCoord = fragCoordWp*iResolution;
+    fragCoord = v_pos.xy * vec2(0.5, -0.5) + 0.5;
+    pixelCoord = vec2(fragCoord * resolution.dimensions);
     gl_Position = vec4(v_pos.xy, 0.0, 1.0);
 }");
         shader.build()?;

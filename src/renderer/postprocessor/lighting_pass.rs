@@ -12,12 +12,12 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("gAlbedo", TextureView::Dim2d)
-            .input("gNormals", TextureView::Dim2d)
-            .input("gMasks", TextureView::Dim2d)
-            .input("gDepth", TextureView::Dim2d)
-            .input("shadowmaps[16]", TextureView::Dim2d)
-            .input("lights_data", TextureView::Dim2d)
+            .input("gAlbedo", TextureView::Dim2d, false)
+            .input("gNormals", TextureView::Dim2d, false)
+            .input("gMasks", TextureView::Dim2d, false)
+            .input("gDepth", TextureView::Dim2d, false)
+            .input("shadowmaps[16]", TextureView::Dim2d, false)
+            .input("lights_data", TextureView::Dim2d, false)
             .uniform_named_type::<ProjectionUniformData>("camera", "MainCamera")
             .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
             .code(SpotLight::glsl_code())

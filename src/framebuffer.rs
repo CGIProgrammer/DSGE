@@ -125,7 +125,7 @@ impl Framebuffer
     }
 }
 
-use vulkano::command_buffer::{AutoCommandBufferBuilder, SubpassContents, PrimaryAutoCommandBuffer};
+use vulkano::command_buffer::{AutoCommandBufferBuilder, SubpassContents, PrimaryAutoCommandBuffer, RenderPassBeginInfo};
 use vulkano::render_pass::{RenderPass};
 
 pub trait FramebufferBinder
@@ -144,16 +144,17 @@ impl FramebufferBinder for AutoCommandBufferBuilder<PrimaryAutoCommandBuffer>
         }
         for Attachment {storage:_, default_color} in &fb._color_attachments
         {
-            clear_values.push(*default_color);
+            clear_values.push(Some(*default_color));
         }
         
         if fb._depth_attachment.is_some() {
-            clear_values.push(fb._depth_attachment.as_ref().unwrap().default_color);
+            clear_values.push(Some(fb._depth_attachment.as_ref().unwrap().default_color));
         }
+        let mut rpbi = RenderPassBeginInfo::framebuffer(fb._vk_fb.as_ref().unwrap().clone());
+        rpbi.clear_values = clear_values;
         self.begin_render_pass(
-            fb._vk_fb.as_ref().unwrap().clone(),
+            rpbi,
             if secondary { SubpassContents::SecondaryCommandBuffers } else { SubpassContents::Inline },
-            clear_values
         ).unwrap();
         
         fb._viewport.dimensions = [fb._dimensions[0] as f32, fb._dimensions[1] as f32];

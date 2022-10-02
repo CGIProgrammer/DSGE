@@ -49,3 +49,8 @@ pub(crate) trait RefId
         self as *const Self as *const usize as usize
     }
 }
+
+pub fn box_id(obj: &dyn std::any::Any) -> usize
+{
+    obj as *const dyn std::any::Any as *const usize as usize
+}

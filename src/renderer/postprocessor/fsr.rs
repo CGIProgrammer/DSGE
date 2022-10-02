@@ -19,7 +19,7 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("albedo", TextureView::Dim2d)
+            .input("albedo", TextureView::Dim2d, false)
             .output("EASU_pass", TexturePixelFormat::R8G8B8A8_UNORM, TextureFilter::Nearest, false)
             .code("
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
@@ -218,7 +218,7 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("EASU_pass", TextureView::Dim2d)
+            .input("EASU_pass", TextureView::Dim2d, false)
             .output("fsr_out", TexturePixelFormat::B8G8R8A8_SRGB, TextureFilter::Nearest, false)
             .code("
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.

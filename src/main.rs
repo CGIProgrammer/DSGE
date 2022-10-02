@@ -7,11 +7,10 @@ use dsge_vk::*;
 use dsge_vk::game_logic::AbstractEvent;
 use dsge_vk::game_logic::events::{*};
 use dsge_vk::scene::{SceneRef,Scene};
+use dsge_vk::texture::Texture;
 
-use dsge_vk::types::FastProjection;
 use game_logic::motion_example::*;
 use game_logic::mouse_look::*;
-use nalgebra::Perspective3;
 
 trait Radian
 {
@@ -26,7 +25,9 @@ impl Radian for f32
     }
 }
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use vulkano::instance::{Instance, InstanceCreateInfo};
 use vulkano::Version;
@@ -183,7 +184,7 @@ impl App {
             .unwrap();
         
         // Инициализация рендера
-        let mut renderer = Renderer::winit(vk_instance, surface.clone(), _vsync, false);
+        let mut renderer = Renderer::winit(vk_instance, surface.clone(), _vsync);
         //let mut renderer = renderer::Renderer::offscreen(vk_instance, [width, height]);
         let (scene, camera) = Scene::from_file("data/scenes/Scene.scene", renderer.queue().clone());
         let objects = scene.lock().root_objects();
@@ -223,6 +224,15 @@ impl App {
 
     fn event_loop(mut self) /*-> Arc<EventLoop<()>>*/
     {
+        let screen_font = Texture::from_file(self.renderer.queue().clone(), "data/texture/shadertoy_font.png").unwrap();
+        let blue_noise = Texture::from_file(self.renderer.queue().clone(), "data/blue_noise_1024.png").unwrap();
+        let static_input = [
+                ("blue_noise".to_owned(), blue_noise),
+                ("font".to_owned(), screen_font),
+            ]
+            .into_iter()
+            .collect::<HashMap<_,_>>();
+
         let mut timer = time::Timer::new();
         let mut take_screenshot = false;
         let mut grab_coords = [0i32, 0i32];
@@ -333,6 +343,7 @@ impl App {
                     }
                 },
                 Event::RedrawEventsCleared => {
+                    let begin_render_time = SystemTime::now();
                     let tu = timer.next_frame();
                     let mut slf = a.lock();
                     slf.time.up_time = tu.uptime as _;
@@ -343,11 +354,23 @@ impl App {
                     let scene = app2.lock().scene.clone();
                     scene.lock().step();
                     let objects = a.lock().scene.lock().root_objects();
+                    let begin_render_time = begin_render_time.elapsed().unwrap().as_secs_f64() * 1000.0;
+                    let mut apply_transform_time = 0.0f64;
+                    let mut push_to_draw_list_time = 0.0f64;
                     for obj in objects
                     {
+                        let t1 = SystemTime::now();
                         obj.lock().next_frame();
+                        let t1 = t1.elapsed().unwrap().as_secs_f64();
+                        let t2 = SystemTime::now();
                         a.lock().renderer.draw(obj.clone());
+                        let t2 = t2.elapsed().unwrap().as_secs_f64();
+                        apply_transform_time += t1;
+                        push_to_draw_list_time += t2
                     }
+                    apply_transform_time *= 1000.0;
+                    push_to_draw_list_time *= 1000.0;
+                    let rendering_time = SystemTime::now();
                     let event_processor = a.lock().scene.lock().event_processor().clone();
                     let game_logic_thread = std::thread::spawn(move || {
                         event_processor.execute();
@@ -359,13 +382,18 @@ impl App {
                         let img = slf.renderer.postprocessor().get_output("accumulator_out".to_owned()).unwrap().clone();
                         img.save(slf.renderer.queue().clone(), "./screenshot.png");
                     }
-                    a.lock().renderer.execute(std::collections::HashMap::new());
+                    a.lock().renderer.execute(&static_input);
+                    let rendering_time = rendering_time.elapsed().unwrap().as_secs_f64() * 1000.0;
                     game_logic_thread.join().unwrap();
                     a.lock().mouse.lock().mouse_delta = [0, 0];
 
                     let fps_time = fps_timer.next_frame();
                     if fps_time.uptime > 1.0 {
                         println!("fps {}", fps_time.frame);
+                        println!("begin_render_time {begin_render_time:.3} ms");
+                        println!("apply_transform_time {apply_transform_time:.3} ms");
+                        println!("push_to_draw_list_time {push_to_draw_list_time:.3} ms");
+                        println!("rendering_time {rendering_time:.3} ms");
                         fps_timer = time::Timer::new();
                     };
                 },
@@ -376,6 +404,6 @@ impl App {
 }
 
 fn main() {
-    let app = App::new("DSGE VK", 960, 720, false, false).unwrap();
+    let app = App::new("DSGE VK", 960, 720, false, true).unwrap();
     app.event_loop();
 }

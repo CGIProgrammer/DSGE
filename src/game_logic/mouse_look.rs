@@ -116,7 +116,7 @@ impl MouseLook
                 key_id : VirtualKeyCode::LShift | VirtualKeyCode::RShift,
                 state
             }) => {
-                self.accel = match state {1 => 2.0, _ => 1.0};
+                self.accel = match state {1 => 20.0, _ => 1.0};
             },
             _ => { }
         }

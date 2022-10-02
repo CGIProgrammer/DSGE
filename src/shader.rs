@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 pub use super::glenums::{ShaderType, GLSLVersion, GLSLType, AttribType};
 use std::sync::Arc;
 use vulkano::pipeline::graphics::rasterization::{RasterizationState, CullMode};
@@ -11,7 +12,8 @@ use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::buffer::{CpuBufferPool, CpuAccessibleBuffer, BufferUsage};
 use vulkano::pipeline::PipelineBindPoint;
 
-use crate::references::*;
+use crate::mesh::VkVertex;
+use crate::{references::*, VULKANO_BUFFER_ATOMIC_SIZE};
 use crate::texture::{TextureView, TextureViewGlsl, Texture};
 use crate::vulkano::pipeline::Pipeline as VkPipeline;
 use vulkano::device::Device;
@@ -43,6 +45,31 @@ struct ShaderSourceUniform
     binding: usize,
 }
 
+#[derive(Copy, Clone)]
+#[allow(dead_code)]
+pub enum FragmentInterpolation {
+    Flat,
+    Smooth,
+    NoPerspective
+}
+
+impl Default for FragmentInterpolation {
+    fn default() -> Self {
+        FragmentInterpolation::Smooth
+    }
+}
+
+impl Display for FragmentInterpolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        let qualifier = match self {
+            Self::Flat => "flat",
+            Self::Smooth => "smooth",
+            Self::NoPerspective => "nooerspective",
+        };
+        f.write_str(qualifier)
+    }
+}
+
 /// Структура для построения GLSL шейдера и компиляции его в SPIR-V
 pub struct Shader
 {
@@ -52,9 +79,12 @@ pub struct Shader
     module       : Option<Arc<vulkano::shader::ShaderModule>>,
     source       : String,
     inputs       : HashMap<String, AttribType>,
+    input_locations : u32,
     outputs      : HashMap<String, AttribType>,
+    output_locations : u32,
     uniforms     : HashMap<String, ShaderSourceUniform>,
-    push_constants : Option<(String, ShaderSourceUniform)>
+    push_constants : Option<(String, ShaderSourceUniform)>,
+    spirv_hash         : u64
 }
 
 impl std::fmt::Debug for Shader
@@ -121,9 +151,12 @@ impl Shader
             device   : device,
             source   : source,
             inputs   : HashMap::new(),
+            input_locations : 0,
             outputs  : HashMap::new(),
+            output_locations : 0,
             uniforms : HashMap::new(),
-            push_constants : None
+            push_constants : None,
+            spirv_hash     : 0
         }
     }
 
@@ -131,13 +164,20 @@ impl Shader
     pub fn default_vertex_attributes(&mut self) -> &mut Self
     {
         self
-            .input("v_pos", AttribType::FVec3)
-            .input("v_nor", AttribType::FVec3)
-            .input("v_bin", AttribType::FVec3)
-            .input("v_tan", AttribType::FVec3)
-            .input("v_tex1", AttribType::FVec2)
-            .input("v_tex2", AttribType::FVec2)
-            .input("v_grp", AttribType::UVec3)
+            .input("v_pos", AttribType::FVec3, FragmentInterpolation::default())
+            .input("v_nor", AttribType::FVec3, FragmentInterpolation::default())
+            .input("v_bin", AttribType::FVec3, FragmentInterpolation::default())
+            .input("v_tan", AttribType::FVec3, FragmentInterpolation::default())
+            .input("v_tex1", AttribType::FVec2, FragmentInterpolation::default())
+            .input("v_tex2", AttribType::FVec2, FragmentInterpolation::default())
+            .input("v_grp", AttribType::UVec3, FragmentInterpolation::default())
+    }
+
+    pub fn instance_attributes(&mut self) -> &mut Self
+    {
+        self
+            .input("transform", AttribType::FMat4, FragmentInterpolation::default())
+            .input("transform_prev", AttribType::FMat4, FragmentInterpolation::default())
     }
 
     fn last_set_index(&self, set: usize) -> usize
@@ -247,7 +287,7 @@ impl Shader
         self.uniform_structure(name, _type, structure, set, binding)
     }
 
-    pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureView) -> Result<&mut Self, String>
+    pub fn uniform_sampler(&mut self, name: &str, set: usize, binding: usize, dims: TextureView, shadowmap: bool) -> Result<&mut Self, String>
     {
         let name = name.to_owned();
         if self.uniforms.contains_key(&name) {
@@ -261,15 +301,19 @@ impl Shader
             set: set,
             binding: binding
         };
-        self.source += format!("layout (set = {}, binding = {}) uniform {} {};\n", set, binding, utype, name).as_str();
+        if shadowmap {
+            self.source += format!("layout (set = {set}, binding = {binding}) uniform {utype}Shadow {name};\n").as_str();
+        } else {
+            self.source += format!("layout (set = {set}, binding = {binding}) uniform {utype} {name};\n").as_str();
+        }
         self.uniforms.insert(name, uniform_source);
         Ok(self)
     }
 
-    pub fn uniform_sampler_autoincrement(&mut self, name: &str, set: usize, dims: TextureView) -> Result<&mut Self, String>
+    pub fn uniform_sampler_autoincrement(&mut self, name: &str, set: usize, dims: TextureView, shadowmap: bool) -> Result<&mut Self, String>
     {
         let binding = self.last_set_index(set);
-        self.uniform_sampler(name, set, binding, dims)
+        self.uniform_sampler(name, set, binding, dims, shadowmap)
     }
 
     /// Объявляет выход шейдера
@@ -277,7 +321,10 @@ impl Shader
     {
         let layout_location = 
             if self.glsl_version.have_explicit_attri_location() {
-                format!("layout (location = {}) ", self.outputs.len()).to_owned()
+                let disp = (type_.get_cells_count() as f32 / 4.0).ceil() as u32;
+                let line = format!("layout (location = {}) ", self.output_locations).to_owned();
+                self.output_locations += disp;
+                line
             } else {
                 String::new()
             };
@@ -287,16 +334,27 @@ impl Shader
     }
 
     /// Объявляет вход шейдера
-    pub fn input(&mut self, name: &str, type_: AttribType) -> &mut Self
+    pub fn input(&mut self, name: &str, type_: AttribType, interpolation: FragmentInterpolation) -> &mut Self
     {
+        let glsl_type = type_.get_glsl_name();
         let layout_location = 
             if self.glsl_version.have_explicit_attri_location() {
-                format!("layout (location = {}) ", self.inputs.len()).to_owned()
+                let disp = (type_.get_cells_count() as f32 / 4.0).ceil() as u32;
+                let line = format!("layout (location = {})", self.input_locations).to_owned();
+                self.input_locations += disp;
+                line
             } else {
                 String::new()
             };
         self.inputs.insert(name.to_owned(), type_);
-        self.source += format!("{}in {} {};\n", layout_location, type_.get_glsl_name(), name).as_str();
+        match (type_.is_int(), self.sh_type) {
+            (true, ShaderType::Fragment) => {
+                self.source += format!("{layout_location} {interpolation} in {glsl_type} {name};\n").as_str();
+            },
+            _ => {
+                self.source += format!("{layout_location} in {glsl_type} {name};\n").as_str();
+            }
+        }
         self
     }
 
@@ -314,18 +372,23 @@ impl Shader
         self.code(format!("#define {} ({})", name, expr).as_str())
     }
 
-    pub fn hash(&self) -> u64
+    pub fn source_hash(&self) -> u64
     {
         let mut hasher = DefaultHasher::default();
         self.source.hash(&mut hasher);
         hasher.finish()
     }
 
+    pub fn spirv_hash(&self) -> u64
+    {
+        self.spirv_hash
+    }
+
     /// Строит шейдер.
     /// Здесь GLSL код компилируется в SPIR-V.
     pub fn build(&mut self) -> Result<&Self, String>
     {
-        let hash = self.hash();
+        let hash = self.source_hash();
         let fname = format!("./shader_cache/{:X}.spv", hash);
         let cache_path = Path::new("./shader_cache/");
         let spv_path = Path::new(fname.as_str());
@@ -417,6 +480,9 @@ impl Shader
                 },
                 None => ()
             };
+            let mut hasher = DefaultHasher::new();
+            spv.hash(&mut hasher);
+            self.spirv_hash = hasher.finish();
             return Ok(self);
         };
 
@@ -449,7 +515,6 @@ pub struct ShaderProgramBuilder
 #[allow(dead_code)]
 impl ShaderProgramBuilder
 {
-
     fn check_uniforms_compatibility<T>(uniforms_s1: &HashMap<String, T>, uniforms_s2: &HashMap<String, T>) -> bool
     where T : Eq + PartialEq
     {
@@ -483,7 +548,7 @@ impl ShaderProgramBuilder
             return Err(format!("Фрагментный шейдер использует те же имена uniform-переменных с другими типами."));
         }
 
-        self.hash ^= shader.hash();
+        self.hash ^= shader.spirv_hash();
         self.fragment_shader_source = shader.source.clone();
         self.fragment_shader = shader.module.clone();
         self.fragment_outputs = shader.outputs.clone();
@@ -524,7 +589,7 @@ impl ShaderProgramBuilder
             return Err(format!("Вершинный шейдер использует существующие имена uniform-переменных с разными типами."));
         }
 
-        self.hash ^= shader.hash();
+        self.hash ^= shader.spirv_hash();
         self.vertex_shader_source = shader.source.clone();
         self.vertex_shader = shader.module.clone();
         for (name, location) in &uniforms_locations {
@@ -575,8 +640,8 @@ impl ShaderProgramBuilder
         if !type_compat {
             return Err(format!("Шейдеры тесселяции использует одни и те же имена uniform-переменных с разными типами."));
         }
-        self.hash ^= eval.hash();
-        self.hash ^= control.hash();
+        self.hash ^= eval.spirv_hash();
+        self.hash ^= control.spirv_hash();
 
         self.tess_controll_source = control.source.clone();
         self.tess_eval_source = eval.source.clone();
@@ -695,23 +760,27 @@ impl ShaderProgramUniformBuffer
 {
     /// Собирает дескрипторы наборов uniform-переменных (`PersistentDescriptorSet`).
     /// Полезно для формирования неизменяемого списка текстур материала
+    #[inline(always)]
     pub fn build_uniform_sets(&mut self, sets: &[usize])
     {
         let layouts = self.pipeline.layout().unwrap().set_layouts();
         for set_num in sets {
-            let set_desc = self.write_set_descriptors.remove(set_num).unwrap();
-            let pers_decc_set = PersistentDescriptorSet::new(layouts.get(*set_num).unwrap().clone(), set_desc).unwrap();
-            self.uniforms_sets.insert(*set_num, pers_decc_set);
+            if let Some(set_desc) = self.write_set_descriptors.remove(set_num) {
+                let pers_decc_set = PersistentDescriptorSet::new(layouts.get(*set_num).unwrap().clone(), set_desc).unwrap();
+                self.uniforms_sets.insert(*set_num, pers_decc_set);
+            }
         }
     }
 
     /// Проверяет инициализирован ли набор uniform-переменных
+    #[inline(always)]
     pub fn is_set_initialized(&self, set_num: usize) -> bool
     {
         self.uniforms_sets.contains_key(&set_num)
     }
 
     /// Очищает заданный набор uniform-переменных
+    #[inline(always)]
     pub fn clear_uniform_set(&mut self, set_num: usize)
     {
         //self.uniform_set_builders.remove(&set_num);
@@ -719,6 +788,7 @@ impl ShaderProgramUniformBuffer
     }
 
     /// Передаёт в шейдер массив данных неопределённой структуры
+    #[inline(always)]
     pub fn uniform_structure<I>(&mut self, obj: I, set_num: usize, binding_num: usize)
         where I: IntoIterator<Item = f32>,
         I::IntoIter: ExactSizeIterator
@@ -740,14 +810,19 @@ impl ShaderProgramUniformBuffer
     
     /// Передаёт uniform-переменную в шейдер
     /// Может передавать как `TextureRef`, так и структуры, для которых определён `trait ShaderStructUniform`
+    #[inline(always)]
     pub fn uniform<T>(&mut self, obj: T, set_num: usize, binding_num: usize)
         where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + Clone + 'static
     {
         let s = [obj];
-        let sas : &[f32] = bytemuck::cast_slice(&s);
-        self.uniform_structure(sas.to_vec(), set_num, binding_num);
+        let vector : &[f32] = bytemuck::cast_slice(&s);
+        let alignment_float_range = vector.len()..((vector.len()+(VULKANO_BUFFER_ATOMIC_SIZE-1))/VULKANO_BUFFER_ATOMIC_SIZE*VULKANO_BUFFER_ATOMIC_SIZE);
+        let alignment_float_range = alignment_float_range.map(|_| 0.0f32).collect::<Vec<_>>();
+        let vector = [vector, alignment_float_range.as_slice()].concat();
+        self.uniform_structure(vector, set_num, binding_num);
     }
 
+    #[inline(always)]
     pub fn uniform_sampler(&mut self, texture: &Texture, set_num: usize, binding_num: usize)
     {
         let wds = WriteDescriptorSet::image_view_sampler(binding_num as u32, texture.image_view().clone(), texture.sampler().clone());
@@ -764,6 +839,7 @@ impl ShaderProgramUniformBuffer
         };
     }
 
+    #[inline(always)]
     pub fn uniform_sampler_array(&mut self, textures: &[&Texture], first_index: usize, set_num: usize, binding_num: usize)
     {
         let _textures = textures.iter().map(|texture| (texture.image_view().clone(), texture.sampler().clone())).collect::<Vec<_>>();
@@ -785,6 +861,7 @@ impl ShaderProgramUniformBuffer
         };
     }
 
+    #[inline(always)]
     pub fn uniform_by_name<T>(&mut self, obj: T, name: &String) -> Result<(), String>
     where T: ShaderStructUniform + std::marker::Send + std::marker::Sync + Pod + 'static
     {
@@ -798,6 +875,7 @@ impl ShaderProgramUniformBuffer
         Ok(())
     }
 
+    #[inline(always)]
     pub fn uniform_sampler_by_name(&mut self, texture: &Texture, name: &String) -> Result<(usize, usize), String>
     {
         
@@ -814,6 +892,7 @@ impl ShaderProgramUniformBuffer
         Ok((set_num, binding_num))
     }
 
+    #[inline(always)]
     pub fn uniform_sampler_array_by_name(&mut self, textures: &[&Texture], first_index: usize, name: &String) -> Result<(usize, usize), String>
     {
         let (set_num, binding_num) = *match self.uniforms_locations.get(name)
@@ -978,7 +1057,7 @@ impl ShaderProgram
 
     /// Перестраивает `Pipeline` для использования с заданным `Subpass`'ом.
     /// Возвращает true, если переданный subpass отличается от использованного в прошлый раз
-    pub fn use_subpass(&mut self, subpass : Subpass) -> (PipelineType, bool)
+    pub fn use_subpass(&mut self, subpass : Subpass, vbd: Option<BuffersDefinition>) -> (PipelineType, bool)
     {
         let render_pass_id = subpass.render_pass().as_ref() as *const RenderPass as u32;
         let subpass_full_id = (render_pass_id, subpass.index());
@@ -989,11 +1068,14 @@ impl ShaderProgram
         println!("Исользуется новый subpass {:?}", subpass_full_id);
         self.subpass_id = subpass_full_id;
         /*self.uniforms_sets.clear();*/
+        let vbd = match vbd {
+            Some(vbd) => vbd,
+            None => BuffersDefinition::new().vertex::<VkVertex>()
+        };
         let depth_test = subpass.has_depth();
         let mut pipeline = vulkano::pipeline::GraphicsPipeline::start()
-            .vertex_input_state(BuffersDefinition::new().vertex::<super::mesh::VkVertex>());
-        
-        pipeline = pipeline.rasterization_state(RasterizationState{cull_mode: vulkano::pipeline::StateMode::Fixed(self.cull_faces), ..Default::default()});
+            .vertex_input_state(vbd)
+            .rasterization_state(RasterizationState{cull_mode: vulkano::pipeline::StateMode::Fixed(self.cull_faces), ..Default::default()});
         
         if self.vertex_shader.is_some() {
             pipeline = pipeline.vertex_shader(self.vertex_shader.as_ref().unwrap().entry_point("main").unwrap(), ());
@@ -1037,11 +1119,12 @@ pub trait ShaderProgramBinder
     /// Присоединение uniform-переменных к `AutoCommandBufferBuilder`'у
     fn bind_shader_uniforms(&mut self, uniform_buffer: &mut ShaderProgramUniformBuffer, only_dynamic: bool) -> Result<&mut Self, String>;
 
-    fn bind_uniform_constant<T>(&mut self, shader: &mut ShaderProgram, data: T) -> Result<&mut Self, String>;
+    fn bind_uniform_constant<T>(&mut self, shader: &ShaderProgram, data: T) -> Result<&mut Self, String>;
 }
 
 impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
 {
+    #[inline(always)]
     fn bind_shader_program(&mut self, shader: &ShaderProgram) -> Result<&mut Self, String>
     {
         match shader.pipeline() {
@@ -1051,13 +1134,15 @@ impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
         }
     }
 
-    fn bind_uniform_constant<T>(&mut self, shader: &mut ShaderProgram, data: T) -> Result<&mut Self, String>
+    #[inline(always)]
+    fn bind_uniform_constant<T>(&mut self, shader: &ShaderProgram, data: T) -> Result<&mut Self, String>
     {
         let pipeline_layout = shader.pipeline.layout().unwrap();
         self.push_constants(pipeline_layout.clone(), 0, data);
         Ok(self)
     }
-
+    
+    #[inline(always)]
     fn bind_shader_uniforms(&mut self, uniform_buffer: &mut ShaderProgramUniformBuffer, only_dynamic: bool) -> Result<&mut Self, String>
     {
         let pipeline_layout = uniform_buffer.pipeline.layout().unwrap();
@@ -1088,6 +1173,10 @@ impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
                 desc_sets.push((*set_num, desc_set.clone()));
             }
         }
+        if desc_sets.len() == 0 {
+            return Ok(self);
+        }
+
         desc_sets.sort_by(|(set_num_a, _), (set_num_b, _)| {
             if set_num_a < set_num_b {
                 return std::cmp::Ordering::Less;
@@ -1099,9 +1188,6 @@ impl <BufferType>ShaderProgramBinder for AutoCommandBufferBuilder<BufferType>
                 }
             }
         });
-        if desc_sets.len() == 0 {
-            return Ok(self);
-        }
         //println!("desc_sets {}", desc_sets.len());
         let first_set_num = desc_sets.first().unwrap().0;
         let desc_sets = desc_sets.iter().map(|elem| {elem.1.clone()}).collect::<Vec<_>>();
