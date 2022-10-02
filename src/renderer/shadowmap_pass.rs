@@ -13,6 +13,8 @@ use crate::mesh::RcBox;
 use crate::texture::TexturePixelFormat;
 use crate::framebuffer::{FramebufferBinder, Framebuffer};
 
+use super::geometry_pass::{DrawList, build_geometry_pass};
+
 pub struct ShadowMapPass
 {
     render_pass: Arc<RenderPass>,
@@ -61,10 +63,18 @@ impl ShadowMapPass
         &self,
         shadow_map: &mut Framebuffer,
         light_projection_data: ProjectionUniformData,
-        draw_list: Vec<(GOTransformUniform, RcBox<dyn AbstractVisual>)>
+        draw_list: &DrawList
     ) -> PrimaryAutoCommandBuffer
     {
-        let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
+        return build_geometry_pass(
+            shadow_map,
+            light_projection_data,
+            draw_list,
+            crate::material::MaterialShaderType::BaseShadowmap,
+            self.render_pass.clone().first_subpass(),
+            self.queue.clone()
+        );
+        /*let mut command_buffer_builder = AutoCommandBufferBuilder::primary(
             self.device.clone(),
             self.queue.family(),
             CommandBufferUsage::OneTimeSubmit,
@@ -75,24 +85,38 @@ impl ShadowMapPass
         let mut last_mesh = -1;
         let mut last_material = -1;
         let subpass = self.render_pass.clone().first_subpass();
-        for (transform, visual_component) in draw_list
+        let (mut shader_program, mut uniform_buffer) = draw_list[0].1.material().unwrap().lock().unwrap().base_shadowmap_shader(subpass.clone());
+        let mut repeated_objects = Vec::with_capacity(draw_list.len());
+        for (i, (transform, visual_component)) in draw_list.iter().enumerate()
         {
-            let mut component = visual_component.lock().unwrap();
-            let (mesh_id, material_id) = (component.mesh_id(), component.material_id());
-            component.on_shadowmap_pass(
-                transform,
-                light_projection_data,
-                subpass.clone(),
-                &mut command_buffer_builder,
-                mesh_id != last_mesh,
-                material_id != last_material,
-            ).unwrap();
+            let (mesh_id, material_id) = (visual_component.mesh_id(), visual_component.material_id());
+            let new_mesh = last_mesh!=mesh_id;
+            let new_material = last_material!=material_id;
+            let new_unique_object = i==0 || new_mesh || new_material;
+            let last_in_group = i==draw_list.len()-1 || draw_list[i+1].1.mesh_id()!=mesh_id || draw_list[i+1].1.material_id()!=material_id;
+            if new_unique_object {
+                (shader_program, uniform_buffer) = visual_component.material().unwrap().lock().unwrap().base_shadowmap_shader(subpass.clone());
+                uniform_buffer.uniform(light_projection_data.clone(), crate::material::SHADER_CAMERA_SET, 0);
+                repeated_objects.clear();
+            }
+            repeated_objects.push(transform.clone());
+            if last_in_group {
+                visual_component.on_geometry_pass(
+                    &repeated_objects,
+                    &light_projection_data,
+                    &shader_program,
+                    &mut uniform_buffer,
+                    &mut command_buffer_builder,
+                    new_mesh,
+                    new_material,
+                ).unwrap();
+            }
             (last_mesh, last_material) = (mesh_id, material_id);
         }
         
         command_buffer_builder
             .end_render_pass().unwrap();
         
-        command_buffer_builder.build().unwrap()
+        command_buffer_builder.build().unwrap()*/
     }
 }

@@ -10,9 +10,9 @@ impl PostprocessingPass
         let mut stage_builder = Self::stage_builder(self._device.clone());
         stage_builder
             .dimenstions(width, height)
-            .input("image", TextureView::Dim2d)
-            .input("vectors", TextureView::Dim2d)
-            .input("accumulator", TextureView::Dim2d)
+            .input("image", TextureView::Dim2d, false)
+            .input("vectors", TextureView::Dim2d, false)
+            .input("accumulator", TextureView::Dim2d, false)
             .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
             .output("accumulator_out", TexturePixelFormat::R16G16B16A16_SFLOAT, TextureFilter::Linear, true)
             .code("

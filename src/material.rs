@@ -5,10 +5,12 @@
 
 use vulkano::device::Device;
 use vulkano::pipeline::graphics::rasterization::CullMode;
+use vulkano::pipeline::graphics::vertex_input::BuffersDefinition;
 use vulkano::render_pass::Subpass;
 use std::sync::Arc;
 use std::collections::HashMap;
 
+use crate::mesh::VkVertex;
 use crate::types::*;
 use crate::shader::*;
 use crate::references::*;
@@ -150,37 +152,41 @@ impl MaterialBuilder
 
         builder.vertex_base
             .default_vertex_attributes()
+            .instance_attributes()
             .output("world_position", AttribType::FVec3)
             .output("position_prev", AttribType::FVec4)
             .output("position", AttribType::FVec4)
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
-            .uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.code("#define transform object.transform\n")
+            //.code("#define transform_prev object.transform_prev\n")
             .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
         
         // Шейдер для скелетной деформации
         // TODO сделать нормальную реализацию. Сейчас это просто копия базового вершинного шейдера материала
         builder.vertex_deformed
             .default_vertex_attributes()
+            .instance_attributes()
             .output("world_position", AttribType::FVec3)
             .output("position_prev", AttribType::FVec4)
             .output("position", AttribType::FVec4)
             .output("texture_uv", AttribType::FVec2)
             .output("view_vector", AttribType::FVec3)
             .output("TBN", AttribType::FMat3)
-            .uniform_constant::<GOTransformUniform>("object").unwrap()
-            //.uniform_autoincrement::<GOTransformUniform>("object", SHADER_TRANSFORM_SET).unwrap()
+            //.uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.code("#define transform object.transform\n")
+            //.code("#define transform_prev object.transform_prev\n")
             .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
 
         builder.fragment_base
-            .input("world_position", AttribType::FVec3)
-            .input("position_prev", AttribType::FVec4)
-            .input("position", AttribType::FVec4)
-            .input("texture_uv", AttribType::FVec2)
-            .input("view_vector", AttribType::FVec3)
-            .input("TBN", AttribType::FMat3)
+            .input("world_position", AttribType::FVec3, FragmentInterpolation::default())
+            .input("position_prev", AttribType::FVec4, FragmentInterpolation::default())
+            .input("position", AttribType::FVec4, FragmentInterpolation::default())
+            .input("texture_uv", AttribType::FVec2, FragmentInterpolation::default())
+            .input("view_vector", AttribType::FVec3, FragmentInterpolation::default())
+            .input("TBN", AttribType::FMat3, FragmentInterpolation::default())
             .output("gAlbedo", AttribType::FVec4)
             .output("gNormals", AttribType::FVec3)
             .output("gMasks", AttribType::FVec3)
@@ -190,16 +196,18 @@ impl MaterialBuilder
             .code("vec3 mNormal, mAmbient;\n");
 
         builder.fragment_shadowmap
-            .input("world_position", AttribType::FVec3)
-            .input("position_prev", AttribType::FVec4)
-            .input("position", AttribType::FVec4)
-            .input("texture_uv", AttribType::FVec2)
-            .input("view_vector", AttribType::FVec3)
-            .input("TBN", AttribType::FMat3)
+            .input("world_position", AttribType::FVec3, FragmentInterpolation::default())
+            .input("position_prev", AttribType::FVec4, FragmentInterpolation::default())
+            .input("position", AttribType::FVec4, FragmentInterpolation::default())
+            .input("texture_uv", AttribType::FVec2, FragmentInterpolation::default())
+            .input("view_vector", AttribType::FVec3, FragmentInterpolation::default())
+            .input("TBN", AttribType::FMat3, FragmentInterpolation::default())
             .code("vec4 mDiffuse;\n")
             .code("float mSpecular, mRoughness, mMetallic;\n")
             .code("vec3 mNormal, mAmbient;\n")
-            .uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.uniform_constant::<GOTransformUniform>("object").unwrap()
+            //.code("#define transform object.transform\n")
+            //.code("#define transform_prev object.transform_prev\n")
             .uniform_autoincrement::<ProjectionUniformData>("camera", SHADER_CAMERA_SET).unwrap();
         builder
     }
@@ -216,8 +224,8 @@ impl MaterialBuilder
     pub fn add_texture(&mut self, name: &str, texture: &Texture) -> &mut Self
     {
         let ty = texture.ty();
-        self.fragment_base.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
-        self.fragment_shadowmap.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty).unwrap();
+        self.fragment_base.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty, false).unwrap();
+        self.fragment_shadowmap.uniform_sampler_autoincrement(name, SHADER_TEXTURE_SET, ty, false).unwrap();
         self.texture_slots.insert(name.to_owned(), texture.clone());
         self
     }
@@ -363,34 +371,50 @@ impl Material
         &self.name
     }
 
-    pub fn base_shader(&mut self, subpass: Subpass) -> (&mut ShaderProgram, ShaderProgramUniformBuffer)
+    fn _shader_mut(&mut self, ty: &MaterialShaderType) -> (&mut ShaderProgram, &mut ShaderProgramUniformBuffer)
     {
-        self.shader_set.base.0.cull_faces = CullMode::Front;
-        let (subpass, new) = self.shader_set.base.0.use_subpass(subpass);
-        match subpass {
-            PipelineType::Graphics(_) =>
-                if new {
-                    self.shader_set.base.1 = Material::build_uniform_buffer(self, &self.shader_set.base.0);
-                },
-            PipelineType::Compute(_) => panic!("Вычислительный конвейер не поддерживается материалами"),
-            _ => panic!("Конвейер не инициализирован")
-        }
-        (&mut self.shader_set.base.0, self.shader_set.base.1.clone())
+        use MaterialShaderType::*;
+        let (shader, ub) = match ty {
+            Base => &mut self.shader_set.base,
+            BaseShadowmap => &mut self.shader_set.shadowmap_base,
+            Deformable => &mut self.shader_set.deformed,
+            DeformableShadowmap => &mut self.shader_set.shadowmap_deformed,
+        };
+        (shader, ub)
     }
 
-    pub fn base_shadowmap_shader(&mut self, subpass: Subpass) -> (&mut ShaderProgram, ShaderProgramUniformBuffer)
+    fn _shader(&self, ty: &MaterialShaderType) -> (&ShaderProgram, &ShaderProgramUniformBuffer)
     {
-        self.shader_set.shadowmap_base.0.cull_faces = CullMode::Front;
-        let (subpass, new) = self.shader_set.shadowmap_base.0.use_subpass(subpass);
+        use MaterialShaderType::*;
+        let (shader, ub) = match ty {
+            Base => &self.shader_set.base,
+            BaseShadowmap => &self.shader_set.shadowmap_base,
+            Deformable => &self.shader_set.deformed,
+            DeformableShadowmap => &self.shader_set.shadowmap_deformed,
+        };
+        (shader, ub)
+    }
+
+    pub fn shader(&mut self, ty: &MaterialShaderType, subpass: Subpass) -> (ShaderProgram, ShaderProgramUniformBuffer)
+    {
+        let (subpass, new) = {
+            let shader = self._shader_mut(ty).0;
+            shader.cull_faces = CullMode::Front;
+            shader.use_subpass(subpass, Some(BuffersDefinition::new().vertex::<VkVertex>().instance::<GOTransformUniform>()))
+        };
         match subpass {
             PipelineType::Graphics(_) =>
                 if new {
-                    self.shader_set.shadowmap_base.1 = Material::build_uniform_buffer(self, &self.shader_set.shadowmap_base.0);
+                    println!("Инициализация шейдера материала");
+                    let ub = Material::build_uniform_buffer(self, self._shader(ty).0);
+                    let uniform_buffer = self._shader_mut(ty).1;
+                    *uniform_buffer = ub;
                 },
             PipelineType::Compute(_) => panic!("Вычислительный конвейер не поддерживается материалами"),
-            _ => panic!("Конвейер не инициализирован")
-        }
-        (&mut self.shader_set.shadowmap_base.0, self.shader_set.shadowmap_base.1.clone())
+            PipelineType::None => panic!("Конвейер не инициализирован")
+        };
+        let (shader, uniform_buffer) = self._shader(ty);
+        (shader.clone(), uniform_buffer.clone())
     }
 
     fn build_uniform_buffer(material: &Material, shader: &ShaderProgram) -> ShaderProgramUniformBuffer
@@ -424,7 +448,7 @@ impl Material
 
 #[allow(dead_code)]
 #[derive(Clone)]
-struct MaterialShaderSet
+pub struct MaterialShaderSet
 {
     /// Базовый шейдер статичных моделей
     base : (ShaderProgram, ShaderProgramUniformBuffer),
@@ -477,3 +501,8 @@ static DEFAULT_PBR : &str = "void principled() {
 
 /*float frag_coord = (2.0 * distance - znear - zfar) / (zfar - znear); */
 /*frag_coord * (zfar - znear) + znear + zfar / 2.0 = distance; */
+
+pub enum MaterialShaderType
+{
+    Base, BaseShadowmap, Deformable, DeformableShadowmap
+}

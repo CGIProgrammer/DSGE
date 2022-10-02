@@ -132,17 +132,12 @@ impl ShadowBuffer
     fn as_cubemap(&self) -> Option<Texture>
     {
         let iw = self.buffer._vk_image_view.clone();
-        if iw.array_layers().len() == 6 {
-            let iw = ImageView::new(self.buffer._vk_image_access.clone(), ImageViewCreateInfo {
-                view_type: vulkano::image::view::ImageViewType::Cube,
-                component_mapping: iw.component_mapping(),
-                format: iw.format(),
-                array_layers: iw.array_layers(),
-                aspects: iw.aspects().clone(),
-                mip_levels: iw.mip_levels(),
-                sampler_ycbcr_conversion: match iw.sampler_ycbcr_conversion() {Some(conv) => Some(conv.clone()), None => None},
-                ..Default::default()
-            }).unwrap();
+        let array_layers = self.buffer.array_layers();
+        if array_layers == 6 {
+            let mut ivci = ImageViewCreateInfo::from_image(self.buffer._vk_image_access.as_ref());
+            ivci.sampler_ycbcr_conversion = match iw.sampler_ycbcr_conversion() {Some(conv) => Some(conv.clone()), None => None};
+            ivci.view_type = vulkano::image::view::ImageViewType::Cube;
+            let iw = ImageView::new(self.buffer._vk_image_access.clone(), ivci).unwrap();
             Some(Texture::from_vk_image_view(iw, self.buffer._vk_device.clone()).unwrap())
         } else {
             None
@@ -299,8 +294,8 @@ impl SpotLight
             vec3 direction;
             vec3 color;
             float power;
-            float distance;
             float znear;
+            float zfar;
             float angle;
             float inner_angle;
             bool shadow_buffer;
@@ -315,7 +310,7 @@ impl SpotLight
             vec4 power = texelFetch(l_buffer, ivec2(2, offset), 0);
             vec4 d0 = texelFetch(l_buffer, ivec2(3, offset), 0);
             bool shadow_buffer = d0.x != 0.0;
-            float distance = d0.y;
+            float zfar = d0.y;
             float znear = d0.z;
             float angle = d0.w;
             vec4 inner_angle_and_shadowmap_index = texelFetch(l_buffer, ivec2(4, offset), 0);
@@ -332,20 +327,15 @@ impl SpotLight
                 location,
                 direction,
                 power.rgb, power.w,
-                distance,
                 znear,
+                zfar,
                 angle,
                 inner_angle,
                 shadow_buffer,
                 projection_inv,
                 shadowmap_index
             );
-        }
-        /*float spotlight_shadow(sampler2D shadow_map, SpotLight light)
-        {
-            texture(l_buffer, 
-            return light.
-        }*/"
+        }"
     }
 }
 
@@ -459,6 +449,7 @@ pub struct PointLight {
     shadow_buffer: Option<ShadowBuffer>,
     power: f32,
     color: Vec3,
+    znear: f32,
     distance: f32,
     location: Vec3,
 }
@@ -470,6 +461,7 @@ impl Debug for PointLight {
             .field("shadow_buffer", &match self.shadow_buffer { Some(_) => Some(()), None => None})
             .field("power", &self.power)
             .field("color", &self.color)
+            .field("znear", &self.znear)
             .field("distance", &self.distance)
             .field("location", &self.location);
         Ok(())
@@ -478,23 +470,25 @@ impl Debug for PointLight {
 
 impl PointLight
 {
-    pub fn new(power: f32, color: [f32; 3], resolution: u16, device: Arc<Device>) -> Self
+    pub fn new(power: f32, color: [f32; 3], znear: f32, distance: f32, resolution: u16, device: Arc<Device>) -> Self
     {
         Self {
             shadow_buffer: if resolution > 0 {Some(ShadowBuffer::new(device, resolution, 6, true))} else {None},
             power,
             color: color.into(),
             location: Vec3::default(),
-            distance: 10.0
+            znear: znear,
+            distance: distance,
         }
     }
 
     pub fn serialize(&self) -> Vec<f32>
     {
+        let shadow_buffer = match self.shadow_buffer {Some(_) => 1.0, None => 0.0};
         vec![
-            self.location[0], self.location[1], self.location[2], 1.0,
+            self.location[0], self.location[1], self.location[2], self.znear,
             self.color[0], self.color[1], self.color[2], self.power,
-            match self.shadow_buffer {Some(_) => 1.0, None => 0.0}, self.distance
+            shadow_buffer, self.distance
         ]
     }
 
@@ -505,37 +499,39 @@ impl PointLight
             vec3 color;
             float power;
             bool shadow_buffer;
-            mat4 view_projection;
+            float znear, zfar;
+            int shadowmap_index;
         };
         PointLight unpack_point_light(sampler2D l_buffer, int offset)
         {
-            vec3 location = texelFetch(l_buffer, ivec2(0, offset*2), 0).xyz;
-            vec4 power = texelFetch(l_buffer, ivec2(1, offset*2), 0);
-            bool shadow_buffer = texelFetch(l_buffer, ivec2(2, offset*2), 0).x != 0.0;
-            mat4 view_projection = mat4(
-                texelFetch(l_buffer, ivec2(0, offset*2+1), 0),
-                texelFetch(l_buffer, ivec2(1, offset*2+1), 0),
-                texelFetch(l_buffer, ivec2(2, offset*2+1), 0),
-                texelFetch(l_buffer, ivec2(3, offset*2+1), 0)
-            );
+            offset *= 2;
+            vec4 location_znear = texelFetch(l_buffer, ivec2(0, offset), 0);
+            vec4 power = texelFetch(l_buffer, ivec2(1, offset), 0);
+            vec3 shadow_buffer_and_distance = texelFetch(l_buffer, ivec2(2, offset), 0).xyz;
+            bool shadow_buffer = shadow_buffer_and_distance.x != 0.0;
+            float zfar = shadow_buffer_and_distance.y;
+            float znear = location_znear.w;
+            int shadowmap_index = int(shadow_buffer_and_distance.z);
             return PointLight(
-                location,
+                location_znear.xyz,
                 power.rgb, power.w,
                 shadow_buffer,
-                view_projection
+                znear, zfar,
+                shadowmap_index
             );
         }"
     }
 
     pub fn projection_data(&self, owner_transform: &GOTransform, direction: usize) -> ProjectionUniformData
     {
+        
         let rotation = match direction {
-            /*  x Направо */ 0 => Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, -std::f32::consts::FRAC_PI_2),
-            /* -x Налево  */ 1 => Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, std::f32::consts::FRAC_PI_2),
-            /*  y Вперёд  */ 2 => Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, 0.0),
-            /* -y Назад   */ 3 => Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, -std::f32::consts::PI),
-            /*  z Вверх   */ 4 => Rotation3::from_euler_angles(std::f32::consts::PI, 0.0, 0.0),
-            /* -z Вниз    */ 5 => Rotation3::default(),
+            /*  x Направо */ 0 => Rotation3::look_at_rh(&[ 1.0, 0.0, 0.0].into(), &[0.0,-1.0, 0.0].into()), //Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, -std::f32::consts::FRAC_PI_2),
+            /* -x Налево  */ 1 => Rotation3::look_at_rh(&[-1.0, 0.0, 0.0].into(), &[0.0,-1.0, 0.0].into()), //Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2, 0.0*std::f32::consts::FRAC_PI_2),
+            /*  y Вперёд  */ 2 => Rotation3::look_at_rh(&[ 0.0,-1.0, 0.0].into(), &[0.0, 0.0,-1.0].into()), //Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, 0.0),
+            /* -y Назад   */ 3 => Rotation3::look_at_rh(&[ 0.0, 1.0, 0.0].into(), &[0.0, 0.0, 1.0].into()), //Rotation3::from_euler_angles(std::f32::consts::FRAC_PI_2, 0.0, -std::f32::consts::PI),
+            /*  z Вверх   */ 4 => Rotation3::look_at_rh(&[ 0.0, 0.0, 1.0].into(), &[0.0,-1.0, 0.0].into()), //Rotation3::from_euler_angles(std::f32::consts::PI, 0.0, 0.0),
+            /* -z Вниз    */ 5 => Rotation3::look_at_rh(&[ 0.0, 0.0,-1.0].into(), &[0.0,-1.0, 0.0].into()), //Rotation3::from_euler_angles(0.0, 0.0, std::f32::consts::PI),
             _ => panic!("Неправильное направление.")
         };
 
@@ -543,7 +539,7 @@ impl PointLight
         let mut transform_prev = owner_transform.global_prev;
         transform.set_rotation(&rotation);
         transform_prev.set_rotation(&rotation);
-        let projection = nalgebra::Perspective3::new(1.0, std::f32::consts::FRAC_PI_2, 0.05, self.distance);
+        let projection = nalgebra::Perspective3::new(1.0, std::f32::consts::FRAC_PI_2, self.znear, self.distance);
         let projection_matrix = projection.as_matrix().clone();
         ProjectionUniformData {
             transform : transform.as_slice().try_into().unwrap(),
@@ -567,7 +563,7 @@ impl PointLight
                     .enumerate()
                     .map(|(direction, frame_buffer)|
                         (frame_buffer.clone(), self.projection_data(transform, direction))
-                    ).collect::<Vec<_>>()[1..2].to_vec()
+                    ).collect::<Vec<_>>()
             },
             None => Vec::new()
         }

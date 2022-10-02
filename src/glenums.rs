@@ -313,6 +313,24 @@ impl AttribType
         m*n
     }
 
+    pub fn is_int(self) -> bool
+    {
+        let num_type = AttribNumType::from_i32((self as i32) & 0xF);
+        match num_type {
+            AttribNumType::HALF_FLOAT | AttribNumType::FLOAT | AttribNumType::DOUBLE | AttribNumType::FIXED => false,
+            _ => true
+        }
+    }
+
+    pub fn is_float(self) -> bool
+    {
+        let num_type = AttribNumType::from_i32((self as i32) & 0xF);
+        match num_type {
+            AttribNumType::HALF_FLOAT | AttribNumType::FLOAT | AttribNumType::DOUBLE => true,
+            _ => false
+        }
+    }
+
     pub fn get_glsl_name(self) -> String
     {
         let code = self as usize;

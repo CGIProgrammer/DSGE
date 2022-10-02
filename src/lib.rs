@@ -1,6 +1,9 @@
 extern crate winit;
 extern crate vulkano;
 extern crate bytemuck;
+extern crate num;
+
+const VULKANO_BUFFER_ATOMIC_SIZE: usize = 64;
 
 pub mod teapot;
 pub mod time;

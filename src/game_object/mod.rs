@@ -60,6 +60,16 @@ pub struct GOTransformUniform
     pub transform_prev : [f32; 16]
 }
 
+impl From<GOTransform> for GOTransformUniform
+{
+    fn from(transform: GOTransform) -> Self {
+        Self {
+            transform: transform.global.as_slice().try_into().unwrap(),
+            transform_prev: transform.global_prev.as_slice().try_into().unwrap()
+        }
+    }
+}
+
 impl ShaderStructUniform for GOTransformUniform
 {
     fn glsl_type_name() -> String

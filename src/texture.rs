@@ -9,7 +9,8 @@ pub use crate::shader::ShaderStructUniform;
 pub use pixel_format::TexturePixelFormatFeatures;
 pub use types::*;
 use vulkano::device::DeviceOwned;
-use vulkano::image::SampleCount;
+use vulkano::image::{SampleCount, ImageSubresourceRange};
+use vulkano::pipeline::graphics::depth_stencil::CompareOp;
 
 use std::ffi::c_void;
 use std::fmt::Formatter;
@@ -86,6 +87,7 @@ pub struct Texture
     w_repeat: TextureRepeatMode,
     mip_lod_bias: f32,
     max_anisotropy: Option<f32>,
+    compare_op: Option<CompareOp>,
     min_lod: f32,
     max_lod: f32,
 }
@@ -128,26 +130,20 @@ impl ShaderStructUniform for Texture
         Some(self)
     }
 }
-use vulkano::command_buffer::{BlitImageError, CopyBufferImageError};
-use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryCommandBuffer, PrimaryAutoCommandBuffer, CommandBufferExecFuture};
+use vulkano::command_buffer::{
+    AutoCommandBufferBuilder,
+    CommandBufferUsage,
+    PrimaryCommandBuffer,
+    PrimaryAutoCommandBuffer,
+    CommandBufferExecFuture,
+    CopyImageToBufferInfo,
+    ClearColorImageInfo,
+    CopyBufferToImageInfo,
+    BlitImageInfo, BufferImageCopy
+};
 use vulkano::sync::NowFuture;
-use vulkano::image::{sys::{ImageCreationError, UnsafeImage}, ImageAccess, ImageUsage, ImageCreateFlags, immutable::SubImage, ImageLayout};
+use vulkano::image::{sys::{ImageCreationError}, ImageAccess, ImageUsage, ImageCreateFlags, ImageLayout};
 use vulkano::buffer::{CpuAccessibleBuffer, BufferUsage};
-use vulkano::memory::pool::{PotentialDedicatedAllocation, StdMemoryPoolAlloc};
-use std::sync::atomic::AtomicBool;
-/// Патч-структура, аналогичная ImmutableImage из vulkano.
-/// Предназначена для изменения приватного флага initialized.
-/// Эта структура в составе vulkano не позволяет только генерировать mip-уровни но не загружать их.
-/// В vulkano имеются функции, которые могут это делать,
-/// однако они требуют установки вышеупомянутого приватного флага.
-pub struct ImmutableImagePatch<A = PotentialDedicatedAllocation<StdMemoryPoolAlloc>> {
-    _image: UnsafeImage,
-    _dimensions: TextureDimensions,
-    _memory: A,
-    _format: Format,
-    initialized: AtomicBool,
-    _layout: ImageLayout,
-}
 
 #[allow(dead_code)]
 impl Texture
@@ -164,6 +160,7 @@ impl Texture
         TextureBuilder {
             name: "".to_owned(),
             _vk_image_dims: None,
+            compare_op: None,
             min_filter: TextureFilter::Nearest,
             mag_filter: TextureFilter::Nearest,
             mip_mode: MipmapMode::Nearest,
@@ -195,6 +192,19 @@ impl Texture
         texture_builder.build_mutable(device, pix_fmt, dims)
     }
 
+    /// Создаёт пустое изображение, которое можно использовать для записи
+    pub fn new_empty_shadow_buffer(name: &str, dims: TextureDimensions, pix_fmt: TexturePixelFormat, device: Arc<Device>) -> Result<Texture, String>
+    {
+        if !pix_fmt.is_depth() {
+            return Err(format!("Буфер теней не может иметь формат {pix_fmt:?}"));
+        }
+        let mut texture_builder = Texture::builder();
+        texture_builder
+            .name(name)
+            .compare_op(Some(CompareOp::Never));
+        texture_builder.build_mutable(device, pix_fmt, dims)
+    }
+
     pub fn array_layer_as_texture(&self, layer: u32) -> Result<Texture, String>
     {
         let view_type = match self._vk_image_dims {
@@ -202,14 +212,18 @@ impl Texture
             TextureDimensions::Dim2d {..} => TextureView::Dim2d,
             TextureDimensions::Dim3d {..} => TextureView::Dim2d
         };
+        let subresource_range = self._vk_image_view.subresource_range();
         Texture::from_vk_image_view(
             ImageView::new(
                 self._vk_image_access.clone(),
                 ImageViewCreateInfo {
                     view_type: view_type,
-                    aspects: self._vk_image_view.aspects().clone(),
+                    subresource_range: ImageSubresourceRange {
+                        aspects: subresource_range.aspects,
+                        array_layers: layer..(layer+1),
+                        mip_levels: 0..1,
+                    },
                     format: Some(self._pix_fmt),
-                    array_layers: layer..(layer+1),
                     ..Default::default()
                 }
             ).unwrap(),
@@ -302,13 +316,12 @@ impl Texture
         let cpuab = unsafe { CpuAccessibleBuffer::<[u8]>::uninitialized_array(
             queue.device().clone(),
             (block_size * self._vk_image_dims.num_texels()) as _,
-            BufferUsage::transfer_destination(),
+            BufferUsage::transfer_dst(),
             false
         ).unwrap() };
-        
         cbb
             .copy_texture(self, &img).unwrap()
-            .copy_image_to_buffer(img._vk_image_access.clone(), cpuab.clone()).unwrap();
+            .copy_image_to_buffer(CopyImageToBufferInfo::image_buffer(img._vk_image_access.clone(), cpuab.clone())).unwrap();
 
         drop(cbb.build().unwrap().execute(queue).unwrap());
         
@@ -381,6 +394,7 @@ impl Texture
             w_repeat : TextureRepeatMode::Repeat,
             mip_lod_bias : 0.0,
             max_anisotropy : None,
+            compare_op : None,
             min_lod : 0.0,
             max_lod : 1.0,
         })
@@ -557,7 +571,8 @@ impl Texture
 
     pub fn array_layers(&self) -> u32
     {
-        self._vk_image_view.array_layers().count() as _
+        let subresource = self._vk_image_view.subresource_range().clone();
+        subresource.array_layers.count() as _
     }
 
     pub fn dims(&self) -> TextureDimensions
@@ -577,6 +592,7 @@ impl Texture
                 mip_lod_bias : self.mip_lod_bias,
                 anisotropy : self.max_anisotropy,
                 lod : self.min_lod..=self.max_lod,
+                compare : self.compare_op,
                 ..Default::default()
             }
         ).unwrap();
@@ -590,16 +606,16 @@ impl Texture
             queue.family(),
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
-        match self._pix_fmt.subpixels() {
-            1 => {
-                let val = if self._pix_fmt.is_depth() { 1.0 } else { 0.0 };
-                command_buffer_builder.clear_color_image(self._vk_image_view.image(), val.into()).unwrap();
-            },
-            2 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 2].into()).unwrap(); },
-            3 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 3].into()).unwrap(); },
-            4 => {command_buffer_builder.clear_color_image(self._vk_image_view.image(), [0.0; 4].into()).unwrap(); },
-            _ => ()
+        let mut ccii = ClearColorImageInfo::image(self._vk_image_access.clone());
+        ccii.clear_value = match self._pix_fmt.subpixels() {
+            1 => [if self._pix_fmt.is_depth() { 1.0 } else { 0.0 }, ].into(),
+            2 => [0.0; 2].into(),
+            3 => [0.0; 3].into(),
+            4 => [0.0; 4].into(),
+            _ => panic!("Неправильное количество субпикселей в текстуре")
         };
+        command_buffer_builder.clear_color_image(ccii).unwrap();
+
         let command_buffer = command_buffer_builder.build().unwrap();
         let future = command_buffer.execute(queue).unwrap();
         drop(future);
@@ -614,16 +630,7 @@ impl Texture
             CommandBufferUsage::OneTimeSubmit,
         ).unwrap();
 
-        command_buffer_builder.blit_image(
-            texture._vk_image_view.image(),
-            [0, 0, 0], [texture.width() as i32, texture.height() as i32, texture.depth() as i32],
-            0, 0,
-            self._vk_image_view.image(),
-            [0, 0, 0], [self.width() as i32, self.height() as i32, self.depth() as i32],
-            0, 0,
-            self._vk_image_dims.array_layers().min(texture._vk_image_dims.array_layers()),
-            TextureFilter::Nearest
-        ).unwrap();
+        command_buffer_builder.blit_image(BlitImageInfo::images(texture._vk_image_view.image(), self._vk_image_view.image())).unwrap();
         let command_buffer = command_buffer_builder.build().unwrap();
         let future = command_buffer.execute(queue);
 
@@ -641,6 +648,7 @@ pub struct TextureBuilder
 {
     _vk_image_dims: Option<TextureDimensions>,
     name: String,
+    compare_op: Option<CompareOp>,
     min_filter: TextureFilter,
     mag_filter: TextureFilter,
     mip_mode: MipmapMode,
@@ -712,6 +720,12 @@ impl TextureBuilder
         self
     }
 
+    pub fn compare_op(&mut self, op: Option<CompareOp>) -> &mut Self
+    {
+        self.compare_op = op;
+        self
+    }
+
     /*pub fn build_mutable_mutex(self, device: Arc<Device>, pix_fmt: TexturePixelFormat, dimensions: TextureDimensions) -> Result<TextureRef, String>
     {
         Ok(RcBox::construct(self.build_mutable(device, pix_fmt, dimensions)?))
@@ -723,8 +737,8 @@ impl TextureBuilder
         let properties = device.physical_device().format_properties(pix_fmt);
         let ffeatures = properties.potential_format_features();
         let usage = ImageUsage {
-            transfer_source: ffeatures.transfer_src,
-            transfer_destination: ffeatures.transfer_dst,
+            transfer_src: ffeatures.transfer_src,
+            transfer_dst: ffeatures.transfer_dst,
             sampled: ffeatures.sampled_image,
             storage: ffeatures.storage_image,
             color_attachment: ffeatures.color_attachment,
@@ -750,6 +764,7 @@ impl TextureBuilder
             mip_lod_bias : self.mip_lod_bias,
             anisotropy : self.max_anisotropy,
             lod : self.min_lod..=self.max_lod,
+            compare : self.compare_op,
             ..Default::default()
         }).unwrap();
 
@@ -773,6 +788,7 @@ impl TextureBuilder
                 _ => false
             },
 
+            compare_op : None,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -832,7 +848,7 @@ impl TextureBuilder
             mip_levels,
             header.pixel_format().vk_format(),
             queue.clone()
-        ).unwrap();*/
+        ).unwrap();*/     
 
         let (texture, tex_future) = Self::custom_immutable_image(
             compressed_img_bytes.as_slice(),
@@ -855,6 +871,7 @@ impl TextureBuilder
             mip_lod_bias : self.mip_lod_bias,
             anisotropy : self.max_anisotropy,
             lod : self.min_lod..=self.max_lod,
+            compare : self.compare_op,
             ..Default::default()
         }).unwrap();
 
@@ -879,6 +896,7 @@ impl TextureBuilder
                 _ => false
             },
 
+            compare_op : None,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -946,6 +964,7 @@ impl TextureBuilder
             mip_lod_bias : self.mip_lod_bias,
             anisotropy : self.max_anisotropy,
             lod : self.min_lod..=self.max_lod,
+            compare : self.compare_op,
             ..Default::default()
         }).unwrap();
 
@@ -969,6 +988,7 @@ impl TextureBuilder
                 _ => false
             },
             
+            compare_op : None,
             mag_filter : self.mag_filter,
             min_filter : self.min_filter,
             mip_mode : self.mip_mode,
@@ -1000,16 +1020,30 @@ impl TextureBuilder
         //println!("Dimensions = {:?}", dimensions);
         //println!("mipmap_count = {:?}", mip_map_count);
         let device = queue.device();
-        let usage = ImageUsage {
-            transfer_destination: true,
-            transfer_source: true,
-            sampled: true,
-            ..ImageUsage::none()
-        };
-        let flags = ImageCreateFlags::none();
-        let layout = ImageLayout::ShaderReadOnlyOptimal;
+        let (image, init) = ImmutableImage::uninitialized(
+            device.clone(),
+            dimensions,
+            format,
+            mip_map_count,
+            ImageUsage {
+                transfer_src: true,
+                transfer_dst: true,
+                sampled: true,
+                storage: false,
+                color_attachment: false,
+                depth_stencil_attachment: false,
+                transient_attachment: false,
+                input_attachment: false
+            },
+            ImageCreateFlags {
+                //block_texel_view_compatible: true,
+                ..Default::default()
+            },
+            ImageLayout::ShaderReadOnlyOptimal,
+            [queue.family()]
+        ).unwrap();
 
-        let (mut image, initializer) = ImmutableImage::uninitialized(
+        /*let (mut image, initializer) = ImmutableImage::uninitialized(
             device.clone(),
             dimensions,
             format.vk_format(),
@@ -1018,15 +1052,15 @@ impl TextureBuilder
             flags,
             layout,
             device.active_queue_families(),
-        )?;
+        )?;*/
 
-        let init = SubImage::new(initializer, 0, 1, 0, 1, ImageLayout::ShaderReadOnlyOptimal);
+        //let init = SubImage::new(initializer, 0, 1, 0, 1, ImageLayout::ShaderReadOnlyOptimal);
 
         let mut cbb = AutoCommandBufferBuilder::primary(
             device.clone(),
             queue.family(),
             CommandBufferUsage::MultipleSubmit,
-        )?;
+        ).unwrap();
         
         let mut width = dimensions.width();
         let mut height = dimensions.height();
@@ -1035,7 +1069,7 @@ impl TextureBuilder
         let u64s = (format.block_size().unwrap() / 8) as u32;
         
         // Загрузка mip-уровней.
-        for i in 0..mip_map_count {
+        for i in 0..(mip_map_count-2) {
             //println!("mip-map {}/{}", i, mip_map_count);
             let block_size = u64s * 8;
             let blocks = ((width+3)/4)*((height+3)/4);
@@ -1043,12 +1077,22 @@ impl TextureBuilder
             println!("Загрузка mip-уровня {} ({}x{})", i, width, height);
             let source = CpuAccessibleBuffer::from_iter(
                 device.clone(),
-                BufferUsage::transfer_source(),
+                BufferUsage::transfer_src(),
                 false,
                 data[data_offset..data_offset+size].iter().cloned(),
             ).unwrap();
             data_offset += size;
-            cbb.copy_buffer_to_image_dimensions(
+            let mut copy_buffer_to_image_info = CopyBufferToImageInfo::buffer_image(source, init.clone());
+            copy_buffer_to_image_info.regions[0] = BufferImageCopy{
+                image_subresource: copy_buffer_to_image_info.regions[0].image_subresource.clone(),
+                image_offset: [0, 0, 0],
+                image_extent: [width, height, 1],
+                buffer_offset: 0,
+                ..Default::default()
+            };
+            copy_buffer_to_image_info.regions[0].image_subresource.mip_level = i;
+            cbb.copy_buffer_to_image(copy_buffer_to_image_info)
+            /*cbb.copy_buffer_to_image_dimensions(
                 source,
                 init.clone(),
                 [0, 0, 0],
@@ -1056,7 +1100,7 @@ impl TextureBuilder
                 0,
                 dimensions.array_layers(),
                 i,
-            )
+            )*/
             .unwrap();
             width  = width  / 2;
             height = height / 2;
@@ -1071,11 +1115,6 @@ impl TextureBuilder
             Ok(f) => f,
             Err(e) => unreachable!("{:?}", e),
         };
-        
-        // Установка флага инициализации внутреннего изображения vulkano
-        unsafe {
-            (&mut image as *mut Arc<ImmutableImage> as *mut Arc<ImmutableImagePatch>).as_ref().unwrap().initialized.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
 
         Ok((image, future))
     }
@@ -1141,49 +1180,33 @@ impl CompressedFormat for KTXHeader {
 
 pub(crate) trait TextureCommandSet
 {
-    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, CopyBufferImageError>
+    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, String>
         where [T]: vulkano::buffer::BufferContents;
-    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, BlitImageError>;
+    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, String>;
 }
 
 impl <Cbbt>TextureCommandSet for AutoCommandBufferBuilder<Cbbt>
 {
-    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, CopyBufferImageError>
+    fn update_data<T>(&mut self, texture: &Texture, data: Vec<T>) -> Result<&mut Self, String>
         where [T]: vulkano::buffer::BufferContents
     {
         let cpuab = CpuAccessibleBuffer::from_iter(
-            texture._vk_device.clone(), BufferUsage::transfer_source(), false, data
+            texture._vk_device.clone(), BufferUsage::transfer_src(), false, data
         ).unwrap();
         
-        self.copy_buffer_to_image(cpuab, texture._vk_image_access.clone())
+        match self.copy_buffer_to_image(CopyBufferToImageInfo::buffer_image(cpuab, texture._vk_image_access.clone()))
+        {
+            Ok(s) => Ok(s),
+            Err(e) => Err(format!("{}", e)),
+        }
     }
     
-    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, BlitImageError>
+    fn copy_texture(&mut self, from: &Texture, to: &Texture) -> Result<&mut Self, String>
     {
-        let (dims, array_layers) = match from._vk_image_dims {
-            TextureDimensions::Dim1d { width, array_layers } => {
-                ([width as i32, 1, 1], array_layers)
-            },
-            TextureDimensions::Dim2d { width, height, array_layers } => {
-                ([width as i32, height as i32, 1], array_layers)
-            },
-            TextureDimensions::Dim3d { width, height, depth } => {
-                ([width as i32, height as i32, depth as i32], 1)
-            }
-        };
-        self.blit_image(
-            from._vk_image_access.clone(),
-            [0, 0, 0],
-            dims,
-            0,
-            0,
-            to._vk_image_access.clone(),
-            [0, 0, 0],
-            dims,
-            0,
-            0,
-            array_layers,
-            TextureFilter::Nearest
-        )
+        match self.blit_image(BlitImageInfo::images(from._vk_image_access.clone(), to._vk_image_access.clone()))
+        {
+            Ok(acbb) => Ok(acbb),
+            Err(err) => Err(format!("{:?}", err))
+        }
     }
 }

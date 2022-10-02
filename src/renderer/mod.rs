@@ -15,8 +15,8 @@ use vulkano::instance::Instance;
 #[allow(unused_imports)]
 use vulkano::command_buffer::{AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer, SecondaryAutoCommandBuffer};
 use winit::window::Window;
-use crate::{vulkano::device::DeviceOwned, texture::TextureCommandSet, components::light::{LightsUniformData, SpotLightUniform}, types::{Vec3, Mat4}};
-use std::sync::Arc;
+use crate::{vulkano::device::DeviceOwned, texture::TextureCommandSet, components::light::{LightsUniformData, SpotLightUniform}, types::{Vec3, Mat4}, mesh::MeshView};
+use std::{sync::Arc, collections::HashMap, cmp::Ordering};
 
 use crate::texture::{Texture, TexturePixelFormat, TextureDimensions};
 use crate::framebuffer::Framebuffer;
@@ -136,8 +136,8 @@ impl RenderSurface
         };
         let sc_create_info = swapchain.create_info();
         let mut usage = sc_create_info.image_usage;
-        usage.transfer_source = true;
-        usage.transfer_destination = true;
+        usage.transfer_src = true;
+        usage.transfer_dst = true;
         let dimensions: [u32; 2] = surface.window().inner_size().into();
         //surface
         //swapchain.device().physical_device().surface_capabilities(surface.as_ref(), surface_info);
@@ -211,7 +211,7 @@ pub struct Renderer
     _frame_finish_event : Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc : bool,
 
-    _draw_list   : Vec<(GOTransformUniform, RcBox<dyn AbstractVisual>)>,
+    _draw_list   : Vec<(GOTransformUniform, Arc<MeshVisual>)>,
     _lights_list : Vec<(Light, Vec<(Framebuffer, ProjectionUniformData)>)>,
     _lights_data : Texture,
     
@@ -223,7 +223,6 @@ pub struct Renderer
     _geometry_pass : GeometryPass,
     _postprocessor : PostprocessingPass,
     _shadowmap_pass: ShadowMapPass,
-    _screen_font : Texture,
     
     _timer : UniformTime
 }
@@ -255,9 +254,9 @@ impl Renderer
         self._camera_data
     }*/
 
-    pub fn add_renderable_component<T: AbstractVisual + Clone>(&mut self, transform_data: GOTransformUniform, component: &T)
+    pub fn add_renderable_component(&mut self, transform_data: GOTransformUniform, component: Arc<MeshVisual>)
     {
-        self._draw_list.push((transform_data, RcBox::construct(component.clone())))
+        self._draw_list.push((transform_data, component))
     }
 }
 
@@ -269,6 +268,7 @@ impl Renderer
     {
         let device_extensions = DeviceExtensions {
             khr_swapchain: true,
+            khr_buffer_device_address: true,
             ..DeviceExtensions::none()
         };
         let (physical_device, queue_family) = PhysicalDevice::enumerate(&vk_instance)
@@ -300,9 +300,9 @@ impl Renderer
         let dev_info = DeviceCreateInfo {
             enabled_features: features,
             queue_create_infos: vec![QueueCreateInfo::family(queue_family)],
-            enabled_extensions: physical_device
-                .required_extensions()
-                .union(&device_extensions),
+            enabled_extensions: device_extensions, /*physical_device
+                .supported_extensions()
+                .union(&device_extensions),*/
             ..Default::default()
         };
         
@@ -311,7 +311,7 @@ impl Renderer
         Device::new(physical_device, dev_info)
     }
 
-    pub fn offscreen(vk_instance : Arc<Instance>, dimensions: [u16; 2], parallel_draw_calls: bool) -> Self
+    pub fn offscreen(vk_instance : Arc<Instance>, dimensions: [u16; 2]) -> Self
     {
         let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
 
@@ -324,7 +324,7 @@ impl Renderer
             _device : device.clone(),
             _queue : queue.clone(),
             _screen_plane : Mesh::make_screen_plane(queue.clone()).unwrap(),
-            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone(), parallel_draw_calls),
+            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone()),
             _need_to_update_sc : true,
             _frame_finish_event : Some(sync::now(device.clone()).boxed()),
             _draw_list : Vec::new(),
@@ -339,13 +339,12 @@ impl Renderer
             _camera_data : ProjectionUniformData::default(),
             _postprocessor : PostprocessingPass::new(queue.clone(), dimensions[0], dimensions[1]),
             _shadowmap_pass : ShadowMapPass::new(queue.clone()),
-            _screen_font : Texture::from_file(queue.clone(), "data/texture/shadertoy_font.png").unwrap(),
             _timer : Default::default()
         };
         result
     }
 
-    pub fn winit(vk_instance : Arc<Instance>, surface: Arc<Surface<Window>>, vsync: bool, parallel_draw_calls: bool) -> Self
+    pub fn winit(vk_instance : Arc<Instance>, surface: Arc<Surface<Window>>, vsync: bool) -> Self
     {
         let (device, mut queues) = Self::default_device(vk_instance.clone()).unwrap();
 
@@ -376,9 +375,8 @@ impl Renderer
             _camera : None,
             _camera_data : ProjectionUniformData::default(),
             _shadowmap_pass : ShadowMapPass::new(queue.clone()),
-            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone(), parallel_draw_calls),
+            _geometry_pass : GeometryPass::new(dimensions[0], dimensions[1], queue.clone()),
             _postprocessor : PostprocessingPass::new(queue.clone(), dimensions[0], dimensions[1]),
-            _screen_font : Texture::from_file(queue.clone(), "data/texture/shadertoy_font.png").unwrap(),
             _timer : Default::default()
         };
         result
@@ -386,7 +384,7 @@ impl Renderer
 
     fn resize(&mut self, width: u16, height: u16)
     {
-        self._geometry_pass = GeometryPass::new(width, height, self._queue.clone(), self._geometry_pass.is_parallel());
+        self._geometry_pass = GeometryPass::new(width, height, self._queue.clone());
         /* Создание узлов и связей графа постобработки */
         /* На данный момент это размытие в движении */
         self._postprocessor.reset();
@@ -458,7 +456,7 @@ impl Renderer
         let owner_transform = owner.transform.clone();
         match owner.visual() {
             Some(visual) => {
-                self.add_renderable_component(owner.transform().uniform_value(), visual);
+                self.add_renderable_component(owner.transform().uniform_value(), Arc::new(visual.clone()));
             },
             None => ()
         }
@@ -552,7 +550,7 @@ impl Renderer
     }
 
     /// Выполняет все сформированные буферы команд
-    pub fn execute(&mut self, inputs: std::collections::HashMap<String, Texture>)
+    pub fn execute(&mut self, inputs: &HashMap<String, Texture>)
     {
         self._frame_finish_event.as_mut().unwrap().cleanup_finished();
 
@@ -566,7 +564,31 @@ impl Renderer
             self._need_to_update_sc = true;
             return;
         }
-        
+
+        /*let mut draw_list = HashMap::new();
+        for (transform,visual) in &self._draw_list {
+            let mat_id = visual.material_id();
+            let mesh_id = visual.mesh().buffer_id();
+            let material_list = match draw_list.get_mut(&mat_id) {
+                Some(material_list) => material_list,
+                None => {
+                    let material_list = HashMap::<i32, Vec<(GOTransformUniform, Arc<MeshVisual>)>>::new();
+                    draw_list.insert(mat_id, material_list);
+                    draw_list.get_mut(&mat_id).unwrap()
+                }
+            };
+            let mesh_buffer_list = match material_list.get_mut(&mesh_id) {
+                Some(mesh_list) => {
+                    mesh_list
+                },
+                None => {
+                    let mesh_list = Vec::<(GOTransformUniform, Arc<MeshVisual>)>::new();
+                    material_list.insert(mesh_id, mesh_list);
+                    material_list.get_mut(&mesh_id).unwrap()
+                }
+            };
+            mesh_buffer_list.push((transform, visual).clone());
+        }*/
         
         // Проход карт теней
         let mut sm_command_buffers = Vec::new();
@@ -575,7 +597,7 @@ impl Renderer
                 let command_buffer = self._shadowmap_pass.build_shadow_map_pass(
                     &mut shadow_buffer.clone(),
                     *projection_data,
-                    self._draw_list.clone()
+                    &self._draw_list
                 );
                 sm_command_buffers.push(command_buffer);
             }
@@ -597,7 +619,6 @@ impl Renderer
         self._postprocessor.image_to_all(&"gNormals".to_owned(),  self._geometry_pass.normals());
         self._postprocessor.image_to_all(&"gMasks".to_owned(), self._geometry_pass.specromet());
         self._postprocessor.image_to_all(&"gDepth".to_owned(), self._geometry_pass.depth());
-        self._postprocessor.image_to_all(&"font".to_owned(), &self._screen_font);
         self._postprocessor.image_to_all(&"lights_data".to_owned(), &self._lights_data);
         self._postprocessor.uniform_to_all(&"lights_count".to_owned(), light_count);
         self._postprocessor.uniform_to_all(&"camera".to_owned(), self._camera_data);
@@ -626,6 +647,14 @@ impl Renderer
         }
         //dbg!(spot_shadowmaps.clone());
         //dbg!(point_shadowmaps.clone());
+        let sm = *spot_shadowmaps.last().unwrap();
+        while spot_shadowmaps.len() < 4 {
+            spot_shadowmaps.push(sm)
+        }
+        let sm = *point_shadowmaps.last().unwrap();
+        while point_shadowmaps.len() < 4 {
+            point_shadowmaps.push(sm)
+        }
         self._postprocessor.image_array_to_all(&"spot_shadowmaps[4]".to_owned(), spot_shadowmaps.as_slice(), 0);
         self._postprocessor.image_array_to_all(&"point_shadowmaps[4]".to_owned(), point_shadowmaps.as_slice(), 0);
         /*self._postprocessor.image_to_all(&format!("normals"),   &self._geometry_pass.normals());
@@ -633,7 +662,7 @@ impl Renderer
         self._postprocessor.image_to_all(&format!("vectors"),   &self._geometry_pass.vectors());
         self._postprocessor.image_to_all(&format!("depth"),   &self._geometry_pass.depth());*/
         if inputs.len() > 0 {
-            for (name, img) in &inputs {
+            for (name, img) in inputs {
                 self._postprocessor.image_to_all(name, img);
             }
         }
