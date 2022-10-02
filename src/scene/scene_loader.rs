@@ -1,11 +1,13 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::path::Path;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use vulkano::device::Device;
 use byteorder::ReadBytesExt;
 
-use crate::mesh::*;
+use crate::mesh::{*, self};
 use crate::material::{MaterialRef, MaterialBuilder};
 use crate::texture::*;
 use crate::game_object::*;
@@ -141,7 +143,7 @@ fn read_object(
         let light_struct: LightStruct = read_struct(reader).unwrap();
         let resolution: u16 = if light_struct.shadow {512} else {0};
         let light = match light_struct.typenum {
-            0 => Light::Point(PointLight::new(light_struct.energy, light_struct.color, resolution, device.clone())),
+            0 => Light::Point(PointLight::new(light_struct.energy, light_struct.color, light_struct.znear, light_struct.zfar, resolution, device.clone())),
             1 => Light::Sun(SunLight::new(10.0, light_struct.energy, light_struct.color, resolution, device.clone())),
             2 => Light::Spot(SpotLight::new(
                 light_struct.energy,
@@ -189,18 +191,31 @@ pub(super) fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano
     ).collect();
 
     let meshes_count: u32 = read_struct(&mut reader).unwrap();
+    let mut submeshes = HashMap::<String, (u32, u32)>::new();
+    let mut meshes = HashMap::<String, MeshRef>::new();
+    let mut mesh_builder = Mesh::builder("");
     println!("Загрузка мешей ({})", meshes_count);
-    let meshes: HashMap<String, MeshRef> = (0..meshes_count).map(
-        |_| {
-            let mesh_name = read_string(&mut reader);
-            let mesh_path = format!("data/mesh/{}", mesh_name);
-            println!("Меш {}", mesh_name);
-            let mut mesh_builder = Mesh::builder(mesh_name.as_str());
-            mesh_builder.push_from_file(mesh_path.as_str()).unwrap();
-            (mesh_name, mesh_builder.build_mutex(queue.clone()).unwrap())
+    for i in 0..meshes_count {
+        let mesh_name = read_string(&mut reader);
+        let mesh_path = format!("data/mesh/{}", mesh_name);
+        println!("Меш {}", mesh_name);
+        if i==0 {
+            mesh_builder = Mesh::builder(mesh_name.as_str());
         }
-    ).collect();
-    
+        let (base, count) = mesh_builder.push_from_file(mesh_path.as_str()).unwrap();
+        submeshes.insert(mesh_name.clone(), (base as _, count as _));
+        if base + count > 1000000 || i==meshes_count-1 {
+            let mesh_buffer = mesh_builder.build_mutex(queue.clone()).unwrap();
+            let buff = mesh_buffer.as_buffer().unwrap();
+            for (k, (base, count)) in submeshes {
+                let submesh = SubMesh::from_mesh(k.clone(), buff, base, count, 0);
+                meshes.insert(k, submesh);
+            }
+            submeshes = HashMap::<String, (u32, u32)>::new();
+            mesh_builder = Mesh::builder(mesh_name.as_str());
+        }
+    }
+
     let objects_count : u32 = read_struct(&mut reader).unwrap();
     println!("Загрузка объектов ({})", objects_count);
     let objects: Vec<GameObjectRef> = (0..objects_count).map(|_| read_object(&mut reader, &materials, &meshes, device.clone())).collect();
