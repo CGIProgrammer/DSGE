@@ -9,3 +9,6 @@ Cargo.lock
 *.ktx
 *.bmp
 *.png
+*.tar.gz
+*.exe
+vulkaninfo
