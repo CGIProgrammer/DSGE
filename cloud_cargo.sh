@@ -9,6 +9,11 @@ execfile="$proj_dir/target/$target/$bin_name"
 port=7346
 key=~/.ssh/acer
 cargo_path='$HOME/.cargo/bin/cargo'
+features="use_image"
+
+if [[ "$features" ]] ; then
+   features="--features $features"
+fi
 
 echo "Сжатие исходников"
 tar -czf src.tar.gz Cargo.toml src #data
@@ -37,7 +42,7 @@ case "$target" in
  exit 1
 esac
 
-ssh -i $key -p $port $host "cd $proj_dir && tar -xf src.tar.gz && rm src.tar.gz && $cargo_path build $build_flag --bin $bin_name"
+ssh -i $key -p $port $host "cd $proj_dir && tar -xf src.tar.gz && rm src.tar.gz && $cargo_path build $features $build_flag --bin $bin_name"
 echo "Сборка завершена."
 
 #if [[ "$cmd" == "run" ]]; then

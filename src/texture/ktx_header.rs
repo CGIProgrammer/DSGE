@@ -1,9 +1,72 @@
-use byteorder::{BigEndian, ByteOrder, LittleEndian};
 use super::pixel_format::TexturePixelFormat;
+use byteorder::{BigEndian, ByteOrder, LittleEndian};
 
 pub(crate) const KTX1_IDENTIFIER: [u8; 12] = [
     0xAB, 0x4B, 0x54, 0x58, 0x20, 0x31, 0x31, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
 ];
+/*pub(crate) const KTX2_IDENTIFIER: [u8; 12] = [
+    0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A
+];
+
+#[derive(Copy, Clone)]
+pub struct Ktx2Header
+{
+    identifier: [u8; 12],
+    vk_format: u32,
+    type_size: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+    pixel_depth: u32,
+    layer_count: u32,
+    face_count: u32,
+    level_count: u32,
+    supercompression_scheme: u32,
+    dfd_byte_offset: u32,
+    dfd_byte_length: u32,
+    kvd_byte_offset: u32,
+    kvd_byte_length: u32,
+    sgd_byte_offset: u64,
+    sgd_byte_length: u64,
+}
+
+impl Ktx2Header
+{
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String>
+    {
+        if size_of::<Ktx2Header>() != bytes.len() {
+            return Err(format!("Длина байтового массива ({}) не равна {}",
+                bytes.len(),
+                size_of::<Ktx2Header>()
+            ));
+        }
+        let header: Ktx2Header = unsafe {
+            from_raw_parts(bytes as *const [u8] as _, 1)
+        }[0];
+        assert!(header.identifier == KTX2_IDENTIFIER);
+        Ok(header)
+    }
+
+    pub fn vk_format(&self) -> u32
+    {
+        self.vk_format
+    }
+
+    #[inline]
+    pub fn get_pixel_format(&self) -> TexturePixelFormat {
+
+        match self.vk_format {
+            super::pixel_format::GL_COMPRESSED_RGB8_ETC2      => TexturePixelFormat::ETC2_R8G8B8_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA8_ETC2_EAC => TexturePixelFormat::ETC2_R8G8B8A8_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_R11_EAC        => TexturePixelFormat::EAC_R11_UNORM_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RG11_EAC       => TexturePixelFormat::EAC_R11G11_UNORM_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGB_S3TC_DXT1_EXT  => TexturePixelFormat::BC1_RGB_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT1_EXT => TexturePixelFormat::BC1_RGBA_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT3_EXT => TexturePixelFormat::BC3_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT5_EXT => TexturePixelFormat::BC5_UNORM_BLOCK,
+            _ => panic!("Неизвестный формат сжатия 0x{:X}", self.vk_format)
+        }
+    }
+}*/
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct KTXHeader {
@@ -72,17 +135,30 @@ impl KTXHeader {
     }
     #[inline]
     pub fn get_pixel_format(&self) -> TexturePixelFormat {
-        
         match self._gl_internal_format {
-            super::pixel_format::GL_COMPRESSED_RGB8_ETC2 => TexturePixelFormat::ETC2_R8G8B8_SRGB_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RGBA8_ETC2_EAC => TexturePixelFormat::ETC2_R8G8B8A8_SRGB_BLOCK,
+            super::pixel_format::GL_COMPRESSED_RGB8_ETC2 => {
+                TexturePixelFormat::ETC2_R8G8B8_SRGB_BLOCK
+            }
+            super::pixel_format::GL_COMPRESSED_RGBA8_ETC2_EAC => {
+                TexturePixelFormat::ETC2_R8G8B8A8_SRGB_BLOCK
+            }
             super::pixel_format::GL_COMPRESSED_R11_EAC => TexturePixelFormat::EAC_R11_UNORM_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RG11_EAC => TexturePixelFormat::EAC_R11G11_UNORM_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RGB_S3TC_DXT1_EXT => TexturePixelFormat::BC1_RGB_SRGB_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT1_EXT => TexturePixelFormat::BC1_RGBA_SRGB_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT3_EXT => TexturePixelFormat::BC3_SRGB_BLOCK,
-            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT5_EXT => TexturePixelFormat::BC5_UNORM_BLOCK,
-            _ => panic!("Неизвестный формат сжатия")
+            super::pixel_format::GL_COMPRESSED_RG11_EAC => {
+                TexturePixelFormat::EAC_R11G11_UNORM_BLOCK
+            }
+            super::pixel_format::GL_COMPRESSED_RGB_S3TC_DXT1_EXT => {
+                TexturePixelFormat::BC1_RGB_SRGB_BLOCK
+            }
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT1_EXT => {
+                TexturePixelFormat::BC1_RGBA_SRGB_BLOCK
+            }
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT3_EXT => {
+                TexturePixelFormat::BC3_SRGB_BLOCK
+            }
+            super::pixel_format::GL_COMPRESSED_RGBA_S3TC_DXT5_EXT => {
+                TexturePixelFormat::BC5_UNORM_BLOCK
+            }
+            _ => panic!("Неизвестный формат сжатия 0x{:X}", self._gl_internal_format),
         }
     }
     #[inline]

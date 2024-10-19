@@ -1,118 +1,168 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::path::Path;
-use std::collections::{HashMap, HashSet};
 
-use vulkano::device::Device;
 use byteorder::ReadBytesExt;
 
-use crate::mesh::{*, self};
-use crate::material::{MaterialRef, MaterialBuilder};
-use crate::texture::*;
+use crate::components::{light::*, CameraComponent, MeshVisual};
 use crate::game_object::*;
+use crate::material::MaterialRef;
+use crate::mesh::*;
+use crate::resource_manager::ResourceManager;
+use crate::texture::*;
 use crate::types::Mat4;
-use crate::components::{CameraComponent, MeshVisual, light::*};
 use crate::utils::read_struct;
 
 #[allow(dead_code)]
-struct MaterialStruct
-{
-    diffuse_value: [f32; 3],
+struct MaterialStruct {
+    diffuse_value: [f32; 4],
     metallic_value: f32,
     specular_value: f32,
     roughness_value: f32,
     emission_value: [f32; 3],
-    transparency: f32,
-    transp_rough: f32
+    transp_rough: f32,
+    blend_method: i32,
+    shadow_method: i32,
 }
 
 #[repr(packed)]
 #[allow(dead_code)]
-struct LightStruct
-{
-    energy : f32,
+struct LightStruct {
+    energy: f32,
     color: [f32; 3],
-    typenum : u8,
-    shadow : bool,
-    znear : f32,
-    zfar : f32,
-    inner_angle : f32,
-    angle : f32,
+    typenum: u32,
+    shadow: u32,
+    shadow_mode: u32,
+    z_near: f32,
+    z_far: f32,
+    size: f32,
+    inner_angle: f32,
+    angle: f32,
 }
 
-fn read_string(reader: &mut std::fs::File) -> String
-{
-    let mut bytes : Vec<u8> = Vec::new();
+fn read_string(reader: &mut std::fs::File) -> String {
+    let mut bytes: Vec<u8> = Vec::new();
     loop {
         match reader.read_u8() {
             Ok(0u8) => break,
             Ok(byte) => bytes.push(byte),
-            Err(_) => break
+            Err(_) => break,
         }
-    };
+    }
     let result = String::from_utf8_lossy(bytes.as_slice()).to_string();
     return result;
 }
 
-fn read_texture(reader: &mut std::fs::File, queue: Arc<vulkano::device::Queue>) -> (String, Texture)
-{
+fn read_texture(
+    reader: &mut std::fs::File,
+    resource_manager: &mut ResourceManager,
+) -> (String, Texture) {
     let name = read_string(reader);
-    println!("Текстура \"{}\"", name);
     let filepath = read_string(reader);
-    let mut texture = Texture::from_file(queue, filepath).unwrap();
-    texture.set_anisotropy(None);
-    texture.set_horizontal_address(TextureRepeatMode::Repeat);
-    texture.set_vertical_address(TextureRepeatMode::Repeat);
-    texture.update_sampler();
-    (name, texture)
+    let filepath = filepath
+        .replace("./data/textures/", "")
+        .replace("data/textures/", "");
+    let result = resource_manager.get_texture(&filepath).unwrap();
+    println!("Текстура {name} {filepath}, {}x{}, mip {:?}", result.width(), result.height(), result._vk_image_access.mip_levels());
+    (name, result)
 }
 
-fn read_material(reader: &mut std::fs::File, queue: Arc<vulkano::device::Queue>, textures: &HashMap<String, Texture>) -> MaterialRef
-{
+fn read_material(
+    reader: &mut std::fs::File,
+    textures: &HashMap<String, Texture>,
+    resource_manager: &mut ResourceManager,
+) -> MaterialRef {
     let name = read_string(reader);
-    println!("Материал \"{}\"", name);
-    let fixed_struct : MaterialStruct = read_struct(reader).unwrap();
-    let device = queue.device().clone();
+    let fixed_struct: MaterialStruct = read_struct(reader).unwrap();
     let diffuse_texture = read_string(reader);
-    let _metallic_texture = read_string(reader);
-    let _specular_texture = read_string(reader);
-    let _roughness_texture = read_string(reader);
-    let _emission_texture = read_string(reader);
-    let _normals_texture = read_string(reader);
-    let mut material = MaterialBuilder::start(name.as_str(), device.clone());
-    material
-        .add_numeric_parameter("diffuse", fixed_struct.diffuse_value.into())
-        .add_numeric_parameter("roughness", fixed_struct.roughness_value.into())
-        .add_numeric_parameter("glow", fixed_struct.emission_value[0].into())
-        .add_numeric_parameter("metallic", fixed_struct.metallic_value.into());
-    if diffuse_texture != "" {
-        let texture = textures[&diffuse_texture].clone();
-        material
-            .define("diffuse_map", "fDiffuseMap")
-            .add_texture("fDiffuseMap", &texture);
+    let metallic_texture = read_string(reader);
+    let specular_texture = read_string(reader);
+    let roughness_texture = read_string(reader);
+    let emission_texture = read_string(reader);
+    let normals_texture = read_string(reader);
+    let new_material = resource_manager.new_material(&name);
+    {
+        let mut mat = new_material.lock();
+        mat.set_parameter("diffuse", fixed_struct.diffuse_value.into())
+            .unwrap();
+        mat.set_parameter("roughness", fixed_struct.roughness_value.into())
+            .unwrap();
+        mat.set_parameter("specular", fixed_struct.specular_value.into())
+            .unwrap();
+        mat.set_parameter("glow", fixed_struct.emission_value[0].into())
+            .unwrap();
+        mat.set_parameter("metallic", fixed_struct.metallic_value.into())
+            .unwrap();
+        mat.set_parameter("blend_method", fixed_struct.blend_method.into())
+            .unwrap();
+        mat.set_parameter("shadow_method", fixed_struct.shadow_method.into())
+            .unwrap();
+        if diffuse_texture != "" {
+            let texture = textures.get(&diffuse_texture).unwrap();
+            mat.set_parameter("use_diffuse_map", 1.into()).unwrap();
+            mat.replace_texture("fDiffuseMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_diffuse_map", 0.into()).unwrap();
+        };
+        if metallic_texture != "" {
+            let texture = textures.get(&metallic_texture).unwrap();
+            mat.set_parameter("use_metallic_map", 1.into()).unwrap();
+            mat.replace_texture("fMetallicMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_metallic_map", 0.into()).unwrap();
+        };
+        if normals_texture != "" {
+            let texture = textures.get(&normals_texture).unwrap();
+            mat.set_parameter("use_normal_map", 1.into()).unwrap();
+            mat.replace_texture("fNornalMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_normal_map", 0.into()).unwrap();
+        };
+        if roughness_texture != "" {
+            let texture = textures.get(&roughness_texture).unwrap();
+            mat.set_parameter("use_roughness_map", 1.into()).unwrap();
+            mat.replace_texture("fRoughnessMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_roughness_map", 0.into()).unwrap();
+        };
+        if specular_texture != "" {
+            let texture = textures.get(&specular_texture).unwrap();
+            mat.set_parameter("use_specular_map", 1.into()).unwrap();
+            mat.replace_texture("fSpecularMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_specular_map", 0.into()).unwrap();
+        };
+        if emission_texture != "" {
+            let texture = textures.get(&emission_texture).unwrap();
+            mat.set_parameter("use_emission_map", 1.into()).unwrap();
+            mat.replace_texture("fEmissionMap", &texture).unwrap();
+        } else {
+            mat.set_parameter("use_emission_map", 0.into()).unwrap();
+        };
     }
-    material.build_mutex(device)
+
+    new_material
 }
 
 fn read_object(
     reader: &mut std::fs::File,
+    resource_manager: &mut ResourceManager,
     materials: &HashMap<String, MaterialRef>,
     meshes: &HashMap<String, MeshRef>,
-    device: Arc<Device>
-) -> GameObjectRef
-{
+) -> GameObjectRef {
     let name = read_string(reader);
-    println!("Объект \"{}\"", name);
+    //println!("Объект \"{}\"", name);
     let _pname = read_string(reader);
     let _pbname = read_string(reader);
     //println!("pname: \"{}\", pbname: \"{}\"", _pname, _pbname);
     let obj_mutex = GameObject::new(name);
     let mut obj = obj_mutex.lock_write();
-    let mut transform = read_struct::<[f32; 12], std::fs::File>(reader).unwrap().to_vec();
+    let mut transform = read_struct::<[f32; 12], std::fs::File>(reader)
+        .unwrap()
+        .to_vec();
     transform.extend([0.0, 0.0, 0.0, 1.0]);
     let transform = Mat4::from_vec(transform.to_vec()).transpose();
     let _hidden: bool = reader.read_u8().unwrap() != 0;
+    let is_static: bool = reader.read_u8().unwrap() != 0;
     let has_mesh: bool = reader.read_u8().unwrap() != 0;
     let has_camera: bool = reader.read_u8().unwrap() != 0;
     let has_light: bool = reader.read_u8().unwrap() != 0;
@@ -131,99 +181,141 @@ fn read_object(
         let mesh = meshes[&mesh_name].clone();
         let material = materials[&material_name].clone();
         let mesh_component = MeshVisual::new(mesh, material, true);
-        println!("Тип: полисетка");
+        //println!("Тип: полисетка");
         obj.add_component(mesh_component);
     };
     if has_camera {
-        let camera_component = CameraComponent::new(1.0, 60.0 * 3.1415926535 / 180.0, 0.1, 100.0);
-        println!("Тип: камера");
+        let camera_component = CameraComponent::new(1.0, 60.0 * 3.1415926535 / 180.0, 0.1, 30.0);
+        //println!("Тип: камера");
         obj.add_component(camera_component);
     };
     if has_light {
         let light_struct: LightStruct = read_struct(reader).unwrap();
-        let resolution: u16 = if light_struct.shadow {512} else {0};
-        let light = match light_struct.typenum {
-            0 => Light::Point(PointLight::new(light_struct.energy, light_struct.color, light_struct.znear, light_struct.zfar, resolution, device.clone())),
-            1 => Light::Sun(SunLight::new(10.0, light_struct.energy, light_struct.color, resolution, device.clone())),
-            2 => Light::Spot(SpotLight::new(
-                light_struct.energy,
-                light_struct.color,
-                light_struct.angle,
-                light_struct.inner_angle,
-                light_struct.znear,
-                light_struct.zfar,
-                resolution,
-                device.clone()
-            )),
-            _ => panic!("Неподдерживаемый источник света")
+        //let resolution: u16 = if light_struct.shadow {512} else {0};
+        match light_struct.typenum {
+            0 => {
+                let point = PointLight::new(
+                    light_struct.energy,
+                    light_struct.color.into(),
+                    light_struct.z_near,
+                    light_struct.z_far,
+                    match light_struct.shadow_mode {
+                        0 => ShadowMapMode::None,
+                        1 => ShadowMapMode::Static(resource_manager.point_light_shadow_map_array().dims()[0] as _),
+                        2 => ShadowMapMode::FullyDynamic(resource_manager.point_light_shadow_map_array().dims()[0] as _),
+                        3 => ShadowMapMode::SemiDynamic(resource_manager.point_light_shadow_map_array().dims()[0] as _),
+                        _ => unreachable!(),
+                    },
+                    resource_manager.command_buffer_father(),
+                    resource_manager.allocator().clone()
+                );
+                obj.add_component(point);
+            },
+            1 => {
+                let sun = SunLight::new(
+                    light_struct.size,
+                    light_struct.energy,
+                    light_struct.color.into(),
+                    0.1,
+                    100.0,
+                    match light_struct.shadow_mode {
+                        0 => ShadowMapMode::None,
+                        1 => ShadowMapMode::Static(resource_manager.sun_light_shadow_map_array().dims()[0] as _),
+                        2 => ShadowMapMode::FullyDynamic(resource_manager.sun_light_shadow_map_array().dims()[0] as _),
+                        3 => ShadowMapMode::SemiDynamic(resource_manager.sun_light_shadow_map_array().dims()[0] as _),
+                        _ => unreachable!(),
+                    },
+                    resource_manager.command_buffer_father(),
+                    resource_manager.allocator().clone()
+                );
+                obj.add_component(sun);
+            },
+            2 => {
+                let spotlight = Spotlight::new(
+                    light_struct.energy,
+                    light_struct.color,
+                    light_struct.angle,
+                    light_struct.inner_angle,
+                    light_struct.z_near,
+                    light_struct.z_far,
+                    match light_struct.shadow_mode {
+                        0 => ShadowMapMode::None,
+                        1 => ShadowMapMode::Static(resource_manager.spotlight_shadow_map_array().dims()[0] as _),
+                        2 => ShadowMapMode::FullyDynamic(resource_manager.spotlight_shadow_map_array().dims()[0] as _),
+                        3 => ShadowMapMode::SemiDynamic(resource_manager.spotlight_shadow_map_array().dims()[0] as _),
+                        _ => unreachable!(),
+                    },
+                    resource_manager.command_buffer_father(),
+                    resource_manager.allocator().clone()
+                );
+                obj.add_component(spotlight);
+            },
+            unknown_type => panic!("Неподдерживаемый источник света: {unknown_type}."),
         };
-        let zfar = light_struct.zfar;
-        let znear = light_struct.znear;
-        println!("Тип: свет ({}), zNear {}, zFar {}", light.ty(), znear, zfar);
-        obj.add_component(light);
     };
-    println!("Location {}, {}, {}", transform[12], transform[13], transform[14]);
-    let obj_transform = obj.transform_mut();
-    obj_transform.local = transform;
-    obj_transform.global = transform;
-    obj_transform.global = transform;
-    obj_transform.global_prev = transform;
+    //println!("Location {}, {}, {}", transform[12], transform[13], transform[14]);
+    obj.set_static(false);
+    if let Some(obj_transform) = obj.transform_mut() {
+        obj_transform.local = transform;
+        obj_transform.global = transform;
+        obj_transform.global = transform;
+        obj_transform.global_prev = transform;
+    }
+    obj.set_static(is_static);
     drop(obj);
     obj_mutex
 }
 
-pub(super) fn read_scene<P : AsRef<Path> + ToString>(path: P, queue: Arc<vulkano::device::Queue>) -> (Vec<GameObjectRef>, Option<GameObjectRef>)
-{
-    let mut reader = std::fs::File::open(path).unwrap();
-    let device = queue.device();
+pub(super) fn read_scene<P: AsRef<Path> + ToString + Clone>(
+    path: P,
+    resource_manager: &mut ResourceManager,
+) -> (Vec<GameObjectRef>, Option<GameObjectRef>) {
+    //let mut resource_manager = ResourceManager::new(queue.device().clone(), queue.clone(), super_resolution).unwrap();
+
+    let mut reader = match std::fs::File::open(path.clone()) {
+        Ok(rdr) => rdr,
+        Err(_) => panic!("Сцена {:?} не найдена.", path.as_ref()),
+    };
     let textures_count: u32 = read_struct(&mut reader).unwrap();
     println!("Загрузка текстур ({})", textures_count);
-    let textures: HashMap<String, Texture> = (0..textures_count).map(|_| read_texture(&mut reader, queue.clone())).collect();
+    let textures: HashMap<String, Texture> = (0..textures_count)
+        .map(|_| read_texture(&mut reader, resource_manager))
+        .collect();
 
     let materials_count: u32 = read_struct(&mut reader).unwrap();
     println!("Загрузка материалов ({})", materials_count);
-    let materials: HashMap<String, MaterialRef> = (0..materials_count).map(
-        |_| {
-            let material = read_material(&mut reader, queue.clone(), &textures);
+    let materials: HashMap<String, MaterialRef> = (0..materials_count)
+        .map(|_| {
+            let material = read_material(&mut reader, &textures, resource_manager);
             let name = material.lock().name().clone();
             (name, material)
-        }
-    ).collect();
+        })
+        .collect();
 
     let meshes_count: u32 = read_struct(&mut reader).unwrap();
-    let mut submeshes = HashMap::<String, (u32, u32)>::new();
-    let mut meshes = HashMap::<String, MeshRef>::new();
-    let mut mesh_builder = Mesh::builder("");
     println!("Загрузка мешей ({})", meshes_count);
-    for i in 0..meshes_count {
-        let mesh_name = read_string(&mut reader);
-        let mesh_path = format!("data/mesh/{}", mesh_name);
-        println!("Меш {}", mesh_name);
-        if i==0 {
-            mesh_builder = Mesh::builder(mesh_name.as_str());
-        }
-        let (base, count) = mesh_builder.push_from_file(mesh_path.as_str()).unwrap();
-        submeshes.insert(mesh_name.clone(), (base as _, count as _));
-        if base + count > 1000000 || i==meshes_count-1 {
-            let mesh_buffer = mesh_builder.build_mutex(queue.clone()).unwrap();
-            let buff = mesh_buffer.as_buffer().unwrap();
-            for (k, (base, count)) in submeshes {
-                let submesh = SubMesh::from_mesh(k.clone(), buff, base, count, 0);
-                meshes.insert(k, submesh);
-            }
-            submeshes = HashMap::<String, (u32, u32)>::new();
-            mesh_builder = Mesh::builder(mesh_name.as_str());
-        }
-    }
+    let mesh_names = (0..meshes_count)
+        .map(|_| {
+            let name = read_string(&mut reader);
+            println!("Меш {name}");
+            name.replace("data/mesh/", "")
+        })
+        .collect::<Vec<_>>();
 
-    let objects_count : u32 = read_struct(&mut reader).unwrap();
+    let meshes = resource_manager.get_batch_of_meshes(&mesh_names);
+
+    let objects_count: u32 = read_struct(&mut reader).unwrap();
     println!("Загрузка объектов ({})", objects_count);
-    let objects: Vec<GameObjectRef> = (0..objects_count).map(|_| read_object(&mut reader, &materials, &meshes, device.clone())).collect();
-    let camera = match objects.iter().find(|obj| (*obj).lock_write().camera().is_some())
+    let objects: Vec<GameObjectRef> = (0..objects_count)
+        .map(|_| read_object(&mut reader, resource_manager, &materials, &meshes))
+        .collect();
+    let camera = match objects
+        .iter()
+        .find(|obj| (*obj).lock_write().camera().is_some())
     {
         Some(cam) => Some(cam.clone()),
-        None => None
+        None => None,
     };
-
+    resource_manager.flush_futures();
     (objects, camera)
 }

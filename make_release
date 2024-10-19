@@ -1,0 +1,29 @@
+#!/bin/bash
+
+TARGET=x86_64-unknown-linux-gnu
+
+if [ "$1" != "" ]; then
+    TARGET="$1"
+fi
+
+cargo build --release --target "$TARGET"
+
+rm dsge_release.tgz
+
+ln -s `pwd` dsge_release
+if [ -e "target/$TARGET/release/base_example.exe" ]; then
+    echo "Файл для Windows"
+    ln "target/$TARGET/release/base_example.exe" ./dsge.exe
+    EXECUTABLE=dsge.exe
+else
+    ln "target/$TARGET/release/base_example" ./dsge
+    EXECUTABLE=dsge
+fi
+
+tar -czvhf dsge_release.tgz dsge_release/data/shaders dsge_release/data/scenes \
+          dsge_release/data/texture dsge_release/data/textures dsge_release/data/mesh \
+          dsge_release/vulkan_sdk \
+          dsge_release/data/blue_noise_1024.png dsge_release/$EXECUTABLE
+
+rm $EXECUTABLE
+rm dsge_release

@@ -9,14 +9,14 @@
 
 // Ютовский чайник из примера vulkano
 use bytemuck::{Pod, Zeroable};
+use vulkano::pipeline::graphics::vertex_input::Vertex;
 
 #[repr(C)]
-#[derive(Default, Copy, Clone, Zeroable, Pod)]
+#[derive(Default, Copy, Clone, Zeroable, Pod, Vertex)]
 pub struct SmallVertex {
+    #[format(R32G32B32_SFLOAT)]
     pub position: [f32; 3],
 }
-
-vulkano::impl_vertex!(SmallVertex, position);
 
 pub const VERTICES: [SmallVertex; 531] = [
     SmallVertex {
@@ -1616,12 +1616,11 @@ pub const VERTICES: [SmallVertex; 531] = [
 ];
 
 #[repr(C)]
-#[derive(Default, Copy, Clone, Pod, Zeroable)]
+#[derive(Default, Copy, Clone, Pod, Zeroable, Vertex)]
 pub struct Normal {
+    #[format(R32G32B32_SFLOAT)]
     pub normal: [f32; 3],
 }
-
-vulkano::impl_vertex!(Normal, normal);
 
 pub const NORMALS: [Normal; 531] = [
     Normal {

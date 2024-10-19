@@ -1,20 +1,22 @@
 use super::PostprocessingPass;
-use super::{StageIndex};
-use crate::texture::{TexturePixelFormat, TextureFilter};
-
+use super::StageIndex;
+use crate::texture::TexturePixelFormat;
 
 #[allow(dead_code)]
-impl PostprocessingPass
-{
-	/// Адаптированная демосцена Rolling Hills (https://www.shadertoy.com/view/Xsf3zX)
-	pub fn rolling_hills(&mut self, width: u16, height: u16, sc_format: TexturePixelFormat) -> Result<StageIndex, String>
-	{
-        let mut stage_builder = Self::stage_builder(self._device.clone());
-		stage_builder
+impl PostprocessingPass {
+    /// Адаптированная демосцена Rolling Hills (https://www.shadertoy.com/view/Xsf3zX)
+    pub fn rolling_hills(
+        &mut self,
+        width: u16,
+        height: u16,
+        sc_format: TexturePixelFormat,
+    ) -> Result<StageIndex, String> {
+        let mut stage_builder = Self::stage_builder(self.device().clone());
+        stage_builder
 			.dimenstions(width, height)
 			//.input("image")
 			//.input("accumulator")
-            .output("swapchain_out", sc_format, TextureFilter::Nearest, false)
+            .output("swapchain_out", sc_format, 0)
 			.code("
 // Rolling hills. By David Hoskins, November 2013.
 // License Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported License.
@@ -391,6 +393,6 @@ void main()
 	swapchain_out = vec4(pow(col, vec3(2.2)),1.0);
 }");
         let shader = stage_builder.build(self);
-		shader
-	}
+        shader
+    }
 }

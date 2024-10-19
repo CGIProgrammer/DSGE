@@ -1,0 +1,56 @@
+#!/bin/bash
+release=""
+command="build"
+target="debug"
+binary=base_example
+last_build=""
+command_word="Сборка"
+target_word="отладочной"
+
+features="use_image"
+
+for arg in "$@" ; do
+    case "$arg" in
+        "release")
+            release="--release"
+            target_word="релизной"
+            target="release"
+            ;;
+
+        "-r")
+            command="run"
+            command_word="Запуск"
+            ;;
+
+        "-cs")  # Clear shaders - очистка кэша шейдеров.
+            echo "Очистка кэша шейдеров."
+            rm shader_cache/*.spv*
+            ;;
+
+        "-ni")  # No image - отключение поддержки всех форматов изображений, кроме DDS.
+            echo "Отключение библиотеки image."
+            features=""
+            ;;
+
+        "-nc")  # No cargo - запуск последней скомпилированной версии
+            last_build="./target/$target/$binary"
+            ;;
+        *)
+            scene_name="$arg"
+            break
+            ;;
+    esac
+done
+
+echo "$command_word $target_word версии."
+
+if [[ "$features" != "" ]]; then
+    features="--features=$features"
+fi
+
+if [[ "$last_build" != "" ]]; then
+    $last_build $scene_name
+    exit
+fi
+
+cargo $command $features $release $scene_name
