@@ -1,0 +1,282 @@
+#include "../depth_packing.h"
+#include "../constants.h"
+#include "../random.glsl"
+#include "pbr_structures.h"
+precision highp float;
+
+float gRenderDepth(sampler2D depthmap, vec2 crd, float z_near, float z_far) {
+    return linearize_depth(texture(depthmap, crd).r, z_near, z_far);
+}
+
+// vec4 SSRT2(sampler2D scene, vec2 screen_crd, vec3 rayHit, vec3 reflection, float z_near, float z_far, out vec2 UV)
+// {
+//     float de = gRenderDepth(gDepth, screen_crd, z_near, z_far);
+//     float min_dist = 0.02;//*(1.0+de);
+//     float max_dist = min_dist*50.0; //clamp(min_dist, 0.5, 0.75);
+//     float steps = 10.0;
+//     float dd = (max_dist-min_dist)/steps;
+//     float dd2 = pow(max_dist/min_dist,1.0/steps);
+//     vec4 projectedPosition;
+    
+//     mat4 camt = camera.projection * camera.transform_inverted;
+//     float delta,pd=0.0;
+//     float intensity = 1.0;
+//     for (float d=min_dist;d<max_dist;d*=dd2)
+//     {
+//         delta = d-pd;
+//         vec3 mlrefl = reflection*d;
+//         vec4 mlRayHit = vec4(rayHit + mlrefl, 1.0);
+        
+//         projectedPosition = camt * mlRayHit;
+//         UV = projectedPosition.xy / projectedPosition.w;
+//         UV = UV*0.5+0.5;
+//         float current_depth = gRenderDepth(gDepth, UV, z_near, z_far);
+//         if (UV.x>1.0 || UV.x<0.0 || UV.y>1.0 || UV.y<0.0)
+//         {
+//             break;
+//         }
+//         else if (projectedPosition.w>current_depth)
+//         {
+//             if (projectedPosition.w-current_depth < delta*5.7)
+//             {
+//                 vec2 UV = SSR_BS(mlRayHit, mlrefl, 5, z_near, z_far);
+//                 vec3 diffuse = texture(scene, UV).rgb;
+//                 vec3 albedo = texture(gAlbedo, UV).rgb;
+//                 vec4 dynamicAO = vec4(diffuse*albedo, 1.0 / (1.0 + d*d));
+//                 return dynamicAO;
+//             }
+//         }
+//         pd = d;
+//     }
+//     return vec4(0.0);
+// }
+
+vec2 SSR_BS(inout vec3 rayHit, vec3 dir, int steps, float z_near, float z_far)
+{
+  vec2 UV;
+  for (int i=0;i<steps;i++)
+  {
+    UV = rayHit.xy / rayHit.z;
+    UV = UV*0.5+0.5;
+    
+    float dDepth = rayHit.z - gRenderDepth(gDepth, UV, z_near, z_far);
+    
+    dir *= 0.5;
+    if (dDepth>0.0)
+    {
+      rayHit -= dir;
+    }
+    else
+    {
+      rayHit += dir;
+    }
+  }
+  UV = rayHit.xy / rayHit.z;
+  UV = UV*0.5+0.5;
+  return UV;
+}
+
+vec4 SSR(
+    sampler2D scene,    // What will be reflect
+    vec2 screen_crd,    // Ray origin in screen coordinated
+    vec3 V,             // View direction
+    vec3 rayHit,        // Ray origin in world space coordinated
+    vec3 reflection,    // Ray direction
+    vec3 environment,   // Color returned if ray hits nothing
+    int steps,          // Marching steps
+    int steps_bs,       // Binary search steps
+    float max_dist,     // The distance at which it is assumed that the ray did not hit anything.
+    float min_dist,     // Distance from ray origin to avoid intersection with origin surface
+    float z_near,       // Near clip distance of frustum
+    float z_far,        // Far clip distance of frustum
+    float constant_thickness,   // Thickness of surface that ray intersects
+    out vec2 UV)
+{
+    float dd = (max_dist-min_dist) / float(steps);
+    float dd2 = pow(max_dist/min_dist,1.0/steps);
+    vec3 projectedPosition;
+    mat4 camt = camera.projection * camera.transform_inverted;
+    float delta, pd=0.0;
+    float intensity = 1.0;
+    vec3 currentHit = vec3(0.0);
+    vec3 ray_origin = (camt * vec4(rayHit, 1.0)).xyw;
+    vec3 ray_vector = (camt * vec4(rayHit + reflection, 1.0)).xyw - ray_origin;
+    
+    for (float d=min_dist; d<max_dist; d*=dd2)
+    {
+        delta = d-pd;
+        projectedPosition = (ray_origin + ray_vector * d);
+        UV = projectedPosition.xy / projectedPosition.z;
+        UV = UV*0.5+0.5;
+        float rd = gRenderDepth(gDepth, UV, z_near, z_far);
+        if (UV.x>1.0 || UV.x<0.0 || UV.y>1.0 || UV.y<0.0)
+        {
+            return vec4(environment.rgb, max_dist + 1.0);
+        }
+        else if (projectedPosition.z>rd)
+        {
+            vec3 nrm = texture(gNormals, UV).xyz;
+            float nrd = constant_thickness < 0.0 ?
+                4.0 / (max(dot(nrm, V)*2.0, 0.0) + 1.0) :
+                constant_thickness;
+            if (projectedPosition.z-rd < delta*nrd)
+            {
+				float att = 1.0;
+                vec2 fading = vec2(30.0);
+                fading.y = fading.x*resolution.dimensions.y/resolution.dimensions.x;
+
+                UV = SSR_BS(projectedPosition, ray_vector, steps_bs, z_near, z_far);
+                d = length(projectedPosition - ray_origin);
+                att *= clamp(UV.x * fading.x, 0.0, 1.0);
+                att *= clamp(UV.y * fading.y, 0.0, 1.0);
+                att *= clamp((1.0-UV.x) * fading.x, 0.0, 1.0);
+                att *= clamp((1.0-UV.y) * fading.y, 0.0, 1.0);
+                //float lod = clamp(d * surface.roughness * 5.0, 2.0, 5.0);
+                vec4 alb = texture(gAlbedo, UV);
+                if (alb.a==1.0 /*&& d < max_dist*/) {
+                    vec3 refl = texture(scene, UV).rgb*alb.rgb;
+                    return vec4(refl, d);
+                    return vec4(mix(environment, refl, clamp(att,0.0,1.0)), d);
+                }
+                else
+                {
+                    return vec4(environment.rgb, max_dist + 1.0);
+                }
+            }
+            else
+            {
+                //continue;
+            }
+        }
+        pd = d;
+    }
+    return vec4(environment, max_dist + 1.0);
+}
+
+vec3 CalculateKs( PBRSurface surface, vec3 V) {
+    vec3 F0 = mix(vec3(0.04), surface.albedo, surface.metalness);
+    float NdotV = max(0.0, dot(surface.normal, V));
+    vec3 F = F0 + (1.0 - F0) * pow(1.0 - NdotV, 5.0);
+    return F * surface.specular;
+}
+
+void CalculatePBR( PBRSurface surface, vec3 V, vec3 L, out vec3 diffuse, out vec3 specular) {
+    float NdotV = max(0.0, dot(surface.normal, V));
+    vec3 kS = CalculateKs(surface, V);
+    specular = kS * float(NdotV > 0.0);
+    diffuse = (1.0 - kS) * (1.0 - surface.metalness); // * float(NdotV > 0.0);
+}
+
+void main()
+{
+    vec2 camera_zrange = depth_range(camera.projection);
+    vec2 tex_map = pixelCoord / resolution.dimensions;
+    ivec2 pixelCoord = ivec2(pixelCoord);
+    
+    float linear_depth = linearize_depth(texelFetch(gDepth, pixelCoord, 0).r, camera_zrange.x, camera_zrange.y);
+    if (texelFetch(gDepth, pixelCoord, 0).r==1.0) {
+        linear_depth = 1e14;
+        specular_out = vec4(1.0);
+        diffuse_out = vec4(1.0);
+        return;
+    }
+
+    vec3 albedo = texelFetch(gAlbedo, pixelCoord, 0).rgb;
+    vec3 normals = normalize(texelFetch(gNormals, pixelCoord, 0).rgb);
+    vec3 position = gPosition(linear_depth, fragCoord, camera.projection_inverted, camera.transform).xyz;
+    vec3 nV = normalize(camera.transform[3].xyz - position);
+    vec4 masks = texelFetch(gMasks, pixelCoord, 0);
+
+    PBRSurface surface;
+    surface.position = position;
+    surface.albedo = albedo;
+    surface.normal = normals;
+    surface.specular = masks.r;
+    surface.roughness = clamp(masks.g, 0.0, 1.0);
+    surface.metalness = masks.b;
+
+    vec3 F0 = mix(vec3(0.04), surface.albedo, surface.metalness);
+    diffuse_out = texelFetch(diffuse_in, pixelCoord, 0);
+    specular_out = texelFetch(specular_in, pixelCoord, 0);
+    vec3 ambient = vec3(0.02);
+    float depth = gRenderDepth(gDepth, tex_map, camera_zrange.x, camera_zrange.y);
+
+    float NdotV = max(dot(surface.normal, nV), 0.0);
+    int samples = 1; //int(round(surface.roughness * 1.0 + 1.0));
+    //surface.roughness = pow(surface.roughness, 0.1);
+
+    bool diffuse_flag;
+    float diffuse_flag_fl;
+
+    float kkS = 0.0;
+    float kkD = 0.0;
+    vec3 rtS = vec3(0.0);
+    vec3 rtD = vec3(0.0);
+    for (int i=0; i<samples; i++) {
+        vec4 noise = bluerand4(blue_noise, int(mod(i + timer.frame*samples, 64)));
+        noise.xyz = normalize(noise.xyz * 2.0 - 1.0);
+        int steps = 0;
+        int steps_bs = 8;
+        float max_dist;
+        float min_dist;
+        vec3 rdir, vector, kS;
+        if (dot(noise.xyz, surface.normal) < 0.0) {
+            noise.xyz = -noise.xyz;
+        }
+        kS = CalculateKs(surface, nV);
+        diffuse_flag = (surface.metalness > 0.5) ? false : (noise.a > kS.r);
+        diffuse_flag_fl = float(diffuse_flag);
+        
+        noise.xyz = normalize(mix(noise.xyz, surface.normal, 0.4));
+        vector = reflect(-nV, surface.normal);
+        if (diffuse_flag) {
+            vector = mix(vector, noise.xyz, 1.0);
+        } else {
+            vector = mix(vector, noise.xyz, surface.roughness);
+        }
+
+        vec2 end_ray_crd = tex_map;
+        float thickness;
+
+        vec3 specular, diffuse, diff_spec, ssr_ambient;
+        CalculatePBR(surface, nV, vector, diffuse, specular);
+        
+        // Параметры SSRT для максимальной шероховатости (SSAO)
+        float max_dist_diffuse = clamp(depth, 0.1, 1.0);
+        float min_dist_diffuse = max(max_dist_diffuse * 0.01, 0.01);
+        float thickness_diffuse = 1.0;
+        float steps_bs_diffuse = 5.0;
+        float steps_diffuse = 8.0;
+        
+        // Параметры SSRT для минимальной шероховатости (SSR)
+        float max_dist_specular = max(depth*10.0, 0.5);
+        float min_dist_specular = max(max_dist_specular * 0.01, 0.01);
+        float thickness_specular = -1.0;
+        float steps_bs_specular = 8.0;
+        float steps_specular = mix(15.0, 20.0, surface.roughness) * 10.0;
+
+        // Миксы параметров SSR
+        max_dist = mix(max_dist_specular, max_dist_diffuse, 0.0);
+        min_dist = mix(min_dist_specular, min_dist_diffuse, 0.0);
+        thickness = mix(thickness_specular, thickness_diffuse, 0.0);
+        steps_bs = int(round(mix(steps_bs_specular, steps_bs_diffuse, 0.0)));
+        steps = int(round(mix(steps_specular, steps_diffuse, 0.0)));
+
+        ssr_ambient = mix(ambient, ambient * surface.albedo, kS * surface.roughness);
+        vec4 ssr = SSR(diffuse_in, tex_map, nV, position, vector, vec3(0.0), steps, steps_bs, max_dist, min_dist, camera_zrange.x, camera_zrange.y, thickness, end_ray_crd);
+
+        ssr.rgb += mix(
+            ssr_ambient,
+            texture(gAlbedo, end_ray_crd).rgb * mix(vec3(0.0), ambient, (1.0 - diffuse_flag_fl)),
+            float(ssr.a < max_dist)
+        );
+
+        //diff_spec = (diffuse + specular) * ssr.rgb / surface.albedo;
+        rtD += diffuse * ssr.rgb * (diffuse_flag_fl);
+        rtS += specular * ssr.rgb * (1.0 - diffuse_flag_fl); //mix(ssr.rgb, ssr.rgb * surface.albedo, surface.metalness);
+    }
+    //float spec_mask = 1.0 - max(surface.specular, surface.metalness);
+    diffuse_out.rgb += rtD / float(samples);
+    specular_out.rgb += rtS / float(samples);
+    //specular_out.rgb /= (max(surface.specular, surface.metalness) + 1.0/255.0);
+}

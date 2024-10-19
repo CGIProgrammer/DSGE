@@ -1,27 +1,39 @@
 use super::PostprocessingPass;
-use crate::texture::{TexturePixelFormat, TextureFilter, TextureView};
-use super::{StageIndex, StageOutputIndex, StageInputIndex};
+use super::{StageIndex, StageInputIndex, StageOutputIndex};
+use crate::texture::{TextureFilter, TexturePixelFormat, TextureView};
 
 #[allow(dead_code)]
-impl PostprocessingPass
-{
+impl PostprocessingPass {
     /// Адаптированный Super Resolution v1.0 от AMD
-    pub fn fidelityfx_super_resolution(&mut self, width: u16, height: u16) -> ((StageIndex, StageInputIndex), (StageIndex, StageOutputIndex))
-    {
+    pub fn fidelityfx_super_resolution(
+        &mut self,
+        width: u16,
+        height: u16,
+    ) -> Result<
+        (
+            (StageIndex, StageInputIndex),
+            (StageIndex, StageOutputIndex),
+        ),
+        String,
+    > {
         let easu = self.make_easu_stage(width, height).unwrap();
         let rcas = self.make_rcas_stage(width, height).unwrap();
-        self.link_stages(easu, 0, rcas, "EASU_pass".to_owned());
-        ((easu, "albedo".to_owned()), (rcas, 0))
+        self.link_stages(easu, 0, None, rcas, "EASU_pass".to_owned())?;
+        Ok(((easu, "albedo".to_owned()), (rcas, 0)))
     }
-    
-    fn make_easu_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String>
-    {
-        let mut stage_builder = Self::stage_builder(self._device.clone());
+
+    fn make_easu_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String> {
+        let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("albedo", TextureView::Dim2d, false)
-            .output("EASU_pass", TexturePixelFormat::R8G8B8A8_UNORM, TextureFilter::Nearest, false)
-            .code("
+            .input("albedo", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .output(
+                "EASU_pass",
+                TexturePixelFormat::R8G8B8A8_UNORM,
+                0,
+            )
+            .code(
+                "
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
             // Permission is hereby granted, free of charge, to any person obtaining a copy
             // of this software and associated documentation files(the \"Software\"), to deal
@@ -209,18 +221,23 @@ impl PostprocessingPass
                 );
                 FsrEasuF(c, fragCoord, con0, con1, con2, con3);
                 EASU_pass = vec4(c.xyz, 1.0);
-            }");
-            stage_builder.build(self)
+            }",
+            );
+        stage_builder.build(self)
     }
 
-    fn make_rcas_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String>
-    {
-        let mut stage_builder = Self::stage_builder(self._device.clone());
+    fn make_rcas_stage(&mut self, width: u16, height: u16) -> Result<StageIndex, String> {
+        let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("EASU_pass", TextureView::Dim2d, false)
-            .output("fsr_out", TexturePixelFormat::B8G8R8A8_SRGB, TextureFilter::Nearest, false)
-            .code("
+            .input("EASU_pass", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .output(
+                "fsr_out",
+                TexturePixelFormat::B8G8R8A8_SRGB,
+                0,
+            )
+            .code(
+                "
             // Copyright (c) 2021 Advanced Micro Devices, Inc. All rights reserved.
             // Permission is hereby granted, free of charge, to any person obtaining a copy
             // of this software and associated documentation files(the \"Software\"), to deal
@@ -315,7 +332,8 @@ impl PostprocessingPass
                 vec3 col = FsrRcasF(fragCoord-vec2(1.0), con);
 
                 fsr_out = vec4(col, 1.0);
-            }");
-            stage_builder.build(self)
+            }",
+            );
+        stage_builder.build(self)
     }
 }

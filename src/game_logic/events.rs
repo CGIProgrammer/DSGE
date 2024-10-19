@@ -1,52 +1,48 @@
 use std::collections::HashMap;
 
-use winit::event::VirtualKeyCode;
-pub use winit::event::{Event, WindowEvent, DeviceEvent, KeyboardInput};
-use crate::game_object::{GameObjectRef, GameObject};
-use crate::references::*;
 use crate::game_logic::Behaviour;
+use crate::game_object::{GameObject, GameObjectRef};
+use crate::references::*;
 pub use crate::time::UniformTime as FrameTick;
-use crate::time::{UniformTime, Timer};
+use crate::time::{Timer, UniformTime};
 use crate::utils::RefId;
+use winit::event::VirtualKeyCode;
+pub use winit::event::{DeviceEvent, Event, KeyboardInput, WindowEvent};
 
 use super::behaviour::DynBehaviour;
 
-pub(crate) type EventHandlerBoxed = RcBox<dyn FnMut(&GameObjectRef, &mut dyn Behaviour, AbstractEvent) + Sync + Send>;
+pub(crate) type EventHandlerBoxed =
+    RcBox<dyn FnMut(&GameObjectRef, &mut dyn Behaviour, AbstractEvent) + Sync + Send>;
 type EventsByComponentId = HashMap<i32, EventHandler>;
 type EventsByObjectId = HashMap<i32, EventsByComponentId>;
 type EventsByEventTypeId = HashMap<u32, EventsByObjectId>;
 
-
-impl Default for KeyboardEvent
-{
+impl Default for KeyboardEvent {
     fn default() -> Self {
         Self {
             key_id: VirtualKeyCode::Escape,
-            state: 0
+            state: 0,
         }
     }
 }
 
 #[derive(Clone, Copy, Default)]
-pub struct MouseMoveEvent
-{
+pub struct MouseMoveEvent {
     pub dx: i32,
     pub dy: i32,
 }
 #[derive(Clone, Copy, Default)]
-pub struct MouseClickEvent
-{
+pub struct MouseClickEvent {
     pub lmb: i32,
     pub rmb: i32,
     pub mmb: i32,
-    pub wheel: (i32, i32)
+    pub wheel: (i32, i32),
 }
 
 #[derive(Clone, Copy)]
-pub struct KeyboardEvent
-{
+pub struct KeyboardEvent {
     pub key_id: VirtualKeyCode,
-    pub state: i32
+    pub state: i32,
 }
 
 macro_rules! events_enums {
@@ -83,7 +79,7 @@ macro_rules! events_enums {
     };
 }
 
-events_enums!{
+events_enums! {
     MouseMove(MouseMoveEvent),
     MouseClick(MouseClickEvent),
     Keyboard(KeyboardEvent),
@@ -92,18 +88,15 @@ events_enums!{
 }
 
 #[derive(Default, Clone)]
-pub struct EventProcessor
-{
+pub struct EventProcessor {
     event_handlers: RcBox<EventsByEventTypeId>,
     event_stack: RcBox<Vec<AbstractEvent>>,
     pub(crate) timer: Timer,
-    pub(crate) time: RcBox<UniformTime>
+    pub(crate) time: RcBox<UniformTime>,
 }
 
-impl EventProcessor
-{
-    pub(crate) fn update_object(&mut self, obj: &GameObject)
-    {
+impl EventProcessor {
+    pub(crate) fn update_object(&mut self, obj: &GameObject) {
         let components = obj.get_all_components().clone();
         let self_event_handlers = &mut *self.event_handlers.lock_write();
         let obj_id = obj as *const GameObject as i32;
@@ -124,7 +117,7 @@ impl EventProcessor
                     let eh = EventHandler {
                         event_handler: event_handler.clone(),
                         component: cmp.clone(),
-                        owner: obj.transform._owner.clone().unwrap()
+                        owner: obj.transform._owner.clone().unwrap(),
                     };
                     by_object_id.insert(component_id, eh);
                     self.send_event(AbstractEvent::InitialTick(*self.time.lock()));
@@ -133,65 +126,58 @@ impl EventProcessor
         }
     }
 
-    pub(crate) fn remove_object(&mut self, obj: GameObjectRef)
-    {
+    pub(crate) fn remove_object(&mut self, obj: GameObjectRef) {
         let components = obj.lock().get_all_components().clone();
-        for component in components
-        {
+        for component in components {
             let mut compon = component.lock().unwrap();
             compon.on_unlink(obj.clone(), AbstractEvent::FrameTick(*self.time.lock()));
         }
-        for (_eh_id, obj_list) in &mut *self.event_handlers.lock()
-        {
+        for (_eh_id, obj_list) in &mut *self.event_handlers.lock() {
             obj_list.remove(&obj.box_id());
         }
     }
 
-    pub fn send_event(&self, event: AbstractEvent)
-    {
+    pub fn send_event(&self, event: AbstractEvent) {
         self.event_stack.lock_write().push(event);
     }
 
-    pub fn step(&mut self)
-    {
+    pub fn step(&mut self) {
         *self.time.lock() = self.timer.next_frame();
         self.send_event(AbstractEvent::FrameTick(*self.time.lock()));
     }
 
-    pub fn execute(&self)
-    {
+    pub fn execute(&self) {
         loop {
             let mut event_stack = self.event_stack.lock();
             if event_stack.len() == 0 {
                 break;
             }
             let event = event_stack.remove(0);
-            if let Some(event_handlers) = self.event_handlers.lock().get_mut(&event.variant_id())
-            {
-                for (_, handlers_by_obj_id) in event_handlers
-                {
+            if let Some(event_handlers) = self.event_handlers.lock().get_mut(&event.variant_id()) {
+                for (_, handlers_by_obj_id) in event_handlers {
                     for (_, event_handler) in handlers_by_obj_id {
                         event_handler.call(event);
                     }
                 }
             }
-        };
+        }
     }
 }
 
 #[derive(Clone)]
-struct EventHandler
-{
+struct EventHandler {
     event_handler: EventHandlerBoxed,
     component: DynBehaviour,
     owner: GameObjectRef,
 }
 
 #[allow(dead_code)]
-impl EventHandler
-{
-    pub fn new(owner: GameObjectRef, component: DynBehaviour, event_handler: EventHandlerBoxed) -> Self
-    {
+impl EventHandler {
+    pub fn new(
+        owner: GameObjectRef,
+        component: DynBehaviour,
+        event_handler: EventHandlerBoxed,
+    ) -> Self {
         Self {
             event_handler: event_handler,
             component: component,
@@ -199,8 +185,11 @@ impl EventHandler
         }
     }
 
-    fn call(&mut self, event: AbstractEvent)
-    {
-        (self.event_handler.lock().unwrap())(&self.owner, &mut *self.component.lock().unwrap(), event)
+    fn call(&mut self, event: AbstractEvent) {
+        (self.event_handler.lock().unwrap())(
+            &self.owner,
+            &mut *self.component.lock().unwrap(),
+            event,
+        )
     }
 }

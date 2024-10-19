@@ -1,16 +1,12 @@
 pub use vulkano::image::view::ImageViewType as TextureView;
 
-pub trait TextureViewGlsl
-{
+pub trait TextureViewGlsl {
     fn glsl_sampler_name(&self) -> &'static str;
 }
 
-impl TextureViewGlsl for TextureView
-{
-    fn glsl_sampler_name(&self) -> &'static str
-    {
-        match self
-        {
+impl TextureViewGlsl for TextureView {
+    fn glsl_sampler_name(&self) -> &'static str {
+        match self {
             TextureView::Dim1d => "sampler1D",
             TextureView::Dim1dArray => "sampler1DArray",
             TextureView::Dim2d => "sampler2D",
@@ -18,6 +14,7 @@ impl TextureViewGlsl for TextureView
             TextureView::Cube => "samplerCube",
             TextureView::Dim3d => "sampler3D",
             TextureView::CubeArray => "samplerCubeArray",
+            _ => todo!(),
         }
     }
 }
