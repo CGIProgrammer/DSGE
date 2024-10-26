@@ -18,19 +18,19 @@ const ivec2 kernel_offsets[13] = ivec2[](
    ivec2(1, -1)
 );
 
-vec3 bilateralFilter(sampler2D scene, ivec2 coord, ivec2 kernel_offset, vec3 centerNormal, float centerDepth, float sigmaS, float z_near, float z_far) {
+vec3 bilateralFilter(sampler2D scene, ivec2 coord, vec3 centerNormal, float centerDepth, float z_near, float z_far) {
     vec3 centerColor = texelFetch(scene, coord, 0).rgb;
     vec3 centerMasks = texelFetch(gMasks, coord, 0).rgb;
     vec3 sumColor = vec3(0.0);
     float sumWeight = 0.0;
     #ifdef SUPER_RESOLUTION
-    const int scale = 1;
+    const int scale = 3;
     #else
-    const int scale = 2;
+    const int scale = 3;
     #endif
     //centerColor = LinearToSRGB(ACESFilm(centerColor));
     for (int i=0; i<KERNEL_ARRAY_SIZE; i++) {
-        ivec2 offset = kernel_offsets[i] * scale + kernel_offset;
+        ivec2 offset = kernel_offsets[i] * scale;
         ivec2 neighborCoord = coord + offset;
         vec3 neighborColor = texelFetch(scene, neighborCoord, 0).rgb;
         vec3 neighborNormal = texelFetch(gNormals, neighborCoord, 0).rgb;

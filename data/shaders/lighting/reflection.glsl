@@ -91,8 +91,7 @@ vec4 SSR2(
             screen_crd = ivec2(UV * texture_size);
             vec4 alb = texelFetch(gAlbedo, screen_crd, 0);
             vec4 refl;
-            // nrm = (camt * vec4(texelFetch(gNormals, screen_crd, 0).xyz, 0.0)).xyz;
-            // vec3 real_ray_vector = ray_crd - ray_origin;
+            nrm = (camt * vec4(texelFetch(gNormals, screen_crd, 0).xyz, 0.0)).xyz;
             // bool dist_clamp = distance(ray_origin, ray_crd) >= max_dist;
             // bool normal_clamp = dot(real_ray_vector, nrm) > 0.0;
             // if (normal_clamp) {
@@ -101,7 +100,9 @@ vec4 SSR2(
             if (alb.a == 1.0) { // && dot(real_ray_vector, nrm) <= 0.0) {  // && sign(depth - ray_origin.z) == sign(ray_crd.z - ray_origin.z) && ) {
                 float att = 1.0;
                 vec2 fading = vec2(30.0);
+                vec3 real_ray_vector = ray_crd - ray_origin;
                 fading.y = fading.x*resolution.dimensions.y/resolution.dimensions.x;
+                // alb.rgb *= max(dot(normalize(rayDirect), nrm), 0.0);
                 att *= clamp(UV.x * fading.x, 0.0, 1.0);
                 att *= clamp(UV.y * fading.y, 0.0, 1.0);
                 att *= clamp((1.0-UV.x) * fading.x, 0.0, 1.0);
@@ -264,7 +265,7 @@ void main()
     float depth = gRenderDepth(gDepth, tex_map, camera_zrange.x, camera_zrange.y);
 
     float NdotV = max(dot(surface.normal, nV), 0.0);
-    int samples = 8; //int(round(surface.roughness * 1.0 + 1.0));
+    int samples = 2; //int(round(surface.roughness * 1.0 + 1.0));
     //surface.roughness = pow(surface.roughness, 0.1);
 
     bool diffuse_flag;
@@ -292,21 +293,21 @@ void main()
             vector = microsurface_reflection(surface.normal, -nV, surface.roughness, noise.xyz);
         }
         CalculatePBR(surface, nV, vector, diffuse, specular);
-        bool skip_ray_march = (!diffuse_flag && max(kS) < 0.1) || (diffuse_flag && max(kS) > 0.9) || (dot(vector, nV) > 0.8);
+        bool skip_ray_march = (!diffuse_flag && max(kS) < 0.12) || (diffuse_flag && max(kS) > 0.85) || (dot(vector, nV) > 0.8);
         float ray_steps_coeff = abs(dot(-nV, vector));
         
         // Параметры SSRT для максимальной шероховатости (SSAO)
-        float max_dist_diffuse = mix(0.5, 2.0, ray_steps_coeff);
+        float max_dist_diffuse = mix(0.5, 1.0, ray_steps_coeff);
         float min_dist_diffuse = max(max_dist_diffuse * 0.01, 0.01) + noise.a * 0.01;
         float thickness_diffuse = 0.5;
-        float steps_bs_diffuse = mix(5.0, 10.0, ray_steps_coeff);
-        float steps_diffuse = mix(5.0, 15.0, ray_steps_coeff); //8.0;
+        float steps_bs_diffuse = mix(3.0, 8.0, ray_steps_coeff);
+        float steps_diffuse = mix(5.0, 10.0, ray_steps_coeff);
         
         // Параметры SSRT для минимальной шероховатости (SSR)
         float max_dist_specular = mix(3.0, camera_zrange.y*2.0, ray_steps_coeff);
         float min_dist_specular = max(max_dist_specular * 0.01, 0.01) + noise.a * 0.1;
         float thickness_specular = 1.0;
-        float steps_bs_specular = mix(3.0, 8.0, ray_steps_coeff);
+        float steps_bs_specular = mix(5.0, 10.0, ray_steps_coeff);
         float steps_specular = mix(8.0, 15.0, surface.roughness);
         
         vec2 end_ray_crd = tex_map;
