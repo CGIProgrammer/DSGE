@@ -198,7 +198,7 @@ vec4 fetch_super_resolution(ivec2 pc) {
     c_depth = linearize_depth(c_depth, camera_zrange.x, camera_zrange.y);
 
     #ifdef SUPER_RESOLUTION
-    float checker_mask = checker_mask(pc, timer.frame);
+    float checker_mask = checker_mask(pc, timer.frame) * 0.2;
     #else
     float checker_mask = 0.1;
     #endif
@@ -228,7 +228,11 @@ vec4 fetch_super_resolution(ivec2 pc) {
     , motion_amount, 1.0);
     return mix(prev, curr, temporal_mask);
 }
-
+#ifdef SUPER_RESOLUTION
+void main() {
+    hires_out = fetch_super_resolution(ivec2(pixelCoord.xy));
+}
+#else
 void main()
 {
     ivec2 pc = ivec2(pixelCoord.xy);
@@ -243,7 +247,7 @@ void main()
     vec3 antialiased = lastColor.xyz;
     float mixRate = min(lastColor.w, 0.5);
     
-    vec3 in0 = fetch_super_resolution(pc).xyz;
+    vec3 in0 = texelFetch(lowres_in, lowres_pc, 0).xyz;
     
     antialiased = mix(
         pow(antialiased, GAMMA_CORRECTION_V3),
@@ -295,7 +299,4 @@ void main()
     // antialiased = mix(lastColor.xyz, antialiased.xyz, checker_mask);
     hires_out = vec4(antialiased, mixRate);
 }
-
-// void main() {
-//     hires_out = fetch_super_resolution(ivec2(pixelCoord.xy));
-// }
+#endif
