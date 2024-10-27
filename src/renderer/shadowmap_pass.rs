@@ -4,7 +4,6 @@ use vulkano::command_buffer::PrimaryAutoCommandBuffer;
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::device::Queue;
 use vulkano::image::{ImageLayout, SampleCount};
-use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::render_pass::{
     AttachmentDescription, AttachmentReference, RenderPass, RenderPassCreateInfo,
     SubpassDescription,
@@ -54,7 +53,7 @@ impl ShadowMapPass {
         }
     }
 
-    pub fn build_shadow_map_pass(
+    pub(crate) fn build_shadow_map_pass(
         &self,
         shadow_map: &mut Framebuffer,
         light_projection_data: ProjectionUniformData,

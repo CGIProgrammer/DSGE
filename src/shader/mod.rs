@@ -539,13 +539,6 @@ impl Shader {
 
             let source = self.source.as_str().as_bytes();
             
-            // let mut file = OpenOptions::new()
-            //     .write(true)
-            //     .create_new(true)
-            //     .open(format!("./shader_cache/{hash:X}_composed.glsl")).unwrap();
-            // file.write(source).unwrap();
-            // file.sync_all().unwrap();
-            // drop(file);
             let child_compiler = std::process::Command::new(glslc)
                 .args([
                     format!("-fshader-stage={}", sh_type).as_str(),
@@ -614,33 +607,6 @@ impl Shader {
                 );
             }
             
-            /*match self.module {
-                Some(ref module) => {
-                    let ep = module.entry_point("main").unwrap();
-                    let module_uniforms = ep
-                        .descriptor_binding_requirements()
-                        .map(|((set, binding), _)| (set, binding))
-                        .collect::<HashSet<_>>();
-
-                    let source_uniforms = self.uniforms.clone();
-                    for (
-                        _,
-                        ShaderSourceUniform {
-                            name,
-                            type_name: _,
-                            set,
-                            binding,
-                        },
-                    ) in &source_uniforms
-                    {
-                        let key = (*set as u32, *binding as u32);
-                        if !module_uniforms.contains(&key) {
-                            self.uniforms.remove(name);
-                        }
-                    }
-                }
-                None => (),
-            };*/
             let mut hasher = DefaultHasher::new();
             spv.hash(&mut hasher);
             self.spirv_hash = hasher.finish();
@@ -1465,26 +1431,6 @@ impl ShaderProgram {
     pub fn hash(&self) -> u64 {
         self.hash
     }
-
-    pub fn vertex_shader_source(&self) -> &String {
-        &self.vertex_shader_source
-    }
-
-    pub fn fragment_shader_source(&self) -> &String {
-        &self.fragment_shader_source
-    }
-
-    pub fn tess_controll_source(&self) -> &String {
-        &self.tess_controll_source
-    }
-
-    pub fn tess_eval_source(&self) -> &String {
-        &self.tess_eval_source
-    }
-
-    pub fn compute_source(&self) -> &String {
-        &self.compute_source
-    }
 }
 
 impl ShaderProgram {
@@ -1621,17 +1567,7 @@ impl ShaderProgram {
                 ..GraphicsPipelineCreateInfo::layout(layout)
             }
         ).unwrap();
-        /*let mut pipeline = vulkano::pipeline::GraphicsPipeline::start();
-        pipeline = pipeline
-            .input_assembly_state(vulkano::pipeline::graphics::input_assembly::InputAssemblyState::new())
-            .viewport_state(vulkano::pipeline::graphics::viewport::ViewportState::viewport_dynamic_scissor_irrelevant())
-            .render_pass(subpass);
-
-        if depth_test {
-            pipeline = pipeline.depth_stencil_state(DepthStencilState::simple_depth_test());
-        }
-        //if self.
-        self.pipeline = PipelineType::Graphics(pipeline.build(self.device.clone()).unwrap());*/
+        
         self.pipeline = PipelineType::Graphics(pipeline);
         (self.pipeline.clone(), true)
     }

@@ -453,6 +453,15 @@ impl Material {
         Err(format!("Материал {} не имеет параметра {name}.", self.name))
     }
 
+    pub fn get_parameter(&self, name: &str) -> Option<MaterialSlot> {
+        for (_name, value) in &self.numeric_slots {
+            if _name == name {
+                return Some(value.clone());
+            }
+        }
+        return None;
+    }
+
     fn _shader_mut(
         &mut self,
         ty: &MaterialShaderProgramType,

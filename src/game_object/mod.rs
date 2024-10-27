@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub use crate::components::camera::*;
-use crate::components::light::PointLight;
+use crate::{components::light::PointLight, mesh};
 pub use crate::components::visual::*;
 use crate::components::*;
 use crate::game_logic::behaviour::DynBehaviour;
@@ -59,47 +59,7 @@ crate::fast_impl_ssu! {
         transform: [f32; 16],
         #[format(R32G32B32A32_SFLOAT)]
         transform_prev: [f32; 16],
-        /*#[format(R32G32B32A32_SFLOAT)]
-        transform_0: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_1: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_2: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_3: [f32; 4],
-
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_0_prev: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_1_prev: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_2_prev: [f32; 4],
-        #[format(R32G32B32A32_SFLOAT)]
-        transform_3_prev: [f32; 4],*/
     }
-}
-
-impl GOTransformUniform
-{
-    /*pub fn transform(&self) -> [f32; 16]
-    {
-        [
-            self.transform_0[0], self.transform_0[1], self.transform_0[2], self.transform_0[3],
-            self.transform_1[0], self.transform_1[1], self.transform_1[2], self.transform_1[3],
-            self.transform_2[0], self.transform_2[1], self.transform_2[2], self.transform_2[3],
-            self.transform_3[0], self.transform_3[1], self.transform_3[2], self.transform_3[3],
-        ]
-    }
-
-    pub fn transform_prev(&self) -> [f32; 16]
-    {
-        [
-            self.transform_0_prev[0], self.transform_0_prev[1], self.transform_0_prev[2], self.transform_0_prev[3],
-            self.transform_1_prev[0], self.transform_1_prev[1], self.transform_1_prev[2], self.transform_1_prev[3],
-            self.transform_2_prev[0], self.transform_2_prev[1], self.transform_2_prev[2], self.transform_2_prev[3],
-            self.transform_3_prev[0], self.transform_3_prev[1], self.transform_3_prev[2], self.transform_3_prev[3],
-        ]
-    }*/
 }
 
 impl From<Mat4> for GOTransform {
@@ -144,17 +104,24 @@ impl GOTransform {
         GOTransformUniform {
             transform, transform_prev
         }
-        /*GOTransformUniform {
-            transform_0: transform[0..4].try_into().unwrap(),
-            transform_1: transform[4..8].try_into().unwrap(),
-            transform_2: transform[8..12].try_into().unwrap(),
-            transform_3: transform[12..16].try_into().unwrap(),
-            
-            transform_0_prev: transform_prev[0..4].try_into().unwrap(),
-            transform_1_prev: transform_prev[4..8].try_into().unwrap(),
-            transform_2_prev: transform_prev[8..12].try_into().unwrap(),
-            transform_3_prev: transform_prev[12..16].try_into().unwrap(),
-        }*/
+    }
+}
+
+#[derive(Clone)]
+pub (crate) struct GameObjectDrawElement {
+    pub transform: GOTransformUniform,
+    pub is_static: bool,
+    pub mesh_visual: MeshVisual,
+    pub tags: HashSet<String>
+}
+
+impl GameObjectDrawElement {
+    pub (crate) fn match_filter(&self, filter: &ObjectFilter) -> bool {
+        match filter {
+            ObjectFilter::CastShadow(cast) => self.mesh_visual.cast_shadow() == *cast,
+            ObjectFilter::Tag(tag) => self.tags.contains(tag),
+            ObjectFilter::MaterialProperty(prop) => self.mesh_visual.material().lock().get_parameter(prop).is_some()
+        }
     }
 }
 
@@ -163,11 +130,11 @@ pub struct GameObject {
     pub(crate) scene: Option<SceneRef>,
     pub(crate) transform: GOTransform,
     name: String,
+    tags: HashSet<String>,
     camera: Option<CameraComponent>,
     mesh_visual: Option<MeshVisual>,
     light: Option<Light>,
-    components: Vec<DynBehaviour>,
-    //scene: Option<SceneRef>
+    components: Vec<DynBehaviour>
 }
 
 impl Drop for GameObject {
@@ -176,13 +143,7 @@ impl Drop for GameObject {
     }
 }
 
-//#[allow(dead_code)]
 impl GameObject {
-    /*pub fn set_scene(&mut self, scene: SceneRef)
-    {
-        self.scene = Some(scene);
-    }*/
-
     #[inline]
     pub fn name(&self) -> &String {
         &self.name
@@ -213,6 +174,7 @@ impl GameObject {
         let obj = RcBox::construct(Self {
             name: name.to_string(),
             transform: GOTransform::identity(),
+            tags: HashSet::new(),
             camera: None,
             mesh_visual: None,
             light: None,
@@ -272,25 +234,6 @@ impl GameObject {
 
     /// Добавляет компонент и возвращает RcBox с этим компонентом
     pub fn add_component<T: Sized + Behaviour>(&mut self, component: T) -> Option<RcBox<T>> {
-        /*fn downcast_copy<E, F>(component: F) -> Option<E> 
-        where E: Sized + 'static, F: Sized + 'static
-        {
-            if let Some(_) = ((&component) as &dyn std::any::Any).downcast_ref::<E>() {
-                Some(unsafe{std::mem::transmute_copy(&component)})
-                /*let mut _cbb = MaybeUninit::<E>::uninit();
-                
-                Some(unsafe {
-                    std::ptr::copy(
-                        &component as *const F as *const E,
-                        &mut _cbb as *mut MaybeUninit<E> as *mut E,
-                        1,
-                    );
-                    _cbb.assume_init()
-                })*/
-            } else {
-                None
-            }
-        }*/
         
         if (&component as &dyn std::any::Any).is::<CameraComponent>() {
             self.camera = Some((&component as &dyn std::any::Any).downcast_ref::<CameraComponent>().unwrap().clone());
@@ -316,11 +259,6 @@ impl GameObject {
             self.light = Some(RcBox::construct(light));
             return None;
         }
-        /*if (&component as &dyn std::any::Any).is::<SpotLight>() {
-            let light: SunLight = downcast_copy(component).unwrap();
-            self.light = Some(RcBox::construct(light));
-            return None;
-        }*/
         let result = RcBox::construct(component);
         self.components.push(result.clone());
         if let Some(ref scene) = self.scene {
@@ -483,4 +421,24 @@ impl GameObject {
             None => None,
         }
     }
+
+    pub(crate) fn get_draw_element(&self) -> Option<GameObjectDrawElement> {
+        if let Some(ref mesh_vis) = self.mesh_visual {
+            Some(GameObjectDrawElement {
+                transform: self.transform.uniform_value(),
+                mesh_visual: mesh_vis.clone(),
+                tags: self.tags.clone(),
+                is_static: self.transform._is_static
+            })
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ObjectFilter {
+    CastShadow(bool),
+    Tag(String),
+    MaterialProperty(String)
 }

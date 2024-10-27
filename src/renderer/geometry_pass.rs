@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::default;
 use std::mem::size_of;
 use std::sync::Arc;
 
@@ -12,7 +11,7 @@ use vulkano::command_buffer::{
 use vulkano::descriptor_set::allocator::{StandardDescriptorSetAllocator, StandardDescriptorSetAllocatorCreateInfo};
 use vulkano::device::{Device, DeviceOwned, Queue};
 use vulkano::image::{ImageLayout, SampleCount};
-use vulkano::memory::allocator::{StandardMemoryAllocator, MemoryTypeFilter};
+use vulkano::memory::allocator::MemoryTypeFilter;
 use vulkano::render_pass::{
     AttachmentDescription, AttachmentReference, RenderPass, RenderPassCreateInfo, Subpass,
     SubpassDescription,
@@ -20,8 +19,6 @@ use vulkano::render_pass::{
 
 use crate::command_buffer::{CommandBufferFather, new_cpu_buffer_from_iter};
 
-use crate::components::visual::MeshVisual;
-use crate::components::GOTransformUniform;
 use crate::components::ProjectionUniformData;
 use crate::framebuffer::{Framebuffer, FramebufferBinder};
 
@@ -31,11 +28,11 @@ use crate::shader::ShaderProgramBinder;
 use crate::time::UniformTime;
 use crate::types::Vec4;
 use crate::types::{ArrayInto, Mat4, Vec3};
-use crate::{resource_manager, texture::*};
+use crate::texture::*;
 
-use super::{bump_memory_allocator_new_default, BumpMemoryAllocator};
+use super::{bump_memory_allocator_new_default, BumpMemoryAllocator, GameObjectDrawElement};
 
-pub(super) type DrawList = Vec<(GOTransformUniform, Arc<MeshVisual>)>;
+pub(super) type DrawList = Vec<GameObjectDrawElement>;
 
 /*pub trait Cullable {
     fn check_in_frustum(
@@ -147,9 +144,9 @@ pub fn cull_objects(projection_data: ProjectionUniformData, draw_list: &DrawList
     //let matrix = projection_data.transform_inverted * projection_data.projection;
     draw_list
         .iter()
-        .filter_map(|(transform, visual)| {
-            if check_in_frustum(&visual.bbox_corners(), projection_data, transform.transform.into_mat4()) {
-                Some((*transform, visual.clone()))
+        .filter_map(|draw_element| {
+            if check_in_frustum(&draw_element.mesh_visual.bbox_corners(), projection_data, draw_element.transform.transform.into_mat4()) {
+                Some(draw_element.clone())
             } else {
                 None
             }
@@ -200,7 +197,7 @@ pub(super) fn build_geometry_pass(
         })?;*/
         return Ok(cb);
     }
-    draw_list.sort_by(|(_, a), (_, b)| {
+    draw_list.sort_by(|GameObjectDrawElement{mesh_visual: a, ..}, GameObjectDrawElement{mesh_visual: b, ..}| {
         let a_hash = a.shader_hash(shader_type);
         let b_hash = b.shader_hash(shader_type);
         match a_hash.cmp(&b_hash) {
@@ -228,7 +225,7 @@ pub(super) fn build_geometry_pass(
     });
     let transforms = draw_list
         .iter()
-        .map(|(transform, _)| transform.clone())
+        .map(|GameObjectDrawElement{transform, ..}| transform.clone())
         .collect::<Vec<_>>();
 
         //println!("Camera location {:?}", &projection_data.transform[12..15]);
@@ -258,7 +255,7 @@ pub(super) fn build_geometry_pass(
         let mut first_instance_index = 0u32;
         let (_, mut camera_uniform_buffer) = {
             let (shader_program, mut camera_uniform_buffer) = draw_list[0]
-                .1
+                .mesh_visual
                 .material()
                 .lock()
                 .use_in_subpass(
@@ -305,38 +302,38 @@ pub(super) fn build_geometry_pass(
                 ..Default::default()
             },
         );
-        for (i, (_, visual)) in draw_list.iter().enumerate() {
+        for (i, GameObjectDrawElement{mesh_visual: visual, ..}) in draw_list.iter().enumerate() {
             let mesh = visual.mesh().clone();
             let material = visual.material().clone();
             let new_material_group = if i == 0 {
                 true
             } else {
-                material.box_id() != draw_list[i - 1].1.material().box_id()
+                material.box_id() != draw_list[i - 1].mesh_visual.material().box_id()
             };
             let new_mesh_group = if i == 0 {
                 true
             } else {
-                mesh.buffer_id() != draw_list[i - 1].1.mesh().buffer_id()
+                mesh.buffer_id() != draw_list[i - 1].mesh_visual.mesh().buffer_id()
             };
             let new_instance_group = if i == 0 {
                 true
             } else {
-                mesh.ref_id() != draw_list[i - 1].1.mesh().ref_id()
+                mesh.ref_id() != draw_list[i - 1].mesh_visual.mesh().ref_id()
             };
             let end_instance_group = if i == last_index {
                 true
             } else {
-                mesh.ref_id() != draw_list[i + 1].1.mesh().ref_id()
+                mesh.ref_id() != draw_list[i + 1].mesh_visual.mesh().ref_id()
             };
             let end_mesh_group = if i == last_index {
                 true
             } else {
-                mesh.buffer_id() != draw_list[i + 1].1.mesh().buffer_id()
+                mesh.buffer_id() != draw_list[i + 1].mesh_visual.mesh().buffer_id()
             };
             let end_material_group = if i == last_index {
                 true
             } else {
-                material.box_id() != draw_list[i + 1].1.material().box_id()
+                material.box_id() != draw_list[i + 1].mesh_visual.material().box_id()
             };
             unsafe {
 
@@ -587,7 +584,7 @@ impl GeometryPass {
         result
     }
 
-    pub fn build_geometry_pass(
+    pub(crate) fn build_geometry_pass(
         &mut self,
         camera_data: ProjectionUniformData,
         timer: UniformTime,

@@ -9,7 +9,7 @@ use crate::{
     types::{ArrayInto, Mat4, Vec4},
     vulkano::device::DeviceOwned,
 };
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::{HashMap, HashSet}, sync::Arc};
 #[allow(unused_imports)]
 use vulkano::command_buffer::{
     AutoCommandBufferBuilder, CommandBufferUsage, PrimaryAutoCommandBuffer,
@@ -343,7 +343,7 @@ pub struct Renderer {
     _frame_finish_event: Option<Box<dyn GpuFuture + 'static>>,
     _need_to_update_sc: bool,
 
-    _draw_list: Vec<(GOTransform, Arc<MeshVisual>)>,
+    _draw_list: Vec<GameObjectDrawElement>,
     _lights_list: Vec<RenderableLight>,
 
     _aspect: f32,
@@ -384,22 +384,11 @@ impl Renderer {
         }
     }
 
-    /*pub fn geometry_pass(&self) -> &GeometryPass
-    {
-        &self._geometry_pass
-    }
-
-    pub fn camera_data(&self) -> ProjectionUniformData
-    {
-        self._camera_data
-    }*/
-
-    pub fn add_renderable_component(
+    pub(crate) fn add_renderable_component(
         &mut self,
-        transform_data: GOTransform,
-        component: Arc<MeshVisual>,
+        draw_element: GameObjectDrawElement
     ) {
-        self._draw_list.push((transform_data, component))
+        self._draw_list.push(draw_element)
     }
 }
 
@@ -746,9 +735,9 @@ impl Renderer {
     pub fn draw(&mut self, obj: RcBox<GameObject>) {
         let owner = obj.lock();
         let owner_transform = owner.transform.clone();
-        match owner.visual() {
+        match owner.get_draw_element() {
             Some(visual) => {
-                self.add_renderable_component(owner.transform().clone(), Arc::new(visual.clone()));
+                self.add_renderable_component(visual);
             }
             None => (),
         }
@@ -878,31 +867,6 @@ impl Renderer {
             return;
         }
 
-        /*let mut draw_list = HashMap::new();
-        for (transform,visual) in &self._draw_list {
-            let mat_id = visual.material_id();
-            let mesh_id = visual.mesh().buffer_id();
-            let material_list = match draw_list.get_mut(&mat_id) {
-                Some(material_list) => material_list,
-                None => {
-                    let material_list = HashMap::<i32, Vec<(GOTransformUniform, Arc<MeshVisual>)>>::new();
-                    draw_list.insert(mat_id, material_list);
-                    draw_list.get_mut(&mat_id).unwrap()
-                }
-            };
-            let mesh_buffer_list = match material_list.get_mut(&mesh_id) {
-                Some(mesh_list) => {
-                    mesh_list
-                },
-                None => {
-                    let mesh_list = Vec::<(GOTransformUniform, Arc<MeshVisual>)>::new();
-                    material_list.insert(mesh_id, mesh_list);
-                    material_list.get_mut(&mesh_id).unwrap()
-                }
-            };
-            mesh_buffer_list.push((transform, visual).clone());
-        }*/
-
         // Отбор источников света
         let mut lights = std::mem::take(&mut self._lights_list);
         let camera_location: [f32; 16] = self._camera_data.transform.into();
@@ -917,12 +881,6 @@ impl Renderer {
                 None => Ordering::Equal,
             }
         });
-        /*for (li, _) in &mut lights {
-            resource_manager.lock().attach_shadow_buffer(li).unwrap();
-        }
-        resource_manager.lock().flush_futures();*/
-        //let lights = lights[0..lights.len().min(16)].to_vec();
-        //let lights = self._lights_list.clone();
 
         // Проход карт теней
         let mut sm_command_buffers: Vec<Arc<PrimaryAutoCommandBuffer>> = Vec::new();
@@ -930,9 +888,9 @@ impl Renderer {
         let static_objects = self
             ._draw_list
             .iter()
-            .filter_map(|(transform, mesh_visual)| {
-                if transform.is_static() {
-                    Some((transform.uniform_value(), mesh_visual.clone()))
+            .filter_map(|element| {
+                if element.is_static {
+                    Some(element.clone())
                 } else {
                     None
                 }
@@ -942,9 +900,9 @@ impl Renderer {
         let dynamic_objects = self
             ._draw_list
             .iter()
-            .filter_map(|(transform, mesh_visual)| {
-                if !transform.is_static() {
-                    Some((transform.uniform_value(), mesh_visual.clone()))
+            .filter_map(|element| {
+                if !element.is_static {
+                    Some(element.clone())
                 } else {
                     None
                 }

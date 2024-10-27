@@ -20,6 +20,7 @@ use vulkano::render_pass::{
 };
 
 use super::{bump_memory_allocator_new_default, BumpMemoryAllocator};
+use crate::game_object::ObjectFilter;
 
 type StageIndex = u16;
 type StageInputIndex = String;
@@ -62,7 +63,7 @@ struct RenderStageLink {
 }
 
 #[derive(Clone)]
-enum RenderStageOutput {
+enum RenderStageOutputType {
     Generic {
         pix_fmt: TexturePixelFormat,
     },
@@ -73,7 +74,7 @@ enum RenderStageOutput {
     },
 }
 
-impl RenderStageOutput {
+impl RenderStageOutputType {
     #[inline]
     pub fn is_stack(&self) -> bool {
         match self {
@@ -99,10 +100,10 @@ impl RenderStageOutput {
 
     fn shift_stack(&mut self, buffer: &Texture) -> Texture {
         match self {
-            RenderStageOutput::Generic {
+            RenderStageOutputType::Generic {
                 pix_fmt: _,
             } => todo!(),
-            RenderStageOutput::Stack {
+            RenderStageOutputType::Stack {
                 buffers, pointer, ..
             } => {
                 *pointer = ((*pointer as isize - 1).rem_euclid(buffers.len() as isize)) as _;
@@ -115,7 +116,6 @@ impl RenderStageOutput {
 
     #[inline]
     pub fn new_stack(
-        command_buffer_father: &CommandBufferFather,
         allocator: Arc<BumpMemoryAllocator>,
         dimensions: TextureDimensions,
         size: usize,
@@ -154,6 +154,13 @@ impl RenderStageOutput {
     }
 }
 
+#[derive(Clone)]
+enum RenderStageInputGeometry {
+    FullScreenPlane,
+    AllScene,
+    ObjectFilter(ObjectFilter)
+}
+
 /// Нода (она же стадия) постобработки
 #[derive(Clone)]
 struct RenderStage {
@@ -161,8 +168,9 @@ struct RenderStage {
     _program: ShaderProgramRef,
     _uniform_buffer: ShaderProgramUniformBuffer,
     _resolution: TextureDimensions,
+    _input_geometry: RenderStageInputGeometry,
     _input_filters: HashMap<String, TextureFilter>,
-    _outputs: Vec<RenderStageOutput>,
+    _outputs: Vec<RenderStageOutputType>,
     _executed: bool,
     _render_pass: Arc<RenderPass>,
 }
@@ -195,8 +203,8 @@ impl RenderStage {
             //self._outputs.get_unchecked(output as usize).0.is_some() }
             let output = self._outputs.get(output as usize).unwrap();
             match output {
-                RenderStageOutput::Stack { .. } => true,
-                RenderStageOutput::Generic { .. } => false,
+                RenderStageOutputType::Stack { .. } => true,
+                RenderStageOutputType::Generic { .. } => false,
             }
         } else {
             false
@@ -246,6 +254,7 @@ impl RenderStage {
 pub struct RenderStageBuilder {
     _dimensions: TextureDimensions,
     _fragment_shader: Shader,
+    _input_geometry: RenderStageInputGeometry,
     _output_accum: Vec<(TexturePixelFormat, u8)>,
     _input_filters: HashMap<String, TextureFilter>,
 }
@@ -346,15 +355,14 @@ impl RenderStageBuilder {
             .map(|(pix_fmt, accum)| {
                 let acc = if *accum > 0 {
                     //println!("Создание стекового буфера {}x{}", self._dimensions.width(), self._dimensions.height());
-                    RenderStageOutput::new_stack(
-                        &pp_graph._command_buffer_father,
+                    RenderStageOutputType::new_stack(
                         pp_graph._allocator.clone(),
                         self._dimensions,
                         *accum as _,
                         *pix_fmt,
                     )
                 } else {
-                    RenderStageOutput::Generic {
+                    RenderStageOutputType::Generic {
                         pix_fmt: *pix_fmt,
                     }
                 };
@@ -411,6 +419,7 @@ impl RenderStageBuilder {
             _uniform_buffer: uniform_buffer,
             _resolution: self._dimensions,
             _input_filters : self._input_filters,
+            _input_geometry: RenderStageInputGeometry::FullScreenPlane,
             _outputs: outputs,
             _render_pass: render_pass,
             _executed: false,
@@ -604,18 +613,17 @@ impl PostprocessingPass {
                 let mut accs = Vec::new();
                 for output in &mut stage._outputs {
                     let buff = match output {
-                        RenderStageOutput::Stack {
+                        RenderStageOutputType::Stack {
                             buffers,
                             pix_fmt,
                             pointer: _,
-                        } => RenderStageOutput::new_stack(
-                            &self._command_buffer_father,
+                        } => RenderStageOutputType::new_stack(
                             self._allocator.clone(),
                             stage._resolution,
                             buffers.len(),
                             *pix_fmt,
                         ),
-                        RenderStageOutput::Generic { .. } => output.clone(),
+                        RenderStageOutputType::Generic { .. } => output.clone(),
                     };
                     accs.push(buff);
                 }
@@ -657,6 +665,7 @@ impl PostprocessingPass {
             _dimensions: [256, 256, 1],
             _fragment_shader: builder,
             _input_filters: Default::default(),
+            _input_geometry: RenderStageInputGeometry::FullScreenPlane,
             _output_accum: Vec::new(),
         }
     }
@@ -919,6 +928,7 @@ impl PostprocessingPass {
             }
         }
 
+        // let render_list = ;
         let resolution = self.stage_by_id(id)._resolution;
         let stage_shader = self.stage_by_id(id)._program.clone();
         let allocator = self._allocator.clone();
