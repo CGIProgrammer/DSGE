@@ -10,7 +10,7 @@ use crate::types::Mat4;
 pub use crate::game_object::{GOTransformUniform, GameObject, GameObjectRef};
 pub use camera::CameraComponent;
 pub use light::{Spotlight, SunLight, Light};
-pub use visual::{AbstractVisual, MeshVisual};
+pub use visual::MeshVisual;
 
 // Структура для передачи данных шейдерной программе
 crate::fast_impl_ssu! {
