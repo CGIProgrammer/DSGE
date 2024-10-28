@@ -23,7 +23,7 @@ impl PostprocessingPass {
         }
         flipper_builder
             .dimenstions(width, height)
-            .input("image_in", TextureView::Dim2d, TextureFilter::Linear, false)
+            .input("image_in", TextureView::Dim2d, false)
             .output("image_out", sc_pix_fmt, 0)
             .code(&format!(
                 "void main() {{

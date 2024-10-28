@@ -26,7 +26,7 @@ impl PostprocessingPass {
         let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("albedo", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("albedo", TextureView::Dim2d, false)
             .output(
                 "EASU_pass",
                 TexturePixelFormat::R8G8B8A8_UNORM,
@@ -230,7 +230,7 @@ impl PostprocessingPass {
         let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("EASU_pass", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("EASU_pass", TextureView::Dim2d, false)
             .output(
                 "fsr_out",
                 TexturePixelFormat::B8G8R8A8_SRGB,

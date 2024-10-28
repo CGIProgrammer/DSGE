@@ -43,9 +43,9 @@ impl PostprocessingPass {
         let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("gAlbedo", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gDepth", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("lighting", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("gAlbedo", TextureView::Dim2d, false)
+            .input("gDepth", TextureView::Dim2d, false)
+            .input("lighting", TextureView::Dim2d, false)
             .output(
                 "result",
                 TexturePixelFormat::R8G8B8A8_SRGB,
@@ -67,14 +67,14 @@ impl PostprocessingPass {
         let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("gAlbedo", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gNormals", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gMasks", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gDepth", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("point_shadowmaps", TextureView::Dim2dArray, TextureFilter::Nearest, false)
-            .input("spot_shadowmaps", TextureView::Dim2dArray, TextureFilter::Nearest, false)
-            .input("sun_shadowmaps", TextureView::Dim2dArray, TextureFilter::Nearest, false)
-            .input("blue_noise", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("gAlbedo", TextureView::Dim2d, false)
+            .input("gNormals", TextureView::Dim2d, false)
+            .input("gMasks", TextureView::Dim2d, false)
+            .input("gDepth", TextureView::Dim2d, false)
+            .input("point_shadowmaps", TextureView::Dim2dArray, false)
+            .input("spot_shadowmaps", TextureView::Dim2dArray, false)
+            .input("sun_shadowmaps", TextureView::Dim2dArray, false)
+            .input("blue_noise", TextureView::Dim2d, false)
             .code(format!("layout(std140) struct {} {};", GenericLightUniform::glsl_type_name(), GenericLightUniform::structure()).as_str())
             .uniform_named_type::<SpotlightUniform>(
                 "ppSpotlights",
@@ -122,13 +122,13 @@ impl PostprocessingPass {
                 "MainCamera",
                 ShaderUniformArrayLength::NotArray,
             )
-            .input("gAlbedo", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gNormals", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gMasks", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gDepth", TextureView::Dim2d, TextureFilter::Linear, false)
-            .input("diffuse_in", TextureView::Dim2d, TextureFilter::Linear, false)
-            .input("specular_in", TextureView::Dim2d, TextureFilter::Linear, false)
-            .input("blue_noise", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("gAlbedo", TextureView::Dim2d, false)
+            .input("gNormals", TextureView::Dim2d, false)
+            .input("gMasks", TextureView::Dim2d, false)
+            .input("gDepth", TextureView::Dim2d, false)
+            .input("diffuse_in", TextureView::Dim2d, false)
+            .input("specular_in", TextureView::Dim2d, false)
+            .input("blue_noise", TextureView::Dim2d, false)
             .output("diffuse_out", TexturePixelFormat::R16G16B16A16_SFLOAT, 0)
             .output("specular_out", TexturePixelFormat::R16G16B16A16_SFLOAT, 0)
             .code("#include \"data/shaders/lighting/reflection.glsl\"");
@@ -151,12 +151,12 @@ impl PostprocessingPass {
         let mut stage_builder = Self::stage_builder(self.device().clone());
         stage_builder
             .dimenstions(width, height)
-            .input("gAlbedo", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gDepth", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gNormals", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gMasks", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("diffuse_input", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("specular_input", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("gAlbedo", TextureView::Dim2d, false)
+            .input("gDepth", TextureView::Dim2d, false)
+            .input("gNormals", TextureView::Dim2d, false)
+            .input("gMasks", TextureView::Dim2d, false)
+            .input("diffuse_input", TextureView::Dim2d, false)
+            .input("specular_input", TextureView::Dim2d, false)
             .uniform_named_type::<ProjectionUniformData>(
                 "camera",
                 "MainCamera",

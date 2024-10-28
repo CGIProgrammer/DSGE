@@ -1,7 +1,7 @@
 use super::{PostprocessingPass, StageIndex, StageInputIndex, StageOutputIndex};
 use crate::components::visual::ProjectionUniformData;
 use crate::shader::ShaderUniformArrayLength;
-use crate::texture::{TextureFilter, TexturePixelFormat, TextureView};
+use crate::texture::{TexturePixelFormat, TextureView};
 
 pub struct TemporalDeoiser {
     pub stage_id: StageIndex,
@@ -20,8 +20,8 @@ impl PostprocessingPass {
     pub fn new_fxaa(&mut self, width: u16, height: u16) -> Result<FxaaFilter, String> {
         let mut node = Self::stage_builder(self.device().clone());
         node.dimenstions(width, height)
-            .input("orig", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("gVectors", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("orig", TextureView::Dim2d, false)
+            .input("gVectors", TextureView::Dim2d, false)
             .output(
                 "antialiased",
                 TexturePixelFormat::R8G8B8A8_SRGB,
@@ -58,12 +58,12 @@ impl PostprocessingPass {
                 "MainCamera",
                 ShaderUniformArrayLength::NotArray,
             )
-            .input("gVectors", TextureView::Dim2d, TextureFilter::Linear, false)
+            .input("gVectors", TextureView::Dim2d, false)
             //.input("gVectors1",  TextureView::Dim2d, false)
-            .input("gDepth", TextureView::Dim2d, TextureFilter::Linear, false)
+            .input("gDepth", TextureView::Dim2d, false)
             //.input("gDepth1", TextureView::Dim2d, false)
-            .input("lowres_in", TextureView::Dim2d, TextureFilter::Linear, false)
-            .input("hires_in", TextureView::Dim2d, TextureFilter::Linear, false)
+            .input("lowres_in", TextureView::Dim2d, false)
+            .input("hires_in", TextureView::Dim2d, false)
             .output(
                 "hires_out",
                 TexturePixelFormat::R16G16B16A16_SFLOAT,

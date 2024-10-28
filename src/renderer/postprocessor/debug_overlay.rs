@@ -15,12 +15,12 @@ impl PostprocessingPass {
         let mut builder = Self::stage_builder(self.device().clone());
         builder
             .dimenstions(width, height)
-            .input("image_in", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("blue_noise", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("font", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("point_shadowmaps[4]", TextureView::Cube, TextureFilter::Nearest, false)
-            .input("spot_shadowmaps[4]", TextureView::Dim2d, TextureFilter::Nearest, false)
-            .input("lights_data", TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input("image_in", TextureView::Dim2d, false)
+            .input("blue_noise", TextureView::Dim2d, false)
+            .input("font", TextureView::Dim2d, false)
+            .input("point_shadowmaps[4]", TextureView::Cube, false)
+            .input("spot_shadowmaps[4]", TextureView::Dim2d, false)
+            .input("lights_data", TextureView::Dim2d, false)
             .output("image_out", sc_pix_fmt, 0)
             .uniform::<LightsUniformData>("lights_count", ShaderUniformArrayLength::NotArray)
             .uniform_named_type::<SpotlightUniform>(

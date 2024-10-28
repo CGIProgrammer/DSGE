@@ -6,6 +6,7 @@ use crate::shader::*;
 use crate::texture::*;
 use crate::time::UniformTime;
 use crate::types::*;
+use nalgebra::dimension;
 use vulkano::descriptor_set::allocator::StandardDescriptorSetAllocator;
 use vulkano::memory::allocator::StandardMemoryAllocator;
 use vulkano::pipeline::graphics::rasterization::CullMode;
@@ -13,13 +14,12 @@ use vulkano::pipeline::graphics::vertex_input::VertexBufferDescription;
 use std::collections::HashMap;
 use std::sync::Arc;
 use vulkano::device::{Device, Queue};
-use vulkano::image::{ImageLayout, SampleCount};
+use vulkano::image::{ImageAspect, ImageAspects, ImageLayout, SampleCount};
 use vulkano::render_pass::{
-    AttachmentDescription, AttachmentReference, RenderPass, RenderPassCreateInfo,
-    SubpassDescription,
+    AttachmentDescription, AttachmentLoadOp, AttachmentReference, RenderPass, RenderPassCreateInfo, SubpassDescription
 };
 
-use super::{bump_memory_allocator_new_default, BumpMemoryAllocator};
+use super::{bump_memory_allocator_new_default, BumpMemoryAllocator, GameObjectDrawElement};
 use crate::game_object::ObjectFilter;
 
 type StageIndex = u16;
@@ -63,14 +63,16 @@ struct RenderStageLink {
 }
 
 #[derive(Clone)]
-enum RenderStageOutputType {
+pub enum RenderStageOutputType {
     Generic {
         pix_fmt: TexturePixelFormat,
+        clear_on_load: Option<[f32; 4]>
     },
     Stack {
         buffers: Vec<Texture>,
         pointer: usize,
         pix_fmt: TexturePixelFormat,
+        clear_on_load: Option<[f32; 4]>
     },
 }
 
@@ -80,6 +82,27 @@ impl RenderStageOutputType {
         match self {
             Self::Stack { .. } => true,
             Self::Generic { .. } => false,
+        }
+    }
+    
+    #[inline]
+    pub fn need_clear_on_load(&self) -> bool {
+        self.clear_color().is_some()
+    }
+
+    #[inline]
+    pub fn clear_color(&self) -> Option<[f32; 4]> {
+        match self {
+            Self::Stack { clear_on_load, .. } => clear_on_load.clone(),
+            Self::Generic { clear_on_load, .. } => clear_on_load.clone(),
+        }
+    }
+    
+    #[inline]
+    pub fn pix_fmt(&self) -> TexturePixelFormat {
+        match self {
+            Self::Stack { pix_fmt, .. } => *pix_fmt,
+            Self::Generic { pix_fmt, .. } => *pix_fmt,
         }
     }
 
@@ -100,9 +123,7 @@ impl RenderStageOutputType {
 
     fn shift_stack(&mut self, buffer: &Texture) -> Texture {
         match self {
-            RenderStageOutputType::Generic {
-                pix_fmt: _,
-            } => todo!(),
+            RenderStageOutputType::Generic {..} => todo!(),
             RenderStageOutputType::Stack {
                 buffers, pointer, ..
             } => {
@@ -120,6 +141,7 @@ impl RenderStageOutputType {
         dimensions: TextureDimensions,
         size: usize,
         pix_fmt: TexturePixelFormat,
+        clear_on_load: Option<[f32; 4]>
     ) -> Self {
         let buffers = (0..size)
             .map(|_| {
@@ -142,20 +164,13 @@ impl RenderStageOutputType {
             buffers: buffers,
             pointer: 0,
             pix_fmt: pix_fmt,
-        }
-    }
-
-    #[inline]
-    pub fn pix_fmt(&self) -> TexturePixelFormat {
-        match self {
-            Self::Generic { pix_fmt, .. } => *pix_fmt,
-            Self::Stack { pix_fmt, .. } => *pix_fmt,
+            clear_on_load
         }
     }
 }
 
 #[derive(Clone)]
-enum RenderStageInputGeometry {
+pub enum RenderStageInputGeometryType {
     FullScreenPlane,
     AllScene,
     ObjectFilter(ObjectFilter)
@@ -168,8 +183,7 @@ struct RenderStage {
     _program: ShaderProgramRef,
     _uniform_buffer: ShaderProgramUniformBuffer,
     _resolution: TextureDimensions,
-    _input_geometry: RenderStageInputGeometry,
-    _input_filters: HashMap<String, TextureFilter>,
+    _input_geometry_type: RenderStageInputGeometryType,
     _outputs: Vec<RenderStageOutputType>,
     _executed: bool,
     _render_pass: Arc<RenderPass>,
@@ -232,15 +246,13 @@ impl RenderStage {
 
     fn attach_image(&mut self, name: &str, image: &Texture) -> Result<(), String>
     {
-        if let Some(filter) = self._input_filters.get(name) {
-            let mut image = image.clone();
-            let filter = filter.clone();
-            //println!("Передача изображения на вход {name} с фильтром {filter:?}.");
-            image.set_min_filter(filter);
-            image.set_mag_filter(filter);
-            image.set_mipmap_mode(MipmapMode::Nearest);
-            self._uniform_buffer.uniform_sampler_by_name(&image, name)?;
-        }
+        let mut image = image.clone();
+        let filter = TextureFilter::Linear;
+        //println!("Передача изображения на вход {name} с фильтром {filter:?}.");
+        image.set_min_filter(filter);
+        image.set_mag_filter(filter);
+        image.set_mipmap_mode(MipmapMode::Nearest);
+        self._uniform_buffer.uniform_sampler_by_name(&image, name)?;
         Ok(())
     }
 
@@ -254,9 +266,9 @@ impl RenderStage {
 pub struct RenderStageBuilder {
     _dimensions: TextureDimensions,
     _fragment_shader: Shader,
-    _input_geometry: RenderStageInputGeometry,
+    _input_geometry: RenderStageInputGeometryType,
+    _inputs: u32,
     _output_accum: Vec<(TexturePixelFormat, u8)>,
-    _input_filters: HashMap<String, TextureFilter>,
 }
 
 #[allow(dead_code)]
@@ -302,12 +314,12 @@ impl RenderStageBuilder {
         self
     }
 
-    pub fn input(&mut self, name: &str, dims: TextureView, filter: TextureFilter, shadowmap: bool) -> &mut Self {
+    pub fn input(&mut self, name: &str, dims: TextureView, shadowmap: bool) -> &mut Self {
         self._fragment_shader
-            .uniform_sampler(name, 1, self._input_filters.len() as _, dims, shadowmap)
+            .uniform_sampler(name, 1, self._inputs as _, dims, shadowmap)
             .unwrap();
         //self._fragment_shader.uniform_sampler_autoincrement(name, self._inputs as usize, TextureView::Dim2d).unwrap();
-        self._input_filters.insert(name.to_owned(), filter);
+        self._inputs += 1;
         self
     }
 
@@ -360,10 +372,12 @@ impl RenderStageBuilder {
                         self._dimensions,
                         *accum as _,
                         *pix_fmt,
+                        None
                     )
                 } else {
                     RenderStageOutputType::Generic {
                         pix_fmt: *pix_fmt,
+                        clear_on_load: None
                     }
                 };
                 acc
@@ -418,8 +432,7 @@ impl RenderStageBuilder {
             _program: RcBox::construct(program),
             _uniform_buffer: uniform_buffer,
             _resolution: self._dimensions,
-            _input_filters : self._input_filters,
-            _input_geometry: RenderStageInputGeometry::FullScreenPlane,
+            _input_geometry_type: RenderStageInputGeometryType::FullScreenPlane,
             _outputs: outputs,
             _render_pass: render_pass,
             _executed: false,
@@ -466,6 +479,8 @@ pub struct PostprocessingPass {
     _framebuffer: Framebuffer,
     /// Плоскость для вывода изображений
     _screen_plane: MeshRef,
+    /// Список геометрии сцены для отображения
+    _renderable_geometry: Vec<GameObjectDrawElement>,
 
     pub timer: UniformTime,
     //_device: Arc<Device>,
@@ -505,6 +520,7 @@ impl PostprocessingPass {
             _outputs: HashMap::new(),
             _allocator: allocator,
             _command_buffer_father: cbf,
+            _renderable_geometry: Vec::new(),
             _ds_allocator: Arc::new(StandardDescriptorSetAllocator::new(device, Default::default())),
             //_device: device.clone(),
             //_queue: queue.clone(),
@@ -617,11 +633,13 @@ impl PostprocessingPass {
                             buffers,
                             pix_fmt,
                             pointer: _,
+                            clear_on_load
                         } => RenderStageOutputType::new_stack(
                             self._allocator.clone(),
                             stage._resolution,
                             buffers.len(),
                             *pix_fmt,
+                            *clear_on_load
                         ),
                         RenderStageOutputType::Generic { .. } => output.clone(),
                     };
@@ -630,6 +648,102 @@ impl PostprocessingPass {
                 stage._outputs = accs;
             }
             None => (),
+        };
+    }
+
+    pub fn new_geometry_pass(
+        &mut self,
+        device: Arc<Device>,
+        dimensions: TextureDimensions,
+        output_images_types: &[RenderStageOutputType],
+        input_geometry_type: RenderStageInputGeometryType,
+        vertex_shader: &Shader,
+        fragment_shader: &Shader
+    ) {
+        self._render_stage_id_counter += 1;
+        let mut builder = ShaderProgram::builder();
+        builder
+            .vertex(vertex_shader).unwrap()
+            .fragment(fragment_shader).unwrap();
+        let shader_program = builder.build(device.clone()).unwrap();
+
+        let attachments = output_images_types
+            .iter()
+            .map(|output_type: &RenderStageOutputType| {
+                let pix_fmt = output_type.pix_fmt();
+                let (final_layout, initial_layout) = match pix_fmt.is_depth() {
+                    true => (
+                        ImageLayout::DepthStencilAttachmentOptimal,
+                        ImageLayout::DepthStencilReadOnlyOptimal
+                    ),
+                    false => (
+                        ImageLayout::ColorAttachmentOptimal,
+                        ImageLayout::ShaderReadOnlyOptimal
+                    ),
+                };
+                let load_op = if output_type.need_clear_on_load() {
+                    AttachmentLoadOp::Clear
+                } else {
+                    AttachmentLoadOp::DontCare
+                };
+                AttachmentDescription {
+                    format: pix_fmt.vk_format(),
+                    samples: SampleCount::Sample1,
+                    load_op: load_op,
+                    store_op: vulkano::render_pass::AttachmentStoreOp::Store,
+                    stencil_load_op: None,
+                    stencil_store_op: None,
+                    initial_layout: initial_layout,
+                    final_layout: final_layout,
+                    ..Default::default()
+                }
+            }).collect::<Vec<_>>();
+
+        let depth_attachment_reference = attachments
+            .iter().zip(0..attachments.len())
+            .find_map(|(att, i)| {
+                if att.format.is_depth() {
+                    Some(AttachmentReference{
+                        attachment: i as _,
+                        layout: ImageLayout::DepthAttachmentOptimal,
+                        ..Default::default()
+                    })
+                } else {
+                    None
+                }
+            });
+
+        let subpass_attachments = (0..attachments.len())
+            .map(|i| {
+                Some(AttachmentReference {
+                    attachment: i as _,
+                    layout: ImageLayout::ColorAttachmentOptimal,
+                    ..Default::default()
+                })
+            })
+            .collect();
+
+        let render_pass_desc = RenderPassCreateInfo {
+            attachments: attachments,
+            subpasses: vec![SubpassDescription {
+                color_attachments: subpass_attachments,
+                depth_stencil_attachment: depth_attachment_reference,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        //println!("{}", program.take().fragment_shader_source());
+        let render_pass = RenderPass::new(device.clone(), render_pass_desc).unwrap();
+        RenderStage {
+            _id: self._render_stage_id_counter - 1,
+            _uniform_buffer: shader_program.new_uniform_buffer(),
+            _program: RcBox::construct(shader_program),
+            _resolution: dimensions,
+            _input_geometry_type: input_geometry_type,
+            _outputs: output_images_types.to_owned(),
+            _executed: false,
+            _render_pass: render_pass,
         };
     }
 
@@ -664,8 +778,8 @@ impl PostprocessingPass {
         RenderStageBuilder {
             _dimensions: [256, 256, 1],
             _fragment_shader: builder,
-            _input_filters: Default::default(),
-            _input_geometry: RenderStageInputGeometry::FullScreenPlane,
+            _input_geometry: RenderStageInputGeometryType::FullScreenPlane,
+            _inputs: 0,
             _output_accum: Vec::new(),
         }
     }
@@ -977,11 +1091,11 @@ impl PostprocessingPass {
         }
         //let stage = self.stage_by_id(id);
         let render_pass = self.stage_by_id(id)._render_pass.clone();
-        let mut render_targets = HashMap::<StageOutputIndex, Texture>::new();
+        let mut render_targets = HashMap::<_, _>::new();
 
         for link in &links {
+            let from_stage = self.stage_by_id(link._from.render_stage_id).clone();
             if link._to.render_stage_id == id {
-                let from_stage = self.stage_by_id(link._from.render_stage_id);
                 if from_stage.is_output_stack(link._from.output) {
                     // println!("Принимается входящий стековый буфер {}:{} на вход", link._to.input, link._from.stack_index);
                     let acc = from_stage
@@ -1013,19 +1127,21 @@ impl PostprocessingPass {
                     .clone();
                 let _tex = self.request_texture(link, output.pix_fmt());
                 //let __tex = _tex.take_mut();
-                render_targets.insert(link._from.output, _tex.clone());
+                unsafe {
+                    render_targets.insert(link._from.output, (from_stage._outputs.get_unchecked(link._from.output as usize).clone(), _tex.clone()));
+                }
             }
         }
-        {
+        let pacbb = {
             let fb = &mut self._framebuffer;
             fb.reset_attachments();
             for ind in 0..render_targets.len() {
-                let tex = match render_targets.get(&(ind as _)) {
-                    Some(tex) => tex,
+                let (output_type, tex) = match render_targets.get(&(ind as _)) {
+                    Some((output_type, tex)) => (output_type, tex),
                     None => panic!("Нода {} имеет неиспользованный выход {}.", id, ind),
                 };
                 //fb.add_color_attachment(tex, [0.0, 0.0, 0.0, 1.0].into()).unwrap();
-                fb.add_color_attachment(tex, None).unwrap();
+                fb.add_color_attachment(tex, output_type.clear_color()).unwrap();
             }
             fb.view_port(resolution[0] as _, resolution[1] as _);
 
@@ -1036,8 +1152,8 @@ impl PostprocessingPass {
             command_buffer_builder
                 .bind_shader_program(prog)
                 .unwrap()
-        }
-            .bind_shader_uniforms(ds_allocator.clone(), self.stage_by_id_mut(id).uniform_buffer(), false)
+        };
+        pacbb.bind_shader_uniforms(ds_allocator.clone(), self.stage_by_id_mut(id).uniform_buffer(), false)
             .unwrap()
             .bind_mesh(&*self._screen_plane)
             .unwrap()
@@ -1046,7 +1162,7 @@ impl PostprocessingPass {
 
         for output in 0..16 {
             if self.stage_by_id(id).is_output_stack(output) {
-                let used_acc = render_targets.get(&(output as _)).unwrap();
+                let (_, used_acc) = render_targets.get(&(output as _)).unwrap();
                 let mut buf_index = 0;
                 for buf in &self._buffers {
                     if buf.box_id() == used_acc.box_id() {

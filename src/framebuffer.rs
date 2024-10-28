@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use vulkano::format::ClearValue;
 use vulkano::render_pass::{
     Framebuffer as VkFramebuffer, FramebufferCreateInfo, RenderPass as VkRenderPass,
 };
@@ -64,8 +65,21 @@ impl Framebuffer {
     pub fn add_color_attachment(
         &mut self,
         att: &Texture,
-        default_val: Option<FramebufferAttachmentDefaultValue>,
+        default_val: Option<[f32; 4]>,
     ) -> Result<(), String> {
+        let components = att.pix_fmt().components().len();
+        let default_val: Option<ClearValue> = match default_val {
+            Some(value) => {
+                match components {
+                    1 => Some(value[0].into()),
+                    2 => Some([value[0], value[1]].into()),
+                    3 => Some([value[0], value[1], value[2]].into()),
+                    4 => Some([value[0], value[1], value[2], value[3]].into()),
+                    _ => unreachable!()
+                }
+            },
+            None => None
+        };
         if self._color_attachments.len() < 15 {
             self._color_attachments.push(Attachment {
                 storage: att.clone(),

@@ -27,7 +27,7 @@ impl PostprocessingPass {
         }
         stage_builder
             .dimenstions(width, height)
-            .input(input_name, TextureView::Dim2d, TextureFilter::Nearest, false)
+            .input(input_name, TextureView::Dim2d, false)
             .output("buffer_out", pix_fmt, count as _)
             .code(
                 format!(
